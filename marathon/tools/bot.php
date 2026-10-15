@@ -1,7 +1,10 @@
 <?php
 declare(strict_types=1);
 if(PHP_SAPI!=='cli'){http_response_code(404);exit;}
-require dirname(__DIR__).'/lib/telegram.php';
+// GitDeck preserves the server Dockerfile; older images copied only two files into /opt/lib.
+// The application library directory always contains the complete deployed code.
+$library=is_file('/var/www/html/lib/telegram.php')?'/var/www/html/lib/telegram.php':dirname(__DIR__).'/lib/telegram.php';
+require $library;
 if(!getenv('TELEGRAM_BOT_TOKEN')){fwrite(STDERR,"Set TELEGRAM_BOT_TOKEN in .env and restart the bot service.\n");exit(1);}
 $dir=getenv('MARATHON_DATA_DIR')?:dirname(__DIR__).'/storage';db();
 $lock=fopen($dir.'/bot.lock','c');if(!flock($lock,LOCK_EX|LOCK_NB)){fwrite(STDERR,"Another bot worker is already running.\n");exit(1);}
