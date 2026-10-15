@@ -70,15 +70,15 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         reader.call('complete_week',{'week':2,'days':5},403)
         admin.call('week_plan',{'week':2,'books':[{'title':'Same','chapter_from':1,'chapter_to':4},{'title':'Same','chapter_from':4,'chapter_to':7}]},400)
         reader.call('add_reading',{'chapters':3,'date':'2026-10-22','title':'Some reading','key':'first_daily_entry'})
-        current=reader.call('profile')['stats']['pace'];assert current['chapters']==3 and current['perDay']==2 and current['days']==1 and current['completedOn'] is None
+        current=reader.call('profile')['stats']['pace'];assert current['chapters']==3 and current['perDay']==2 and current['days']==4 and current['completedOn'] is None
         result=reader.call('complete_week',{'week':2})['week']
-        assert result['chapters']==10 and result['days']==1 and result['actualPerDay']==10
+        assert result['chapters']==10 and result['days']==4 and result['actualPerDay']==2.5
         assert result['status']=='completed' and result['completedOn']=='2026-10-22'
         again=reader.call('complete_week',{'week':2})['week']
-        assert again['chapters']==10 and again['days']==1
+        assert again['chapters']==10 and again['days']==4
         corrected=reader.call('week_result',{'week':2,'chapters':2,'title':'Corrected total'})['week']
-        assert corrected['chapters']==2 and corrected['chaptersDaily']==3 and corrected['days']==1
-        assert corrected['actualPerDay']==2 and corrected['status']=='in_progress' and corrected['completedOn'] is None
+        assert corrected['chapters']==2 and corrected['chaptersDaily']==3 and corrected['days']==4
+        assert corrected['actualPerDay']==0.5 and corrected['status']=='in_progress' and corrected['completedOn'] is None
         assert len(reader.call('profile')['stats']['entries'])==1, 'Weekly correction must preserve daily history'
         reader.call('week_result',{'week':2,'chapters':11},400)
         reader.call('week_result',{'week':2,'chapters':3,'days':5},403)
@@ -122,7 +122,7 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         reader.call('add_reading',{'chapters':1,'date':'2026-10-15','key':'closed_daily_entry'},400)
         late=reader.call('complete_week',{'week':1})['week']
         assert late['status']=='completed_late' and late['overdueDays']==4 and not late['editable']
-        assert late['chapters']==10 and late['days']==7 and late['actualPerDay']==1.43
+        assert late['chapters']==10 and late['days']==11 and late['actualPerDay']==0.91
         assert len(late['completedBooks'])==2
         admin.call('week_result',{'user':uid,'week':1,'chapters':8},400)
         reader.call('week_result',{'week':1,'chapters':8},400)
@@ -141,6 +141,24 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         legacy=next(r for r in archive_stats['legacy']['reports'] if r['week']==2)
         assert archive_stats['pace']['chapters']==0 and archive_stats['legacy']['pages']==50
         assert legacy['title']=='Legacy title' and legacy['note']=='Legacy note'
+        # Telegram duration is completion date minus prior completion, not message-count days.
+        admin.call('complete_week',{'user':other,'week':1,'days':2})
+        with sqlite3.connect(Path(folder)/'marathon.sqlite') as db:
+            db.execute("UPDATE week_completions SET completed_on='2026-10-15' WHERE user_id=? AND week=1",(other,))
+            db.execute("UPDATE users SET telegram_id='888888' WHERE id=?",(other,))
+        db.close()
+        tg={'update_id':2001,'message':{'from':{'id':888888},'chat':{'type':'private','id':888888},'text':'прочитал 10'}}
+        subprocess.run([PHP,'-r',code,str(ROOT/'lib/telegram.php')],env=env,input=json.dumps(tg),text=True,check=True,stdout=subprocess.DEVNULL)
+        duration=admin.call('profile',suffix='&user='+other)['stats']['pace']
+        assert duration['days']==7 and duration['dailyMarkedDays']==1 and duration['durationFrom']=='2026-10-15'
+        assert duration['daysManual'] is None and duration['completedOn']=='2026-10-22'
+        # A later visit must not increase a completed plan's duration.
+        later=dict(env,MARATHON_TEST_TODAY='2026-10-25')
+        check='require $argv[1]; echo json_encode(weekResults($argv[2])[1]);'
+        frozen=json.loads(subprocess.check_output([PHP,'-r',check,str(ROOT/'lib/core.php'),other],env=later,text=True))
+        assert frozen['days']==7
+        admin.call('week_result',{'user':other,'week':2,'chapters':10,'days':5})
+        assert admin.call('profile',suffix='&user='+other)['stats']['pace']['days']==5
         # Roles grant permissions without removing anyone from the reading roster.
         aid=admin.boot()['user']['id']
         reader.call('update_user',{'user':other,'name':'Forbidden'},403)
@@ -211,6 +229,7 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         assert unlinked['user']['telegram_id'] is None and unlinked['user']['telegram_name'] is None
         assert unlinked['stats']['chapters']==chapters_before
         admin.call('unlink_telegram',{'user':uid})  # Idempotent, without changing reading data.
+        admin.call('unlink_telegram',{'user':other})
         invitation=admin.call('telegram_request',{'kind':'invite','user':other})
         update['update_id']=1004;update['callback_query']['data']='i_'+invitation['token']
         subprocess.run([PHP,'-r',code,str(ROOT/'lib/telegram.php')],env=env,input=json.dumps(update),text=True,check=True,stdout=subprocess.DEVNULL)

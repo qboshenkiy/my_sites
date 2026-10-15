@@ -46,7 +46,7 @@ function telegramUpdate(array $update): array {
         } elseif(!$callback&&preg_match('/^(?:прочитал(?:а)?|\/read(?:@\w+)?)\s+(\d+)\s*(?:глав(?:у|ы)?\s*)?$/iu',trim($text),$reading)) {
             $reader=sql('SELECT * FROM users WHERE telegram_id=? AND active=1 AND deleted_at IS NULL',[$telegramId])->fetch();
             if(!$reader)$reply('Сначала привяжите Telegram к своему аккаунту по персональной ссылке от команды марафона.');
-            else {try{$week=addReading($reader['id'],$reader['id'],(int)$reading[1],calendar()['today'],'','Отметка из Telegram','telegram','tg_'.$updateId);$reply('Зачтено '.$reading[1].' глав. Неделя '.$week['week'].': '.$week['chapters'].' из '.$week['goal'].'. Осталось '.$week['remaining'].' глав; темп — '.$week['perDay'].' в день.');}catch(DomainException $e){$reply($e->getMessage());}}
+            else {try{$week=addReading($reader['id'],$reader['id'],(int)$reading[1],calendar()['today'],'','Отметка из Telegram','telegram','tg_'.$updateId);$reply('Зачтено '.$reading[1].' глав. Неделя '.$week['week'].': '.$week['chapters'].' из '.$week['goal'].'. '.($week['completed']?'План выполнен за '.$week['days'].' дн.':'Осталось '.$week['remaining'].' глав; темп — '.$week['perDay'].' в день.'));}catch(DomainException $e){$reply($e->getMessage());}}
         } else $reply("Бот привязывает Telegram и подтверждает вход.\nЧтобы отметить чтение за сегодня, напишите: прочитал 5\nГрафики, планы и отчёты доступны на сайте.",$base!==''?[[['text'=>'Открыть сайт','url'=>$base]]]:null);
         sql('INSERT INTO bot_updates VALUES (?,?)',[$updateId,time()]);
         db()->exec('COMMIT');return $out;

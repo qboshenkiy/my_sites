@@ -98,7 +98,7 @@ try {
         $daily=(int)(sql('SELECT SUM(chapters) FROM reading_entries WHERE user_id=? AND week=?',[$id,$week])->fetchColumn()?:0);
         $elapsed=max(1,(int)(new DateTimeImmutable($w['start']))->diff(new DateTimeImmutable(calendar()['today']))->format('%r%a')+1);
         $before=weekResults($id)[$week-1];
-        $days=$me['role']==='participant'?($total===$w['goal']&&$before['completed']?$before['daysManual']:null):(($input['days']??'')===''?null:number($input['days'],$total?1:0,min(3660,$elapsed)));$title=text($input['title']??'',200,false);$note=text($input['note']??'',1000,false);
+        $days=$me['role']==='participant'?($total>0?$before['daysManual']:null):(($input['days']??'')===''?null:number($input['days'],$total?1:0,3660));$title=text($input['title']??'',200,false);$note=text($input['note']??'',1000,false);
         if($total===$w['goal'])assertCompletionAllowed($me['id'],$week);
         sql('INSERT INTO reports(user_id,week,editor_id,updated_at,chapters_manual,days_manual,title,note) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(user_id,week) DO UPDATE SET chapters_manual=excluded.chapters_manual,days_manual=excluded.days_manual,title=excluded.title,note=excluded.note,editor_id=excluded.editor_id,updated_at=excluded.updated_at',[$id,$week,$me['id'],time(),max(0,$total-$daily),$days,$title,$note]);
         sql('UPDATE reports SET chapters_override=? WHERE user_id=? AND week=?',[$total,$id,$week]);
