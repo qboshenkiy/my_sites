@@ -123,6 +123,28 @@ class GitDeckTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 app.extract_source(data.getvalue(), self.root / 'extract', 'pulse')
 
+    def test_bot_starts_without_compose_healthcheck_wait(self):
+        p = dict(self.project, services=['web', 'bot'])
+        calls = []
+        def docker(project, args, log):
+            calls.append(args)
+            if args[0] == 'ps':
+                return b'bot-container-id\n'
+            return b''
+        with patch.object(app, 'compose', side_effect=docker), patch.object(app.time, 'sleep'):
+            app.start_services(p, io.StringIO())
+        self.assertIn('--wait', calls[0])
+        self.assertEqual(calls[0][-1], 'web')
+        self.assertNotIn('--wait', calls[1])
+        self.assertEqual(calls[1][-1], 'bot')
+        self.assertEqual(sum(c[0] == 'ps' for c in calls), 3)
+
+    def test_exited_bot_fails_startup(self):
+        p = dict(self.project, services=['web', 'bot'])
+        with patch.object(app, 'compose', return_value=b''), patch.object(app.time, 'sleep'):
+            with self.assertRaisesRegex(RuntimeError, 'Бот'):
+                app.start_services(p, io.StringIO())
+
     def test_config_rejects_credentials_and_shell_text(self):
         good = dict(self.project, repo='git@github.com:user/repository.git')
         app.validate_project(good)

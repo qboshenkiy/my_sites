@@ -13,5 +13,9 @@ case "$mode" in
 esac
 options=()
 if [ "${2:-}" = telegram ]; then options=(--profile telegram); fi
-docker compose -f "$file" "${options[@]}" up -d --build --wait --wait-timeout 180
+docker compose -f "$file" up -d --build --wait --wait-timeout 180 web
+if [ "$mode" = https ]; then docker compose -f "$file" up -d --no-deps proxy; fi
+if [ "${2:-}" = telegram ]; then
+    docker compose -f "$file" "${options[@]}" up -d --build --no-deps bot
+fi
 echo 'Site started. Open APP_URL from your .env file and create the first administrator.'

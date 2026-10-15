@@ -22,7 +22,7 @@ import threading
 import time
 import urllib.parse
 
-VERSION = '1.0.0'
+VERSION = '1.0.1'
 LAYOUT = {
     'pulse': ['index.php', 'api.php', 'seed.php', '.htaccess', 'assets', 'tools/check.php', 'tools/backup.php'],
     'marathon': ['index.php', 'api.php', '.htaccess', 'assets', 'lib', 'tools/bot.php', 'tools/backup.php'],
@@ -127,6 +127,21 @@ def compose(p, args, log):
     for profile in p.get('profiles', []):
         command += ['--profile', profile]
     return run(command + args, log, cwd=p['directory'])
+
+
+def start_services(p, log, build=True):
+    # Compose must only wait for services that actually have a healthcheck.
+    flags = ['--build'] if build else []
+    compose(p, ['up', '-d'] + flags + ['--wait', '--wait-timeout', '180', 'web'], log)
+    if 'bot' in p['services']:
+        compose(p, ['up', '-d'] + flags + ['--no-deps', 'bot'], log)
+        # This checks process startup, not Telegram connectivity.
+        for _ in range(3):
+            time.sleep(1)
+            if not compose(p, ['ps', '--status', 'running', '-q', 'bot'], log).strip():
+                raise RuntimeError('Бот не остаётся запущенным; проверьте его журнал и настройки Telegram')
+        log.write('\nСайт прошёл healthcheck; процесс бота запущен без ожидания healthcheck.\n')
+        log.flush()
 
 
 def allowed(name, kind):
@@ -268,7 +283,7 @@ def deploy(config, p, job, log):
         copy_code(source, dest, p['kind'])
         status_update(config, job, 'installing', sha=sha)
         if p['kind'] != 'self':
-            compose(p, ['up', '-d', '--build', '--wait', '--wait-timeout', '180'] + p['services'], log)
+            start_services(p, log)
         if p['kind'] == 'self':
             run(['systemctl', 'restart', 'gitdeck'], log, timeout=60)
             # Restart returning success must include a responsive HTTP process.
@@ -295,7 +310,7 @@ def deploy(config, p, job, log):
             copy_code(old, dest, p['kind'])
             if p['kind'] != 'self':
                 database_restore(p, jobdir, log)
-                compose(p, ['up', '-d', '--build', '--wait', '--wait-timeout', '180'] + p['services'], log)
+                start_services(p, log)
             else:
                 run(['systemctl', 'restart', 'gitdeck'], log, timeout=60)
             with db_open(config) as db:
@@ -305,7 +320,7 @@ def deploy(config, p, job, log):
                     db.execute('DELETE FROM versions WHERE project=?', (p['id'],))
             log.write('\nПредыдущий код и база восстановлены.\n')
         elif stopped:
-            compose(p, ['up', '-d', '--wait'] + p['services'], log)
+            start_services(p, log, build=False)
         raise
 
 

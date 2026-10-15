@@ -18,7 +18,7 @@ if (-not (Test-DockerReady)) {
     }
     if (-not $ready) { throw 'Docker Desktop is still starting. Retry this script shortly.' }
 }
-docker compose up -d --build --wait --wait-timeout 120
+docker compose up -d --build --wait --wait-timeout 120 web
 if ($LASTEXITCODE -ne 0) { throw 'Could not start the site. Inspect docker compose logs.' }
 $binding = docker compose port web 80
 $port = ($binding -split ':')[-1]

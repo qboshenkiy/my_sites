@@ -14,9 +14,10 @@ scp C:/laragon/www/my_project/marathon/dist/reading-marathon-update.tar.gz root@
 cd /opt/marathon
 docker compose -f compose.https.yaml exec -T web php /opt/marathon/backup.php /var/lib/marathon/before-v2.sqlite
 docker compose -f compose.https.yaml cp web:/var/lib/marathon/before-v2.sqlite /root/marathon-before-v2.sqlite
-docker compose -f compose.https.yaml --profile telegram stop
+docker compose -f compose.https.yaml --profile telegram stop web bot
 tar -xzf /root/reading-marathon-update.tar.gz -C /opt/marathon
-docker compose -f compose.https.yaml --profile telegram up -d --build --wait
+docker compose -f compose.https.yaml up -d --build --wait web
+docker compose -f compose.https.yaml --profile telegram up -d --build --no-deps bot
 ```
 
 Если `before-v2.sqlite` уже существует, используйте другое имя. Для HTTP уберите `-f compose.https.yaml`; для общего прокси замените его на `-f compose.shared.yaml`. Если у вас нет бота, уберите `--profile telegram`. Не используйте `down -v`.
