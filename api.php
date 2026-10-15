@@ -79,6 +79,10 @@ try {
         foreach ($rooms as &$r) { $r['title']=json_decode($r['quiz'],true)['title']; unset($r['quiz']); }
         out(['quizzes'=>$quizzes,'rooms'=>$rooms]);
     }
+    if($action==='import_preview'){
+        hostOnly();require __DIR__.'/assets/quiz-import.php';if(!is_string($input['json']??null))fail('Вставьте JSON текстом.');
+        try{out(normalizeQuizImport($input['json'],$input));}catch(DomainException $e){fail($e->getMessage());}
+    }
     if ($action==='save') {
         hostOnly(); $title=cleanText($input['title']??'',100); $description=trim((string)($input['description']??''));
         if (mb_strlen($description)>300) fail('Описание: максимум 300 символов.');
@@ -99,7 +103,8 @@ try {
             $category=$mode==='board'?cleanText($q['category']??'',60):trim((string)($q['category']??''));
             if($mode==='board'){ $cell=$category.'|'.$points;if(isset($cells[$cell]))fail('В категории не должно быть двух вопросов с одинаковыми баллами.');$cells[$cell]=true; }
             $image=$q['image']??null;if($image&&!query('SELECT id FROM images WHERE id=?',[$image])->fetchColumn())fail('Изображение не найдено.');
-            $valid[]=['text'=>cleanText($q['text']??'',250),'type'=>$type,'seconds'=>$seconds,'options'=>$options,'correct'=>$correct,'category'=>$category,'points'=>$points,'image'=>$image];
+            $reference=$q['reference']??'';if(!is_string($reference)||mb_strlen($reference)>200)fail('Ссылка на источник: максимум 200 символов.');
+            $valid[]=['reference'=>trim($reference),'text'=>cleanText($q['text']??'',250),'type'=>$type,'seconds'=>$seconds,'options'=>$options,'correct'=>$correct,'category'=>$category,'points'=>$points,'image'=>$image];
         }
         $id=$input['id']??bin2hex(random_bytes(8));
         if (!is_string($id) || !preg_match('/^[a-f0-9]{16}$/',$id)) fail('Некорректный идентификатор.');
@@ -170,7 +175,7 @@ try {
         foreach(query('SELECT choice,count(*) AS total FROM answers WHERE room_id=? AND question_index=? GROUP BY choice',[$roomId,$index])->fetchAll() as $a) $counts[(int)$a['choice']]=(int)$a['total'];
         $answer=$player?query('SELECT choice,points FROM answers WHERE player_id=? AND question_index=?',[$player['id'],$index])->fetch():null;
         $revealed=in_array($room['status'],['results','finished'],true);
-        if ($question && !$revealed) unset($question['correct']);
+        if ($question && !$revealed) unset($question['correct'],$question['reference']);
         if ($player && !$revealed) {
             $counts=[]; if ($answer) unset($answer['points']);
             // Current-question scores would reveal correctness before the host reveals results.
