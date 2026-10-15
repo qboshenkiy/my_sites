@@ -159,6 +159,26 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         assert frozen['days']==7
         admin.call('week_result',{'user':other,'week':2,'chapters':10,'days':5})
         assert admin.call('profile',suffix='&user='+other)['stats']['pace']['days']==5
+        # A single Telegram message can cover both previous and current plans.
+        admin.call('week_lock',{'week':1,'open':1})
+        admin.call('week_result',{'user':other,'week':1,'chapters':4,'days':2})
+        admin.call('week_lock',{'week':1,'open':0})
+        admin.call('clear_week_result',{'user':other,'week':2})
+        tg['update_id']=2002;tg['message']['text']='прочитал 17'
+        rejected=json.loads(subprocess.check_output([PHP,'-r',code,str(ROOT/'lib/telegram.php')],env=env,input=json.dumps(tg),text=True))
+        assert 'не больше 16' in rejected[0]['args']['text']
+        before_split=admin.call('profile',suffix='&user='+other)['stats']
+        assert before_split['reports'][0]['chapters']==4 and before_split['pace']['chapters']==0
+        tg['update_id']=2003;tg['message']['text']='прочитал 16'
+        accepted=json.loads(subprocess.check_output([PHP,'-r',code,str(ROOT/'lib/telegram.php')],env=env,input=json.dumps(tg),text=True))
+        assert 'Неделя 1: +6' in accepted[0]['args']['text'] and 'Неделя 2: +10' in accepted[0]['args']['text']
+        split=admin.call('profile',suffix='&user='+other)['stats']
+        assert split['reports'][0]['chapters']==10 and split['reports'][0]['late']
+        assert split['pace']['chapters']==10 and split['pace']['days']==1
+        assert len(split['entries'])==2 and all(e['date']=='2026-10-22' for e in split['entries'])
+        replay=json.loads(subprocess.check_output([PHP,'-r',code,str(ROOT/'lib/telegram.php')],env=env,input=json.dumps(tg),text=True))
+        assert replay==[] and admin.call('profile',suffix='&user='+other)['stats']['chapters']==20
+        print('PASS: Telegram splits chapters across previous/current plans, closes late plan, preserves dates, rejects overflow atomically and ignores replay.')
         # Roles grant permissions without removing anyone from the reading roster.
         aid=admin.boot()['user']['id']
         reader.call('update_user',{'user':other,'name':'Forbidden'},403)

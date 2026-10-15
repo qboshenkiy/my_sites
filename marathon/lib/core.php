@@ -112,6 +112,21 @@ function addReading(string $id,string $actor,int $chapters,string $date,string $
     sql('INSERT INTO reading_entries VALUES (?,?,?,?,?,?,?,?,?,?)',[$entryId,$id,$week,$date,$chapters,$title,$note,$actor,$source,time()]);sql('UPDATE reports SET chapters_override=chapters_override+? WHERE user_id=? AND week=? AND chapters_override IS NOT NULL',[$chapters,$id,$week]);syncCompletion($id,$week);audit($actor,'reading',$id,$date.': +'.$chapters.' глав ('.$source.')');return weekResults($id)[$week-1];
 }
 
+// Called inside the Telegram update transaction. Validate the complete allocation before writing.
+function addTelegramReading(string $id,int $chapters,int $updateId): array {
+    $c=calendar();$current=$c['current'];if($current<1||$current>23)throw new DomainException('Сейчас нет текущего или предыдущего плана для отметки.');
+    if($chapters<1||$chapters>200000)throw new DomainException('Укажите положительное число глав, не больше 200000.');
+    $weeks=weekResults($id);$eligible=array_values(array_filter($weeks,fn($w)=>$w['week']>=max(1,$current-1)&&$w['week']<=min(22,$current)&&$w['remaining']>0));
+    $capacity=array_sum(array_column($eligible,'remaining'));if($chapters>$capacity)throw new DomainException('Можно зачесть не больше '.$capacity.' глав: это остаток предыдущей и текущей недель. Ничего не добавлено.');
+    $left=$chapters;$result=[];
+    foreach($eligible as $w){if(!$left)break;$amount=min($left,$w['remaining']);$week=$w['week'];
+        sql('INSERT INTO reading_entries VALUES (?,?,?,?,?,?,?,?,?,?)',['tg_'.$updateId.'_w'.$week,$id,$week,$c['today'],$amount,'','Отметка из Telegram: распределение по планам',$id,'telegram',time()]);
+        sql('UPDATE reports SET chapters_override=chapters_override+? WHERE user_id=? AND week=? AND chapters_override IS NOT NULL',[$amount,$id,$week]);
+        syncCompletion($id,$week);$saved=weekResults($id)[$week-1];$saved['added']=$amount;$result[]=$saved;$left-=$amount;
+        audit($id,'reading',$id,$c['today'].': +'.$amount.' глав (Telegram, неделя '.$week.')');
+    }
+    return $result;
+}
 function syncCompletion(string $id,int $week): void {
     $w=weekResults($id)[$week-1];
     if(!$w['completed']){sql('DELETE FROM week_completions WHERE user_id=? AND week=?',[$id,$week]);return;}

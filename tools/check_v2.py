@@ -65,9 +65,10 @@ with tempfile.TemporaryDirectory(prefix='sites-v2-') as tmp:
   r.call('add_reading',{'chapters':10,'date':'2026-10-19','title':'Book','key':'entry-key-0001'})
   r.call('add_reading',{'chapters':10,'date':'2026-10-19','title':'Book','key':'entry-key-0001'})
   assert r.call('profile')['stats']['chapters']==10
+  a.call('complete_week',{'user':uid,'week':1,'days':7})
   update={'update_id':3,'message':{'from':sender,'chat':chat,'text':'прочитал 50'}}
   response=bot(update);assert 'Зачтено' in response[0]['args']['text'];assert bot(update)==[]
-  s=r.call('profile')['stats'];assert s['chapters']==60 and s['days']==2 and s['pace']['remaining']==0
+  s=r.call('profile')['stats'];assert s['chapters']==67 and s['days']==8 and s['pace']['remaining']==0
   rejected=bot({'update_id':4,'message':{'from':sender,'chat':chat,'text':'прочитал 1'}});assert 'не больше 0' in rejected[0]['args']['text']
   r.call('add_reading',{'chapters':1,'date':'2026-10-20','key':'entry-key-0002'},400)
   a.call('week_result',{'user':uid,'week':1,'chapters':2},400)
