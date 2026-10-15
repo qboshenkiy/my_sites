@@ -148,7 +148,15 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
             db.execute("UPDATE users SET telegram_id='888888' WHERE id=?",(other,))
         db.close()
         tg={'update_id':2001,'message':{'from':{'id':888888},'chat':{'type':'private','id':888888},'text':'прочитал 10'}}
-        subprocess.run([PHP,'-r',code,str(ROOT/'lib/telegram.php')],env=env,input=json.dumps(tg),text=True,check=True,stdout=subprocess.DEVNULL)
+        def bot_read(update):
+            return json.loads(subprocess.check_output([PHP,'-r',code,str(ROOT/'lib/telegram.php')],env=env,input=json.dumps(update),text=True))
+        def confirm_read(preview, update_id, approve=True, sender=888888):
+            buttons=next(item['args']['reply_markup']['inline_keyboard'] for item in preview if 'reply_markup' in item.get('args',{}))
+            data=buttons[0][0 if approve else 1]['callback_data']
+            return bot_read({'update_id':update_id,'callback_query':{'id':str(update_id),'from':{'id':sender},'message':{'chat':{'type':'private','id':sender}},'data':data}})
+        preview=bot_read(tg)
+        assert admin.call('profile',suffix='&user='+other)['stats']['pace']['chapters']==0
+        confirm_read(preview,2101)
         duration=admin.call('profile',suffix='&user='+other)['stats']['pace']
         assert duration['days']==7 and duration['dailyMarkedDays']==1 and duration['durationFrom']=='2026-10-15'
         assert duration['daysManual'] is None and duration['completedOn']=='2026-10-22'
@@ -172,12 +180,41 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         tg['update_id']=2003;tg['message']['text']='прочитал 16'
         accepted=json.loads(subprocess.check_output([PHP,'-r',code,str(ROOT/'lib/telegram.php')],env=env,input=json.dumps(tg),text=True))
         assert 'Неделя 1: +6' in accepted[0]['args']['text'] and 'Неделя 2: +10' in accepted[0]['args']['text']
+        assert admin.call('profile',suffix='&user='+other)['stats']['chapters']==4, 'Preview must never write chapters'
+        forged=confirm_read(accepted,2102,sender=777777)
+        assert any('недоступно' in item['args'].get('text','') for item in forged)
+        confirm_read(accepted,2103)
         split=admin.call('profile',suffix='&user='+other)['stats']
         assert split['reports'][0]['chapters']==10 and split['reports'][0]['late']
         assert split['pace']['chapters']==10 and split['pace']['days']==1
         assert len(split['entries'])==2 and all(e['date']=='2026-10-22' for e in split['entries'])
         replay=json.loads(subprocess.check_output([PHP,'-r',code,str(ROOT/'lib/telegram.php')],env=env,input=json.dumps(tg),text=True))
         assert replay==[] and admin.call('profile',suffix='&user='+other)['stats']['chapters']==20
+        confirm_read(accepted,2104)
+        assert admin.call('profile',suffix='&user='+other)['stats']['chapters']==20, 'Repeated confirmation must not add chapters twice'
+        admin.call('clear_week_result',{'user':other,'week':2})
+        tg['message']['text']='прочитал 3';tg['update_id']=2004;cancel_preview=bot_read(tg)
+        confirm_read(cancel_preview,2105,approve=False)
+        confirm_read(cancel_preview,2106)
+        assert admin.call('profile',suffix='&user='+other)['stats']['pace']['chapters']==0
+        tg['update_id']=2005;stale=bot_read(tg)
+        admin.call('week_result',{'user':other,'week':2,'chapters':2,'days':1})
+        stale_response=confirm_read(stale,2107)
+        assert any('изменились' in item['args'].get('text','') for item in stale_response)
+        assert admin.call('profile',suffix='&user='+other)['stats']['pace']['chapters']==2
+        tg['update_id']=2006;expired=bot_read(tg)
+        with sqlite3.connect(Path(folder)/'marathon.sqlite') as db:
+            db.execute('UPDATE telegram_reading_requests SET expires_at=0 WHERE user_id=?',(other,))
+        db.close()
+        confirm_read(expired,2108)
+        assert admin.call('profile',suffix='&user='+other)['stats']['pace']['chapters']==2
+        tg['update_id']=2007;superseded=bot_read(tg)
+        tg['update_id']=2008;fresh=bot_read(tg)
+        confirm_read(superseded,2109)
+        assert admin.call('profile',suffix='&user='+other)['stats']['pace']['chapters']==2
+        confirm_read(fresh,2110)
+        assert admin.call('profile',suffix='&user='+other)['stats']['pace']['chapters']==5
+        print('PASS: Telegram preview writes nothing; confirm/cancel, expiry, new input, ownership, changed plans and double-click protection.')
         print('PASS: Telegram splits chapters across previous/current plans, closes late plan, preserves dates, rejects overflow atomically and ignores replay.')
         # Roles grant permissions without removing anyone from the reading roster.
         aid=admin.boot()['user']['id']

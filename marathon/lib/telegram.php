@@ -23,7 +23,23 @@ function telegramUpdate(array $update): array {
         if($callback&&preg_match('/^([ai])_([a-f0-9]{48})$/',$text,$match)){$kind=$match[1]==='a'?'login':'invite';$token=$match[2];}
         elseif(!$callback&&preg_match('/^\/start(?:@\w+)? ([ai])_([a-f0-9]{48})$/',$text,$match)){$kind=$match[1]==='a'?'login':'invite';$token=$match[2];}
         if($callback)$out[]=['method'=>'answerCallbackQuery','args'=>['callback_query_id'=>$callback['id']]];
-        if($kind&&$token){
+        if($callback&&preg_match('/^r_([yn])_([a-f0-9]{32})$/',$text,$confirmation)){
+            $request=sql('SELECT * FROM telegram_reading_requests WHERE token_hash=?',[hash('sha256',$confirmation[2])])->fetch();
+            $reader=$request?user($request['user_id']):null;
+            if(!$request||$request['consumed']||$request['expires_at']<time()||!$reader||!$reader['active']||$reader['telegram_id']!==$telegramId||$request['telegram_id']!==$telegramId||(int)$reader['session_epoch']!==(int)$request['session_epoch'])$reply('Подтверждение недоступно, уже использовано или истекло. Отправьте число глав заново.');
+            else {
+                sql('UPDATE telegram_reading_requests SET consumed=1 WHERE token_hash=?',[$request['token_hash']]);
+                if($confirmation[1]==='n')$reply('Отменено. Главы не добавлены. Можно отправить правильное число: прочитал 5');
+                else {try{
+                    $plan=telegramReadingPlan($reader['id'],(int)$request['chapters']);
+                    if(!hash_equals($request['snapshot'],json_encode(['today'=>calendar()['today'],'plan'=>$plan],JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR)))$reply('Результаты или план изменились после запроса. Ничего не добавлено. Отправьте число глав заново и проверьте распределение.');
+                    else {$weeks=addTelegramReading($reader['id'],(int)$request['chapters'],$updateId);$lines=['Зачтено '.$request['chapters'].' глав.'];
+                        foreach($weeks as $week)$lines[]='Неделя '.$week['week'].': +'.$week['added'].' глав, всего '.$week['chapters'].' из '.$week['goal'].'. '.($week['completed']?'План выполнен за '.$week['days'].' дн.'.($week['late']?' С опозданием.':''):'Осталось '.$week['remaining'].' глав.');
+                        $reply(implode("\n",$lines));}
+                }catch(DomainException $e){$reply($e->getMessage().' Отправьте число глав заново.');}}
+                if(isset($message['message_id']))$out[]=['method'=>'editMessageReplyMarkup','args'=>['chat_id'=>$chat['id'],'message_id'=>$message['message_id'],'reply_markup'=>['inline_keyboard'=>[]]]];
+            }
+        } elseif($kind&&$token){
             $r=sql('SELECT * FROM requests WHERE token_hash=?',[hash('sha256',$token)])->fetch();
             $linked=sql('SELECT * FROM users WHERE telegram_id=? AND active=1 AND deleted_at IS NULL',[$telegramId])->fetch();
             if(!$r||$r['kind']!==$kind||$r['expires_at']<time()||$r['approved']||$r['consumed'])$reply('Ссылка уже использована или истекла. Получите новую ссылку на сайте.');
@@ -46,10 +62,14 @@ function telegramUpdate(array $update): array {
         } elseif(!$callback&&preg_match('/^(?:прочитал(?:а)?|\/read(?:@\w+)?)\s+(\d+)\s*(?:глав(?:у|ы)?\s*)?$/iu',trim($text),$reading)) {
             $reader=sql('SELECT * FROM users WHERE telegram_id=? AND active=1 AND deleted_at IS NULL',[$telegramId])->fetch();
             if(!$reader)$reply('Сначала привяжите Telegram к своему аккаунту по персональной ссылке от команды марафона.');
-            else {try{$weeks=addTelegramReading($reader['id'],(int)$reading[1],$updateId);$lines=['Зачтено '.$reading[1].' глав. Сначала закрываем предыдущую неделю, затем текущую.'];
-                foreach($weeks as $week)$lines[]='Неделя '.$week['week'].': +'.$week['added'].' глав, всего '.$week['chapters'].' из '.$week['goal'].'. '.($week['completed']?'План выполнен за '.$week['days'].' дн.'.($week['late']?' С опозданием.':''):'Осталось '.$week['remaining'].' глав.');
-                $reply(implode("\n",$lines));}catch(DomainException $e){$reply($e->getMessage());}}
-        } else $reply("Бот привязывает Telegram и подтверждает вход.\nЧтобы добавить прочитанные главы, напишите: прочитал 5\nГлавы сначала закрывают предыдущую неделю, остаток идёт в текущую.\nГрафики, планы и отчёты доступны на сайте.",$base!==''?[[['text'=>'Открыть сайт','url'=>$base]]]:null);
+            else {sql('DELETE FROM telegram_reading_requests WHERE user_id=? OR expires_at<?',[$reader['id'],time()]);try{$plan=telegramReadingPlan($reader['id'],(int)$reading[1]);$token=bin2hex(random_bytes(16));
+                sql('INSERT INTO telegram_reading_requests(token_hash,user_id,telegram_id,session_epoch,chapters,snapshot,expires_at) VALUES (?,?,?,?,?,?,?)',[hash('sha256',$token),$reader['id'],$telegramId,(int)$reader['session_epoch'],(int)$reading[1],json_encode(['today'=>calendar()['today'],'plan'=>$plan],JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR),time()+900]);
+                $lines=['Добавить '.$reading[1].' глав? Сначала предыдущая неделя, затем текущая.'];
+                foreach($plan as $week)$lines[]='Неделя '.$week['week'].': +'.$week['added'].' глав → '.($week['chapters']+$week['added']).' из '.$week['goal'].'.';
+                $lines[]='Пока ничего не зачтено. Проверьте число и подтвердите. Кнопки действуют 15 минут; новый ввод заменяет предыдущий запрос.';
+                $reply(implode("\n",$lines),[[['text'=>'✓ Подтвердить','callback_data'=>'r_y_'.$token],['text'=>'Отмена','callback_data'=>'r_n_'.$token]]]);
+            }catch(DomainException $e){$reply($e->getMessage());}}
+        } else $reply("Бот привязывает Telegram и подтверждает вход.\nЧтобы добавить прочитанные главы, напишите: прочитал 5\nГлавы сначала закрывают предыдущую неделю, остаток идёт в текущую. Перед зачётом нажмите «Подтвердить» или «Отмена».\nГрафики, планы и отчёты доступны на сайте.",$base!==''?[[['text'=>'Открыть сайт','url'=>$base]]]:null);
         sql('INSERT INTO bot_updates VALUES (?,?)',[$updateId,time()]);
         db()->exec('COMMIT');return $out;
     } catch(Throwable $e){if(db()->inTransaction())db()->rollBack();else db()->exec('ROLLBACK');throw $e;}

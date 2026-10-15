@@ -67,7 +67,11 @@ with tempfile.TemporaryDirectory(prefix='sites-v2-') as tmp:
   assert r.call('profile')['stats']['chapters']==10
   a.call('complete_week',{'user':uid,'week':1,'days':7})
   update={'update_id':3,'message':{'from':sender,'chat':chat,'text':'прочитал 50'}}
-  response=bot(update);assert 'Зачтено' in response[0]['args']['text'];assert bot(update)==[]
+  response=bot(update);assert 'Пока ничего не зачтено' in response[0]['args']['text'];assert bot(update)==[]
+  assert r.call('profile')['stats']['pace']['chapters']==10
+  confirm=response[0]['args']['reply_markup']['inline_keyboard'][0][0]['callback_data']
+  response=bot({'update_id':30,'callback_query':{'id':'reading-confirm','from':sender,'message':{'chat':chat},'data':confirm}})
+  assert any('Зачтено' in item['args'].get('text','') for item in response)
   s=r.call('profile')['stats'];assert s['chapters']==67 and s['days']==8 and s['pace']['remaining']==0
   rejected=bot({'update_id':4,'message':{'from':sender,'chat':chat,'text':'прочитал 1'}});assert 'не больше 0' in rejected[0]['args']['text']
   r.call('add_reading',{'chapters':1,'date':'2026-10-20','key':'entry-key-0002'},400)
