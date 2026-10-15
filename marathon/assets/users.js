@@ -1,0 +1,21 @@
+// Account permissions are independent of reading participation.
+editUser=function(){
+ const u=profileData.user,own=u.id===boot.user.id;
+ dialog(`<h2>Аккаунт и права доступа</h2><p>${esc(u.name)} · Все роли участвуют в плане чтения.</p><form id="account-form"><input type="hidden" name="user" value="${u.id}"><label>Имя<input name="name" maxlength="80" required value="${esc(u.name)}"></label><label>Роль<select name="role" ${own?'disabled':''}>${Object.entries(roles).map(([r,name])=>`<option value="${r}" ${u.role===r?'selected':''}>${name}</option>`).join('')}</select></label><label>Логин<input name="login" maxlength="40" value="${esc(u.login)}" autocomplete="off"></label><label>Новый пароль (пусто — оставить прежний)<input name="password" type="password" minlength="8" maxlength="200" autocomplete="new-password"></label><label>Статус<select name="active" ${own?'disabled':''}><option value="1" ${Number(u.active)?'selected':''}>Активен</option><option value="0" ${!Number(u.active)?'selected':''}>Отключён</option></select></label>${own?'<p class="soft-note">Свой аккаунт нельзя отключить, удалить или понизить.</p>':''}<p class="form-feedback" role="alert"></p><button class="primary" type="submit">Сохранить аккаунт</button>${own?'':`<button type="button" class="text-button danger-button" data-account-delete="${u.id}">Удалить пользователя</button>`}</form>`);
+};
+const overviewBeforeAccounts=drawOverview;
+drawOverview=function(tab){
+ overviewBeforeAccounts(tab);
+ if(boot.user.role!=='admin')return;
+ if(tab==='team')document.querySelectorAll('tbody tr').forEach(row=>{const id=row.querySelector('[data-action=profile]')?.dataset.id;if(!id)return;const b=document.createElement('button');b.className='outline small';b.dataset.v2='user-edit';b.dataset.user=id;b.textContent='✎ Аккаунт';row.lastElementChild.append(b)});
+ const b=document.createElement('button');b.className='outline small';b.dataset.accountArchive='1';b.textContent='Архив пользователей';document.querySelector('.section-actions')?.append(b);
+};
+async function accountArchive(){const result=await api('archived_users');dialog(`<h2>Удалённые пользователи</h2><p>Результаты и история чтения сохранены. Восстановленный аккаунт вернётся в ведомость с прежней ролью.</p>${result.users.map(u=>`<form class="archived-account" id="restore-${u.id}" data-restore-account><input type="hidden" name="user" value="${u.id}"><p><strong>${esc(u.name)}</strong><br>${roles[u.role]} · ${new Date(u.deleted_at*1000).toLocaleDateString('ru-RU')}</p><p class="form-feedback" role="alert"></p><button class="outline" type="submit">Восстановить</button></form>`).join('')||'<div class="empty">Архив пуст.</div>'}`)}
+document.addEventListener('click',async e=>{
+ const archive=e.target.closest('[data-account-archive]'),remove=e.target.closest('[data-account-delete]');if(busy)return;
+ try{if(archive)await accountArchive();if(remove){const u=profileData.user;dialog(`<h2>Удалить ${esc(u.name)}?</h2><p>Пользователь исчезнет из ведомости и потеряет доступ к сайту. Его результаты сохранятся в архиве; администратор сможет восстановить аккаунт.</p><form id="delete-account-form"><input type="hidden" name="user" value="${u.id}"><p class="form-feedback" role="alert"></p><button class="primary danger-button" type="submit">Удалить в архив</button><button class="outline" type="button" data-action="edit-user">Отмена</button></form>`)}}catch(err){toast(err.message)}
+});
+document.addEventListener('submit',async e=>{
+ const form=e.target;if(!['account-form','delete-account-form'].includes(form.id)&&!form.matches('[data-restore-account]'))return;e.preventDefault();if(busy)return;busy=true;const button=form.querySelector('[type=submit]'),feedback=form.querySelector('.form-feedback');button.disabled=true;feedback.textContent='';
+ try{const data=Object.fromEntries(new FormData(form)),restoring=form.matches('[data-restore-account]'),action=restoring?'restore_user':form.id==='account-form'?'update_user':'delete_user';await api(action,data);document.querySelector('dialog')?.close();boot=await api('bootstrap');await loadOverview(view==='team'?'team':'participants');toast(restoring?'Аккаунт восстановлен с результатами.':action==='update_user'?'Аккаунт обновлён.':'Пользователь перемещён в архив.')}catch(err){feedback.textContent=err.message}finally{busy=false;button.disabled=false}
+});

@@ -125,6 +125,47 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         legacy=next(r for r in archive_stats['legacy']['reports'] if r['week']==2)
         assert archive_stats['pace']['chapters']==0 and archive_stats['legacy']['pages']==50
         assert legacy['title']=='Legacy title' and legacy['note']=='Legacy note'
+        # Roles grant permissions without removing anyone from the reading roster.
+        aid=admin.boot()['user']['id']
+        reader.call('update_user',{'user':other,'name':'Forbidden'},403)
+        reader.call('delete_user',{'user':other},403)
+        reader.call('archived_users',status=403)
+        admin.call('update_user',{'user':uid,'name':'Reader Moderator','role':'moderator'})
+        assert reader.boot()['user']['role']=='moderator'
+        roster=admin.call('overview')['users']
+        assert {aid,uid,other}.issubset({u['id'] for u in roster})
+        assert next(u for u in roster if u['id']==uid)['weekly'][0]['chapters']==10
+        reader.call('week_result',{'week':2,'chapters':6,'days':2})
+        admin.call('week_result',{'week':2,'chapters':4,'days':2})
+        admin.call('update_user',{'user':uid,'role':'admin'})
+        assert reader.call('profile')['stats']['pace']['chapters']==6
+        exported=admin.call('export_xlsx',suffix='&week=2')
+        with zipfile.ZipFile(io.BytesIO(exported)) as archive:
+            sheet=archive.read('xl/worksheets/sheet1.xml').decode()
+            assert 'Test Admin' in sheet and 'Reader Moderator' in sheet
+        admin.call('update_user',{'user':aid,'name':'Renamed Admin'})
+        assert admin.boot()['user']['name']=='Renamed Admin'
+        admin.call('delete_user',{'user':aid},400)
+        admin.call('update_user',{'user':aid,'active':0},400)
+        admin.call('delete_user',{'user':uid})
+        assert reader.boot()['user'] is None
+        assert uid not in {u['id'] for u in admin.call('overview')['users']}
+        assert admin.call('archived_users')['users'][0]['id']==uid
+        admin.call('profile',suffix='&user='+uid,status=404)
+        admin.call('update_user',{'user':uid,'name':'No edit of archive'},404)
+        admin.call('restore_user',{'user':uid})
+        assert reader.boot()['user'] is None, 'Old sessions must stay revoked after restoration'
+        restored=admin.call('profile',suffix='&user='+uid)
+        assert restored['user']['role']=='admin' and restored['stats']['pace']['chapters']==6
+        assert restored['stats']['reports'][0]['chapters']==10
+        assert not admin.call('archived_users')['users']
+        # A fresh Telegram login succeeds, preserving the original binding.
+        request=reader.call('telegram_request',{'kind':'login'})
+        update['update_id']=1002;update['callback_query']['data']='a_'+request['token']
+        subprocess.run([PHP,'-r',code,str(ROOT/'lib/telegram.php')],env=env,input=json.dumps(update),text=True,check=True,stdout=subprocess.DEVNULL)
+        reader.call('telegram_status',{'token':request['token']})
+        assert reader.boot()['user']['id']==uid
+        print('PASS: role-independent reading, staff weekly editing, staff XLSX, account editing, archive/restore, permissions and session revocation.')
         print('PASS: weekly CRUD/corrections below daily totals, retained history, new readings after correction, reset, ownership/locks, books, manual days, late marks and XLSX.')
     finally:
         server.terminate();server.wait(timeout=10)

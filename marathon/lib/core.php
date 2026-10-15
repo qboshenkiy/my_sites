@@ -19,6 +19,9 @@ function db(): PDO {
     // Additive migration: retain the old page/minute reports as historical data.
     $db->exec('BEGIN IMMEDIATE');
     try {
+        $userColumns=array_column(sql('PRAGMA table_info(users)')->fetchAll(),'name');
+        if(!in_array('deleted_at',$userColumns,true))$db->exec('ALTER TABLE users ADD COLUMN deleted_at INTEGER');
+        if(!in_array('session_epoch',$userColumns,true))$db->exec('ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0');
         $columns=array_column(sql('PRAGMA table_info(reports)')->fetchAll(),'name');
         if(!in_array('chapters_manual',$columns,true))$db->exec('ALTER TABLE reports ADD COLUMN chapters_manual INTEGER NOT NULL DEFAULT 0');
         if(!in_array('days_manual',$columns,true))$db->exec('ALTER TABLE reports ADD COLUMN days_manual INTEGER');
@@ -47,8 +50,8 @@ function calendar(): array {
     $items=[];for($i=1;$i<=$weeks;$i++) { $s=$start->modify('+'.(($i-1)*7).' days');$plan=$plans[$i-1];$items[]=['number'=>$i,'start'=>$s->format('Y-m-d'),'end'=>$s->modify('+6 days')->format('Y-m-d'),'goal'=>(int)$plan['chapters'],'books'=>$books[$i]??[],'canComplete'=>$i<=$current,'reopened'=>(bool)$plan['reopened'],'editable'=>$i<=$current&&($i===$current||(bool)$plan['reopened'])]; }
     return ['title'=>setting('title'),'start'=>$start->format('Y-m-d'),'end'=>$end->format('Y-m-d'),'today'=>$today->format('Y-m-d'),'current'=>$current,'weeks'=>$weeks,'goal'=>$items[max(0,min(21,$current-1))]['goal'],'legacyGoal'=>(int)setting('weekly_goal'),'calendar'=>$items];
 }
-function publicUser(array $u): array { unset($u['password']);return $u; }
-function user(string $id): ?array { return sql('SELECT * FROM users WHERE id=?',[$id])->fetch() ?: null; }
+function publicUser(array $u): array { unset($u['password'],$u['session_epoch']);return $u; }
+function user(string $id): ?array { return sql('SELECT * FROM users WHERE id=? AND deleted_at IS NULL',[$id])->fetch() ?: null; }
 function audit(string $actor,string $event,?string $target,string $details): void { sql('INSERT INTO audit(actor_id,event,target_id,details,created_at) VALUES (?,?,?,?,?)',[$actor,$event,$target,$details,time()]); }
 function legacyStats(string $id): array {
     $reports=sql('SELECT r.*,u.name AS editor FROM reports r JOIN users u ON u.id=r.editor_id WHERE r.user_id=? ORDER BY week',[$id])->fetchAll();
@@ -57,7 +60,7 @@ function legacyStats(string $id): array {
     return ['reports'=>$reports,'pages'=>$pages,'minutes'=>$minutes,'books'=>$books,'recorded'=>count($reports),'goalWeeks'=>$done,'goal'=>$goal,'progress'=>min(100,(int)round($pages/max(1,$goal*(int)setting('weeks'))*100))];
 }
 function legacyStaff(): array {
-    return sql("SELECT u.id,u.name,u.role,u.active,u.telegram_id,u.telegram_name,u.login,u.created_at,COALESCE(SUM(r.pages),0) AS pages,COALESCE(SUM(r.minutes),0) AS minutes,COALESCE(SUM(r.books),0) AS books,COUNT(r.week) AS recorded FROM users u LEFT JOIN reports r ON r.user_id=u.id GROUP BY u.id ORDER BY pages DESC,u.name")->fetchAll();
+    return sql("SELECT u.id,u.name,u.role,u.active,u.telegram_id,u.telegram_name,u.login,u.created_at,COALESCE(SUM(r.pages),0) AS pages,COALESCE(SUM(r.minutes),0) AS minutes,COALESCE(SUM(r.books),0) AS books,COUNT(r.week) AS recorded FROM users u LEFT JOIN reports r ON r.user_id=u.id WHERE u.deleted_at IS NULL GROUP BY u.id ORDER BY pages DESC,u.name")->fetchAll();
 }
 function weekResults(string $id): array {
     $c=calendar();$reports=sql('SELECT r.*,u.name AS editor FROM reports r JOIN users u ON u.id=r.editor_id WHERE r.user_id=?',[$id])->fetchAll();

@@ -11,7 +11,7 @@ function zipFiles(array $files): string {
 }
 function excelColumn(int $n): string {$s='';while($n){$n--;$s=chr(65+$n%26).$s;$n=intdiv($n,26);}return $s;}
 function exportReading(int $week): never {
-    $users=array_values(array_filter(staff(),fn($u)=>$u['role']==='participant'));$goal=calendar()['calendar'][$week-1]['goal'];
+    $users=staff();$goal=calendar()['calendar'][$week-1]['goal'];
     $sheets=[['name'=>'Неделя '.$week,'rows'=>[['Участник','План: главы','Прочитано: главы','Дни чтения','План выполнен','Осталось глав','Глав в день до конца недели','Неделя закрыта','Книги и главы','Статус','Дата выполнения','Дней просрочки','Фактически глав в день']]],['name'=>'22 недели','rows'=>[array_merge(['Участник'],array_map(fn($i)=>'Неделя '.$i,range(1,22)),['Всего глав','Выполнено недель'])]],['name'=>'План чтения','rows'=>[['Неделя','Начало','Срок','Книга','С главы','По главу','Всего глав']]]];
     $statusNames=['upcoming'=>'Ещё не началась','in_progress'=>'В процессе','overdue'=>'Просрочено','completed'=>'Выполнено','completed_late'=>'С опозданием'];
     foreach(calendar()['calendar'] as $plan){foreach($plan['books'] as $book)$sheets[2]['rows'][]=[$plan['number'],$plan['start'],$plan['end'],$book['title'],$book['chapter_from'],$book['chapter_to'],$book['chapters']];if(!$plan['books'])$sheets[2]['rows'][]=[$plan['number'],$plan['start'],$plan['end'],'Общий план без книг','','',$plan['goal']];}

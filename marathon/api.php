@@ -3,22 +3,22 @@ declare(strict_types=1);
 ini_set('display_errors','0');
 require __DIR__.'/lib/core.php';
 header('Content-Type: application/json; charset=utf-8');header('Cache-Control: no-store');
-sessionStart();$uid=$_SESSION['uid']??null;$csrf=$_SESSION['csrf']??=bin2hex(random_bytes(24));$sessionHash=hash('sha256',session_id());session_write_close();
+sessionStart();$uid=$_SESSION['uid']??null;$epoch=$_SESSION['epoch']??0;$csrf=$_SESSION['csrf']??=bin2hex(random_bytes(24));$sessionHash=hash('sha256',session_id());session_write_close();
 function fail(string $message,int $status=400): never { http_response_code($status);echo json_encode(['error'=>$message],JSON_UNESCAPED_UNICODE);exit; }
 function send(array $data): never { echo json_encode($data,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR);exit; }
 function text(mixed $value,int $limit,bool $required=true): string { if(!is_string($value))fail('Некорректный текст.');$v=trim($value);if(($required&&$v==='')||mb_strlen($v)>$limit)fail('Заполните текст, максимум '.$limit.' символов.');return $v; }
 function guard(bool $admin=false): array { global $me;if(!$me)fail('Войдите в систему.',401);if($me['role']==='participant'||($admin&&$me['role']!=='admin'))fail('Недостаточно прав.',403);return $me; }
 function number(mixed $value,int $min,int $max): int { $v=filter_var($value,FILTER_VALIDATE_INT);if($v===false||$v<$min||$v>$max)fail('Некорректное число.');return $v; }
-function loginAs(string $id): void { sessionStart();session_regenerate_id(true);$_SESSION['uid']=$id;$_SESSION['csrf']=bin2hex(random_bytes(24));session_write_close(); }
+function loginAs(string $id): void { sessionStart();session_regenerate_id(true);$_SESSION['uid']=$id;$_SESSION['epoch']=(int)user($id)['session_epoch'];$_SESSION['csrf']=bin2hex(random_bytes(24));session_write_close(); }
 try {
     if(!extension_loaded('pdo_sqlite')||!extension_loaded('mbstring'))fail('На сервере нужны PHP-модули pdo_sqlite и mbstring.',503);
-    db();$me=$uid?user($uid):null;if($me&&!(int)$me['active'])$me=null;
+    db();$me=$uid?user($uid):null;if($me&&(!(int)$me['active']||(int)$me['session_epoch']!==(int)$epoch))$me=null;
     $action=$_GET['action']??'bootstrap';$input=[];
     if($_SERVER['REQUEST_METHOD']==='POST') {
         if((int)($_SERVER['CONTENT_LENGTH']??0)>100000)fail('Запрос слишком большой.',413);
         if(!hash_equals($csrf,$_SERVER['HTTP_X_CSRF_TOKEN']??''))fail('Обновите страницу и повторите.',403);
         $input=json_decode(file_get_contents('php://input'),true);if(!is_array($input))fail('Некорректный запрос.');
-    } elseif(!in_array($action,['bootstrap','overview','profile','audit','export','export_xlsx'],true))fail('Нужен POST.',405);
+    } elseif(!in_array($action,['bootstrap','overview','profile','audit','export','export_xlsx','archived_users'],true))fail('Нужен POST.',405);
     if($action==='bootstrap')send(['user'=>$me?publicUser($me):null,'csrf'=>$csrf,'configured'=>(bool)sql("SELECT id FROM users WHERE role='admin' LIMIT 1")->fetchColumn(),'marathon'=>calendar(),'telegram'=>['configured'=>(bool)(getenv('TELEGRAM_BOT_TOKEN')&&getenv('TELEGRAM_BOT_USERNAME')),'username'=>getenv('TELEGRAM_BOT_USERNAME')?:null]]);
     if($action==='setup'||$action==='login') {
         $login=strtolower(text($input['login']??'',40));$password=text($input['password']??'',200);
@@ -31,7 +31,7 @@ try {
         } else {
             $ip=$_SERVER['REMOTE_ADDR']??'local';$attempt=sql('SELECT * FROM login_attempts WHERE ip=?',[$ip])->fetch();
             if($attempt&&(int)$attempt['attempts']>=10&&(int)$attempt['updated_at']>time()-900)fail('Повторите вход через 15 минут.',429);
-            $u=sql("SELECT * FROM users WHERE login=? AND role IN ('admin','moderator') AND active=1",[$login])->fetch();
+            $u=sql("SELECT * FROM users WHERE login=? AND role IN ('admin','moderator') AND active=1 AND deleted_at IS NULL",[$login])->fetch();
             if(!$u||!password_verify($password,$u['password']??'')) {
                 $n=$attempt&&(int)$attempt['updated_at']>time()-900?(int)$attempt['attempts']+1:1;
                 sql('INSERT INTO login_attempts VALUES (?,?,?) ON CONFLICT(ip) DO UPDATE SET attempts=excluded.attempts,updated_at=excluded.updated_at',[$ip,$n,time()]);db()->exec('COMMIT');fail('Неверный логин или пароль.',401);
@@ -74,7 +74,7 @@ try {
         send(['user'=>publicUser($u),'stats'=>stats($id),'marathon'=>calendar()]);
     }
     if($action==='add_reading') {
-        $id=$me['id'];if($me['role']!=='participant'){$id=$input['user']??'';guard();}
+        $id=$input['user']??$me['id'];if($id!==$me['id'])guard();
         $u=user($id);if(!$u||!$u['active'])fail('Участник недоступен.',404);
         $chapters=number($input['chapters']??0,1,100000);$date=text($input['date']??calendar()['today'],10);$title=text($input['title']??'',200,false);$note=text($input['note']??'',1000,false);
         $key=text($input['key']??'',80);if(!preg_match('/^[a-zA-Z0-9_-]{8,80}$/',$key))fail('Некорректный идентификатор записи.');
@@ -85,12 +85,12 @@ try {
         if($r['user_id']!==$me['id'])guard();db()->exec('BEGIN IMMEDIATE');assertWeekEditable((int)$r['week']);sql('DELETE FROM reading_entries WHERE id=?',[$r['id']]);sql('UPDATE reports SET chapters_override=MAX(0,chapters_override-?) WHERE user_id=? AND week=? AND chapters_override IS NOT NULL',[(int)$r['chapters'],$r['user_id'],(int)$r['week']]);syncCompletion($r['user_id'],(int)$r['week']);audit($me['id'],'delete_reading',$r['user_id'],'Удалена отметка '.$r['date']);db()->exec('COMMIT');send(['ok'=>true]);
     }
     if($action==='complete_week') {
-        $id=$input['user']??$me['id'];if($id!==$me['id'])guard();$u=user($id);if(!$u||!(int)$u['active']||$u['role']!=='participant')fail('Участник недоступен.',404);
+        $id=$input['user']??$me['id'];if($id!==$me['id'])guard();$u=user($id);if(!$u||!(int)$u['active']||$u['deleted_at']!==null)fail('Участник недоступен.',404);
         $week=number($input['week']??0,1,22);$days=($input['days']??'')===''?null:number($input['days'],1,3660);
         db()->exec('BEGIN IMMEDIATE');$result=completeWeek($id,$me['id'],$week,$days);db()->exec('COMMIT');send(['ok'=>true,'week'=>$result]);
     }
     if($action==='week_result') {
-        $id=$input['user']??$me['id'];if($id!==$me['id'])guard();$u=user($id);if(!$u||!(int)$u['active']||$u['role']!=='participant')fail('Участник не найден.',404);$week=number($input['week']??0,1,22);
+        $id=$input['user']??$me['id'];if($id!==$me['id'])guard();$u=user($id);if(!$u||!(int)$u['active']||$u['deleted_at']!==null)fail('Участник не найден.',404);$week=number($input['week']??0,1,22);
         db()->exec('BEGIN IMMEDIATE');$w=assertWeekEditable($week);$total=number($input['chapters']??0,0,$w['goal']);
         $daily=(int)(sql('SELECT SUM(chapters) FROM reading_entries WHERE user_id=? AND week=?',[$id,$week])->fetchColumn()?:0);
         $elapsed=max(1,(int)(new DateTimeImmutable($w['start']))->diff(new DateTimeImmutable(calendar()['today']))->format('%r%a')+1);
@@ -101,7 +101,7 @@ try {
         syncCompletion($id,$week);audit($me['id'],'week_result',$id,'Неделя '.$week.': ручной итог '.$total.' глав'.($days!==null?', '.$days.' дн.':''));$result=weekResults($id)[$week-1];db()->exec('COMMIT');send(['ok'=>true,'week'=>$result]);
     }
     if($action==='clear_week_result') {
-        $id=$input['user']??$me['id'];if($id!==$me['id'])guard();$u=user($id);if(!$u||!(int)$u['active']||$u['role']!=='participant')fail('Участник не найден.',404);$week=number($input['week']??0,1,22);
+        $id=$input['user']??$me['id'];if($id!==$me['id'])guard();$u=user($id);if(!$u||!(int)$u['active']||$u['deleted_at']!==null)fail('Участник не найден.',404);$week=number($input['week']??0,1,22);
         db()->exec('BEGIN IMMEDIATE');assertWeekEditable($week);$before=weekResults($id)[$week-1];
         sql('DELETE FROM reading_entries WHERE user_id=? AND week=?',[$id,$week]);sql('DELETE FROM week_completions WHERE user_id=? AND week=?',[$id,$week]);
         sql('UPDATE reports SET chapters_manual=0,chapters_override=NULL,days_manual=NULL,title=CASE WHEN pages>0 OR minutes>0 OR books>0 THEN title ELSE \'\' END,note=CASE WHEN pages>0 OR minutes>0 OR books>0 THEN note ELSE \'\' END,editor_id=?,updated_at=? WHERE user_id=? AND week=?',[$me['id'],time(),$id,$week]);
@@ -122,7 +122,7 @@ try {
         $w=calendar()['calendar'][$week-1];if($week<calendar()['current']&&!$w['reopened'])fail('Откройте завершённую неделю перед изменением плана.');
         foreach(staff() as $u){if($u['weekly'][$week-1]['chapters']>$goal)fail('План меньше уже внесённого результата участника '.$u['name'].'.');}
         if($books!==null){sql('DELETE FROM week_plan_books WHERE week=?',[$week]);foreach($books as $position=>$book)sql('INSERT INTO week_plan_books VALUES (?,?,?,?,?,?)',[bin2hex(random_bytes(12)),$week,$position,$book['title'],$book['chapter_from'],$book['chapter_to']]);}
-        sql('UPDATE week_plans SET chapters=? WHERE week=?',[$goal,$week]);foreach(sql('SELECT id FROM users WHERE role=\'participant\'')->fetchAll() as $participant)syncCompletion($participant['id'],$week);audit($me['id'],'week_plan',null,'План недели '.$week.': '.$goal.' глав'.($books?' · '.planBookText($books):''));db()->exec('COMMIT');send(['ok'=>true]);
+        sql('UPDATE week_plans SET chapters=? WHERE week=?',[$goal,$week]);foreach(sql('SELECT id FROM users WHERE deleted_at IS NULL')->fetchAll() as $participant)syncCompletion($participant['id'],$week);audit($me['id'],'week_plan',null,'План недели '.$week.': '.$goal.' глав'.($books?' · '.planBookText($books):''));db()->exec('COMMIT');send(['ok'=>true]);
     }
     if($action==='week_lock') {
         guard(true);$week=number($input['week']??0,1,22);$open=number($input['open']??0,0,1);
@@ -140,13 +140,27 @@ try {
         sql('INSERT INTO users(id,name,login,password,role,created_at) VALUES (?,?,?,?,?,?)',[$id,$name,$login,$hash,$role,time()]);audit($me['id'],'create_user',$id,'Создан аккаунт: '.$name);send(['id'=>$id]);
     }
     if($action==='save_report') {
-        guard();$id=$input['user']??'';$u=user($id);if(!$u||$u['role']!=='participant')fail('Участник не найден.',404);
+        guard();$id=$input['user']??'';$u=user($id);if(!$u||$u['deleted_at']!==null)fail('Участник не найден.',404);
         $week=number($input['week']??0,1,22);assertWeekEditable($week);
         $pages=number($input['pages']??0,0,100000);$minutes=number($input['minutes']??0,0,10080);$books=number($input['books']??0,0,100);
         $title=text($input['title']??'',200,false);$note=text($input['note']??'',1000,false);
         db()->exec('BEGIN IMMEDIATE');
         sql('INSERT INTO reports(user_id,week,pages,minutes,books,title,note,editor_id,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id,week) DO UPDATE SET pages=excluded.pages,minutes=excluded.minutes,books=excluded.books,title=excluded.title,note=excluded.note,editor_id=excluded.editor_id,updated_at=excluded.updated_at',[$id,$week,$pages,$minutes,$books,$title,$note,$me['id'],time()]);
         audit($me['id'],'save_report',$id,'Неделя '.$week.': '.$pages.' страниц, '.$minutes.' минут, '.$books.' книг');db()->exec('COMMIT');send(['ok'=>true]);
+    }
+    if($action==='archived_users') {
+        guard(true);send(['users'=>sql('SELECT id,name,role,deleted_at FROM users WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC,name')->fetchAll()]);
+    }
+    if($action==='delete_user') {
+        guard(true);$id=text($input['user']??'',80);db()->exec('BEGIN IMMEDIATE');$u=user($id);if(!$u)fail('Аккаунт не найден.',404);
+        if($id===$me['id'])fail('Нельзя удалить свой аккаунт.');
+        if($u['role']==='admin'&&(int)$u['active']&&(int)sql("SELECT COUNT(*) FROM users WHERE role='admin' AND active=1 AND deleted_at IS NULL")->fetchColumn()<=1)fail('Нельзя удалить последнего администратора.');
+        sql('UPDATE users SET deleted_at=?,active=0,session_epoch=session_epoch+1 WHERE id=?',[time(),$id]);sql('DELETE FROM requests WHERE user_id=?',[$id]);
+        audit($me['id'],'delete_user',$id,'Аккаунт удалён в архив: '.$u['name']);db()->exec('COMMIT');send(['ok'=>true]);
+    }
+    if($action==='restore_user') {
+        guard(true);$id=text($input['user']??'',80);db()->exec('BEGIN IMMEDIATE');$u=sql('SELECT * FROM users WHERE id=? AND deleted_at IS NOT NULL',[$id])->fetch();if(!$u)fail('Аккаунт в архиве не найден.',404);
+        sql('UPDATE users SET deleted_at=NULL,active=1 WHERE id=?',[$id]);audit($me['id'],'restore_user',$id,'Аккаунт восстановлен: '.$u['name']);db()->exec('COMMIT');send(['ok'=>true]);
     }
     if($action==='update_user') {
         guard(true);$id=$input['user']??'';$u=user($id);if(!$u)fail('Аккаунт не найден.',404);
@@ -168,7 +182,7 @@ try {
     if($action==='export_xlsx'){guard();require __DIR__.'/lib/xlsx.php';exportReading(number($_GET['week']??max(1,min(22,calendar()['current'])),1,22));}
     if($action==='export') {
         guard();header('Content-Type: text/csv; charset=utf-8');header('Content-Disposition: attachment; filename="marathon-results.csv"');$f=fopen('php://output','w');fwrite($f,"\xEF\xBB\xBF");fputcsv($f,['Участник','Страницы','Минуты','Книги','Недель с отчётом','Telegram привязан'],';', '"','');
-        foreach(staff() as $u){if($u['role']!=='participant')continue;$name=preg_match('/^[=+@-]/',$u['name'])?"'".$u['name']:$u['name'];fputcsv($f,[$name,$u['pages'],$u['minutes'],$u['books'],$u['recorded'],$u['telegram_id']?'Да':'Нет'],';', '"','');}exit;
+        foreach(staff() as $u){$name=preg_match('/^[=+@-]/',$u['name'])?"'".$u['name']:$u['name'];fputcsv($f,[$name,$u['pages'],$u['minutes'],$u['books'],$u['recorded'],$u['telegram_id']?'Да':'Нет'],';', '"','');}exit;
     }
     fail('Действие не найдено.',404);
 } catch(DomainException $e){fail($e->getMessage());}catch(Throwable $e){error_log($e->getMessage());fail('Ошибка сервера. Проверьте подключение и повторите.',500);}
