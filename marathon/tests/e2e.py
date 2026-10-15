@@ -65,7 +65,7 @@ with tempfile.TemporaryDirectory(prefix='glava-test-') as data_dir:
         else:raise AssertionError('Server unavailable')
         assert not b['configured']
         assert b['marathon']['start']=='2026-10-12' and b['marathon']['end']=='2027-03-14'
-        assert len(b['marathon']['calendar'])==22
+        assert len(b['marathon']['calendar'])==min(22,max(0,b['marathon']['current']))
         other.call('overview',expected=401)
         other.call('create_user',{},expected=403)
         admin.call('setup',{'login':'admin','password':'test-password-123','name':'Администратор'})

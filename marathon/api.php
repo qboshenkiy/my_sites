@@ -15,6 +15,8 @@ function guard(bool $admin=false): array { global $me;if(!$me)fail('Войдит
 function number(mixed $value,int $min,int $max): int { $v=filter_var($value,FILTER_VALIDATE_INT);if($v===false||$v<$min||$v>$max)fail('Некорректное число.');return $v; }
 function assertInputRound(string $id,array $input): void {
     $current=(int)(activeRound($id)['number']??1);
+    $week=(int)($input['week']??0);if(!$week&&isset($input['date'])){$c=calendar($id);$d=DateTimeImmutable::createFromFormat('!Y-m-d',(string)$input['date']);if($d)$week=intdiv((int)(new DateTimeImmutable($c['start']))->diff($d)->format('%r%a'),7)+1;}
+    if($week>=1&&$week<=22){$cycle=weekResults($id)[$week-1]['cycle'];if(($cycle>1&&!isset($input['cycle']))||(isset($input['cycle'])&&(int)$input['cycle']!==$cycle))fail('Круг недели изменился. Обновите страницу.',409);}
     if(($current>1&&!isset($input['round']))||(isset($input['round'])&&(int)$input['round']!==$current))fail('Круг изменился. Обновите страницу и проверьте план.',409);
 }
 function loginAs(string $id): void { sessionStart();session_regenerate_id(true);$_SESSION['uid']=$id;$_SESSION['epoch']=(int)user($id)['session_epoch'];$_SESSION['csrf']=bin2hex(random_bytes(24));session_write_close(); }
@@ -27,7 +29,7 @@ try {
         if(!hash_equals($csrf,$_SERVER['HTTP_X_CSRF_TOKEN']??''))fail('Обновите страницу и повторите.',403);
         $input=json_decode(file_get_contents('php://input'),true);if(!is_array($input))fail('Некорректный запрос.');
     } elseif(!in_array($action,['bootstrap','overview','profile','audit','export','export_xlsx','archived_users','round_history'],true))fail('Нужен POST.',405);
-    if($action==='bootstrap')send(['user'=>$me?publicUser($me):null,'csrf'=>$csrf,'configured'=>(bool)sql("SELECT id FROM users WHERE role='admin' LIMIT 1")->fetchColumn(),'marathon'=>calendar($me&&$me['role']==='participant'?$me['id']:null),'telegram'=>['configured'=>(bool)(getenv('TELEGRAM_BOT_TOKEN')&&getenv('TELEGRAM_BOT_USERNAME')),'username'=>getenv('TELEGRAM_BOT_USERNAME')?:null]]);
+    if($action==='bootstrap')send(['user'=>$me?publicUser($me):null,'csrf'=>$csrf,'configured'=>(bool)sql("SELECT id FROM users WHERE role='admin' LIMIT 1")->fetchColumn(),'marathon'=>visibleCalendar(calendar($me&&$me['role']==='participant'?$me['id']:null),$me&&$me['role']==='admin'),'telegram'=>['configured'=>(bool)(getenv('TELEGRAM_BOT_TOKEN')&&getenv('TELEGRAM_BOT_USERNAME')),'username'=>getenv('TELEGRAM_BOT_USERNAME')?:null]]);
     if($action==='setup'||$action==='login') {
         $login=strtolower(text($input['login']??'',40));$password=text($input['password']??'',200);
         if(!preg_match('/^[a-z0-9_.-]{3,40}$/',$login)||strlen($password)<8)fail('Логин: 3–40 латинских символов. Пароль: минимум 8 символов.');
@@ -77,15 +79,17 @@ try {
     }
     if(!$me)fail('Войдите в систему.',401);
     if($action==='round_history'){$id=$_GET['user']??$me['id'];if($id!==$me['id'])guard();if(!user($id))fail('Участник не найден.',404);$history=archivedReadingRound($id,number($_GET['round']??0,1,100000));unset($history['raw']);send($history);}
-    if($action==='start_round'){$id=$input['user']??$me['id'];if($id!==$me['id'])guard(true);db()->exec('BEGIN IMMEDIATE');$round=startReadingRound($id,$me['id'],number($input['round']??0,1,100000));db()->exec('COMMIT');send(['ok'=>true,'marathon'=>$round]);}
+    if($action==='start_round')fail('Повторное чтение относится к отдельной неделе. Обновите сайт или откройте меню бота.');
+    if($action==='start_week_repeat'){$id=$input['user']??$me['id'];if($id!==$me['id'])guard(true);db()->exec('BEGIN IMMEDIATE');$w=startWeeklyRepeat($id,$me['id'],number($input['week']??0,1,22),number($input['cycle']??0,1,100000));db()->exec('COMMIT');send(['ok'=>true,'week'=>$w]);}
     if(in_array($action,['week_result','complete_week','clear_week_result','add_reading','save_report'],true)){
         assertInputRound($input['user']??$me['id'],$input);
     }
-    if($action==='overview'){guard();send(['users'=>staff(),'marathon'=>calendar()]);}
+    if($action==='overview'){guard();$list=staff();if($me['role']!=='admin')foreach($list as &$u)$u['weekly']=array_values(array_filter($u['weekly'],fn($w)=>$w['week']<=calendar($u['id'])['current']));unset($u);send(['users'=>$list,'marathon'=>visibleCalendar(calendar(),$me['role']==='admin')]);}
     if($action==='profile') {
         $id=$_GET['user']??$me['id'];if($id!==$me['id'])guard();$u=user($id);if(!$u)fail('Участник не найден.',404);
         $results=stats($id);if($me['role']==='participant')foreach($results['reports'] as &$weekResult)$weekResult['canComplete']=$weekResult['canComplete']&&$weekResult['week']>=calendar($id)['current']-1;unset($weekResult);
-        send(['user'=>publicUser($u),'stats'=>$results,'marathon'=>calendar($id),'rounds'=>readingRounds($id)]);
+        if($me['role']!=='admin'){$limit=calendar($id)['current'];$results['reports']=array_values(array_filter($results['reports'],fn($w)=>$w['week']<=$limit));$results['entries']=array_values(array_filter($results['entries'],fn($e)=>(int)$e['week']<=$limit));$results['legacy']['reports']=array_values(array_filter($results['legacy']['reports'],fn($w)=>(int)$w['week']<=$limit));}
+        send(['user'=>publicUser($u),'stats'=>$results,'marathon'=>visibleCalendar(calendar($id),$me['role']==='admin'),'rounds'=>readingRounds($id)]);
     }
     if($action==='add_reading') {
         $id=$input['user']??$me['id'];if($id!==$me['id'])guard();
@@ -206,7 +210,7 @@ try {
         guard(true);$title=text($input['title']??'',100);sql("UPDATE settings SET value=? WHERE key='title'",[$title]);audit($me['id'],'settings',null,'Изменено название марафона');send(['ok'=>true]);
     }
     if($action==='audit'){guard();send(['events'=>sql('SELECT a.*,u.name AS actor,t.name AS target FROM audit a LEFT JOIN users u ON u.id=a.actor_id LEFT JOIN users t ON t.id=a.target_id ORDER BY a.id DESC LIMIT 100')->fetchAll()]);}
-    if($action==='export_xlsx'){guard();require __DIR__.'/lib/xlsx.php';exportReading(number($_GET['week']??max(1,min(22,calendar()['current'])),1,22));}
+    if($action==='export_xlsx'){guard();require __DIR__.'/lib/xlsx.php';exportReading(number($_GET['week']??max(1,min(22,calendar()['current'])),1,22),$me['role']==='admin');}
     if($action==='export') {
         guard();header('Content-Type: text/csv; charset=utf-8');header('Content-Disposition: attachment; filename="marathon-results.csv"');$f=fopen('php://output','w');fwrite($f,"\xEF\xBB\xBF");fputcsv($f,['Участник','Страницы','Минуты','Книги','Недель с отчётом','Telegram привязан'],';', '"','');
         foreach(staff() as $u){$name=preg_match('/^[=+@-]/',$u['name'])?"'".$u['name']:$u['name'];fputcsv($f,[$name,$u['pages'],$u['minutes'],$u['books'],$u['recorded'],$u['telegram_id']?'Да':'Нет'],';', '"','');}exit;

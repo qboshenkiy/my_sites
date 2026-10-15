@@ -4,3 +4,5 @@
 .edit-week-result{width:100%;min-height:46px;margin-top:12px}.manual-result-note{font-size:11px;color:#7a886e;line-height:1.7;margin:15px 0}.reset-week-result{display:block;width:100%;margin-top:15px;color:#a2553e;min-height:44px}.danger-button{background:#a2553e!important}#personal-week-form>.primary,#clear-personal-week-form>.primary{width:100%;min-height:48px}#personal-week-form .form-grid{grid-template-columns:1fr 1fr}
 .auto-days input{padding:0!important;margin:0;min-height:20px!important;min-width:20px;accent-color:var(--green)}
 .danger-button{color:#fff!important;border:0;border-radius:8px;padding:12px 18px;min-height:44px}#account-form>.primary,#account-form>.danger-button{display:block;width:100%;margin-top:12px}.archived-account{padding:16px 0;border-bottom:1px solid var(--line)}
+
+.weekly-repeat-summary{margin-top:20px;padding-top:18px;border-top:1px solid #e5e9e3}.weekly-repeat-summary p{margin:10px 0;font-size:13px}.weekly-repeat-summary .outline{margin-top:14px;width:100%}.weekly-repeat-summary summary{cursor:pointer;color:#315c49}.weekly-current-progress{margin-bottom:22px}.weekly-current-progress p{margin-bottom:12px}

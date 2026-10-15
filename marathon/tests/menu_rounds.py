@@ -26,7 +26,7 @@ class Client:
             return json.loads(raw) if 'json' in r.headers.get('Content-Type','') else raw
     def boot(self):result=self.call('bootstrap');self.csrf=result['csrf'];return result
 with tempfile.TemporaryDirectory(prefix='marathon-menu-') as folder:
-    env=dict(os.environ,MARATHON_DATA_DIR=folder,MARATHON_TEST_TODAY='2027-03-16',TELEGRAM_BOT_TOKEN='test-token',TELEGRAM_BOT_USERNAME='fixture_bot',APP_URL='https://example.test')
+    env=dict(os.environ,MARATHON_DATA_DIR=folder,MARATHON_TEST_TODAY='2026-10-22',TELEGRAM_BOT_TOKEN='test-token',TELEGRAM_BOT_USERNAME='fixture_bot',APP_URL='https://example.test')
     server=subprocess.Popen([PHP,'-S','127.0.0.1:8106','-t',str(ROOT),str(ROOT/'router.php')],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     try:
         admin=Client()
@@ -61,71 +61,58 @@ with tempfile.TemporaryDirectory(prefix='marathon-menu-') as folder:
         for action in ['📊 Мой прогресс','📚 План недели','🗓 Мои недели','🔁 Круги чтения','❓ Помощь']:
             result=bot(action);assert messages(result) and 'Repeat Reader' not in messages(bot(action,sender=777777))
         assert 'example.test' in str(bot('🌐 Открыть сайт'))
-        locked=bot('circle:new',True);assert '22' in messages(locked)
+
         reader=Client();reader.boot();req=reader.call('telegram_request',{'kind':'login'});bot('a_'+req['token'],True);reader.call('telegram_status',{'token':req['token']});reader.boot()
-        admin.call('week_lock',{'week':1,'open':1});admin.call('week_plan',{'week':1,'books':[{'title':'Матфей','chapter_from':1,'chapter_to':7}]});admin.call('week_lock',{'week':1,'open':0})
-        pending=bot('прочитал 3');old_confirm=button(pending,'Подтвердить')
-        # Fixture completed first round; no production data is modified.
-        calendar=reader.call('profile')['marathon']
-        with sqlite3.connect(Path(folder)/'marathon.sqlite') as db:
-            for week in calendar['calendar']:
-                db.execute('INSERT INTO reports(user_id,week,chapters_override,days_manual,editor_id,updated_at) VALUES (?,?,?,?,?,?)',(uid,week['number'],week['goal'],7,uid,int(time.time())))
-                db.execute('INSERT INTO week_completions(user_id,week,completed_on) VALUES (?,?,?)',(uid,week['number'],week['end']))
-        db.close()
-        before=reader.call('profile');assert before['stats']['goalWeeks']==22
-        circles=bot('🔁 Круги чтения');assert 'Начать круг 2' in str(circles)
-        confirmation=bot(button(circles,'Начать круг 2'),True)
-        bot(button(confirmation,'Отмена'),True);assert reader.call('profile')['marathon']['round']==1
-        confirmation=bot('circle:new',True);start_button=button(confirmation,'Начать новый круг')
-        bot(start_button,True,sender=777777);assert reader.call('profile')['marathon']['round']==1
-        started=bot(start_button,True);assert 'Круг 2 начат' in messages(started)
-        bot(start_button,True)
-        second=reader.call('profile');assert second['marathon']['round']==2 and second['marathon']['start']=='2027-03-16' and second['marathon']['current']==1
-        assert second['stats']['chapters']==0 and second['stats']['goalWeeks']==0 and second['user']['telegram_id']=='123456'
-        assert second['stats']['pace']['books'][0]['title']=='Матфей'
-        assert admin.call('profile',suffix='&user='+other)['marathon']['round']==1
-        history=reader.call('round_history',suffix='&round=1');assert history['stats']['chapters']==154 and history['stats']['goalWeeks']==22 and 'raw' not in history
-        assert '154' in messages(bot('circle:1',True))
-        reader.call('round_history',suffix='&round=1&user='+other,status=403)
-        reader.call('week_result',{'week':1,'chapters':2,'round':1},409)
-        reader.call('week_result',{'week':1,'chapters':2},409)
-        assert 'недоступно' in messages(bot(old_confirm,True))
-        admin.call('week_lock',{'week':1,'open':1});admin.call('week_plan',{'week':1,'books':[{'title':'Changed Global','chapter_from':1,'chapter_to':9}]})
-        assert reader.call('profile')['stats']['pace']['goal']==7, 'Round plan is a frozen copy, unaffected by first-round edits'
-        prompt=bot('📖 Отметить чтение');assert 'от 1 до 7' in messages(prompt)
-        preview=bot('3');assert 'Пока ничего не зачтено' in messages(preview)
-        assert reader.call('profile')['stats']['chapters']==0
-        bot(button(preview,'Подтвердить'),True)
-        assert reader.call('profile')['stats']['chapters']==3
-        bot('📖 Отметить чтение');bot('Отмена');bot('2')
-        assert reader.call('profile')['stats']['chapters']==3
-        quick=bot('amount:1',True);bot(button(quick,'Подтвердить'),True)
-        assert reader.call('profile')['stats']['chapters']==4
-        reader.call('week_result',{'round':2,'week':1,'chapters':2})
-        assert reader.call('profile')['stats']['chapters']==2
-        admin.call('week_result',{'user':uid,'round':2,'week':1,'chapters':5,'days':1})
-        assert reader.call('profile')['stats']['chapters']==5
-        bot('📖 Отметить чтение');wrong_number=bot('2');correct_number=bot('1')
-        bot(button(wrong_number,'Подтвердить'),True)
-        assert reader.call('profile')['stats']['chapters']==5
-        bot(button(correct_number,'Подтвердить'),True)
-        assert reader.call('profile')['stats']['chapters']==6
-        roster=admin.call('overview')['users'];assert next(u for u in roster if u['id']==uid)['round']==2
-        assert reader.call('round_history',suffix='&round=1')['stats']['chapters']==154
-        reader.call('start_round',{'round':2},400)
-        reader.call('complete_week',{'round':2,'week':2},400)
-        export=admin.call('export_xlsx',suffix='&week=1')
-        with zipfile.ZipFile(io.BytesIO(export)) as z:
-            sheet=z.read('xl/worksheets/sheet1.xml').decode();assert 'Круг' in sheet and '2027-03-16' in sheet
-            plans=z.read('xl/worksheets/sheet3.xml').decode();assert 'Круг 2' in plans and 'Матфей' in plans and '2027-03-16' in plans
-        with sqlite3.connect(Path(folder)/'marathon.sqlite') as db:
-            archived=db.execute('SELECT snapshot FROM reading_rounds WHERE user_id=? AND number=1',(uid,)).fetchone()[0]
-            assert len(json.loads(archived)['raw']['reports'])==22
-            db.execute("UPDATE reading_rounds SET start='2027-03-08' WHERE user_id=? AND number=2",(uid,))
-        db.close()
-        admin.call('week_result',{'user':uid,'round':2,'week':1,'chapters':6},400)
-        admin.call('week_lock',{'user':uid,'round':2,'week':1,'open':1})
-        admin.call('week_result',{'user':uid,'round':2,'week':1,'chapters':6,'days':2})
-        assert reader.call('profile')['stats']['reports'][0]['chapters']==6
-        print('PASS: persistent Telegram menu, numeric/quick entry, cancellation, private progress, confirmed new round, immutable history, personal dates, frozen plans, stale requests, staff edits/locks and XLSX round metadata.')
-    finally:server.terminate();server.wait(timeout=10)
+        def profile(c=reader):return c.call('profile',suffix='&user='+uid)
+        assert len(reader.boot()['marathon']['calendar'])==2
+        assert len(profile()['stats']['reports'])==2 and len(profile(admin)['stats']['reports'])==22
+        assert 'Неделя 3:' not in messages(bot('🗓 Мои недели'))
+        reader.call('start_week_repeat',{'week':2,'cycle':1},400)
+        reader.call('complete_week',{'week':3},400)
+        admin.call('complete_week',{'user':uid,'week':1})
+        first=bot('прочитал 7');confirm=button(first,'Подтвердить');assert profile()['stats']['pace']['chapters']==0
+        bot(confirm,True);p=profile();assert p['stats']['progress']==100 and p['stats']['pace']['completed']
+        assert p['stats']['goalWeeks']==2 and p['stats']['pace']['days']>=1
+        prompt=bot('repeat:new',True);cancel=button(prompt,'Отмена');bot(cancel,True);assert profile()['stats']['pace']['cycle']==1
+        prompt=bot('repeat:new',True);yes=button(prompt,'Начать повтор');bot(yes,True)
+        p=profile();w=p['stats']['pace'];assert w['cycle']==2 and w['chapters']==0 and w['totalChapters']==7 and len(w['repeats'])==1
+        assert w['start']=='2026-10-19' and w['end']=='2026-10-25' and p['marathon']['start']=='2026-10-12'
+        assert p['stats']['reports'][0]['chapters']==7 and p['stats']['goalWeeks']==2 and p['stats']['progress']==0
+        assert p['stats']['totalChapters']==14
+        bot(yes,True);assert profile()['stats']['pace']['cycle']==2
+        reader.call('week_result',{'week':2,'chapters':3,'cycle':1},409)
+        preview=bot('прочитал 3');stale=button(preview,'Подтвердить')
+        reader.call('week_result',{'week':2,'chapters':7,'cycle':2})
+        reader.call('start_week_repeat',{'week':2,'cycle':2})
+        bot(stale,True);assert profile()['stats']['pace']['chapters']==0
+        assert profile()['stats']['pace']['cycle']==3 and len(profile()['stats']['pace']['repeats'])==2
+        preview=bot('прочитал 3');bot(button(preview,'Подтвердить'),True)
+        p=profile();assert p['stats']['pace']['chapters']==3 and p['stats']['progress']==43
+        assert p['stats']['totalChapters']==24
+        subprocess.run(['node',str(ROOT/'tests/render_weekly.cjs')],input=json.dumps(p),text=True,encoding='utf-8',check=True)
+        assert '43%' in messages(bot('📊 Мой прогресс')) and 'круг 3' in messages(bot('📊 Мой прогресс'))
+        admin.call('week_result',{'user':uid,'week':2,'cycle':3,'chapters':7,'days':2})
+        p=profile();assert p['stats']['pace']['days']==2 and p['stats']['pace']['completedCycles']==3
+        admin.call('start_week_repeat',{'user':uid,'week':2,'cycle':3})
+        reader.call('start_week_repeat',{'week':2,'cycle':3},400)
+        assert len(profile()['stats']['pace']['repeats'])==3
+        assert profile()['stats']['pace']['repeats'][-1]['days']==2
+        reader.call('week_result',{'week':2,'cycle':4,'chapters':2})
+        reader.call('clear_week_result',{'week':2,'cycle':4})
+        assert len(profile()['stats']['pace']['repeats'])==3 and profile()['stats']['pace']['totalChapters']==21
+        # Weekly repeats are private and do not change another participant.
+        assert profile(admin)['stats']['reports'][1]['cycle']==4
+        assert admin.call('profile',suffix='&user='+other)['stats']['pace']['cycle']==1
+        moderator=Client();moderator.boot();admin.call('create_user',{'name':'Mod','role':'moderator','login':'moderator','password':'mod-password-2026'});moderator.call('login',{'login':'moderator','password':'mod-password-2026'});assert len(moderator.boot()['marathon']['calendar'])==2
+        assert len(moderator.call('overview')['marathon']['calendar'])==2
+        moderator.call('export_xlsx',suffix='&week=3',status=400)
+        workbook=moderator.call('export_xlsx',suffix='&week=2')
+        with zipfile.ZipFile(io.BytesIO(workbook)) as z:assert 'Лука' not in z.read('xl/worksheets/sheet3.xml').decode()
+        # Next calendar week starts at pass one; unfinished optional repeats do not steal chapters.
+        env['MARATHON_TEST_TODAY']='2026-10-26'
+        plan=bot('прочитал 2');assert 'Неделя 3' in messages(plan) and 'Неделя 2 ·' not in messages(plan)
+        bot(button(plan,'Подтвердить'),True)
+        assert 'Неделя 4:' not in messages(bot('🗓 Мои недели'))
+        print('PASS: weekly repeats, history and days, unchanged calendar and other weeks, weekly progress, participant future privacy, confirmations, replay/stale guards, next-week reset.')
+    finally:
+        server.terminate();server.wait(timeout=5)

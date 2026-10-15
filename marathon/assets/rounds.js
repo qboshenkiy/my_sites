@@ -4,24 +4,35 @@ api=async function(action,data,params=''){
  if(data&&['week_result','complete_week','clear_week_result','add_reading','save_report'].includes(action)){
   const id=data.user||profileData?.user.id||boot.user.id;
   const round=profileData?.user.id===id?profileData.marathon.round:users.find(u=>u.id===id)?.round||(boot.user.id===id?boot.user.round:1);
-  data={...data,round:round||1};
+  const m=profileData?.user.id===id?profileData.marathon:boot.marathon;let week=Number(data.week||0);if(!week&&data.date)week=Math.floor((Date.parse(data.date+'T00:00:00Z')-Date.parse(m.start+'T00:00:00Z'))/604800000)+1;
+  const results=profileData?.user.id===id?profileData.stats.reports:users.find(u=>u.id===id)?.weekly;
+  data={...data,round:round||1,cycle:results?.find(w=>w.week===week)?.cycle||1};
  }
  return apiBeforeRounds(action,data,params);
 };
-const profileBeforeRounds=drawProfile;
-drawProfile=function(){
- const overviewCalendar=boot.marathon;boot.marathon=profileData.marathon;try{profileBeforeRounds()}finally{boot.marathon=overviewCalendar}const {user:u,stats:s,marathon:m,rounds=[]}=profileData;
- const panel=document.createElement('section');panel.className='panel round-panel';
- panel.innerHTML=`<div class="section-title"><div><h2>Круг ${m.round||1}</h2><p>Старт: ${date(m.start)} · ${s.goalWeeks}/22 недель выполнено</p></div>${s.goalWeeks===22&&(u.id===boot.user.id||boot.user.role==='admin')?`<button class="primary" data-round-start="${u.id}">Начать круг ${(m.round||1)+1}</button>`:''}</div>${rounds.some(r=>!r.active)?`<div class="reader-actions">${rounds.filter(r=>!r.active).map(r=>`<button class="outline small" data-round-history="${r.number}" data-user="${u.id}">📜 Круг ${r.number} · ${r.chapters} глав</button>`).join('')}</div>`:'<p>Завершённые круги появятся здесь и сохранят результаты.</p>'}`;
- document.querySelector('.reader-heading')?.after(panel);
- if(boot.user.role==='admin'&&m.round>1)document.querySelectorAll('.reading-week').forEach(card=>{const week=Number(card.querySelector('[data-week-edit]')?.dataset.weekEdit||card.querySelector('[data-v3=complete]')?.dataset.week);let w=s.reports.find(r=>r.week===week);if(!w){const title=card.querySelector('h2')?.textContent;w=s.reports.find(r=>'Неделя '+r.week===title)}if(!w||w.week>=m.current)return;const b=document.createElement('button');b.className='text-button';b.dataset.roundLock=w.week;b.dataset.user=u.id;b.dataset.open=w.reopened?0:1;b.textContent=w.reopened?'Закрыть исправления':'Открыть неделю для исправлений';card.append(b)});
+// Every weekly pass keeps its own completion and daily entries.
+const cardBeforeRepeats=weeklyCard;
+weeklyCard=function(w,u,featured=false){
+ const canRepeat=w.week===profileData.marathon.current&&w.completed&&(u.id===boot.user.id||boot.user.role==='admin');
+ const extra=`<div class="weekly-repeat-summary"><strong>Круг ${w.cycle} · завершено кругов: ${w.completedCycles}</strong><p>Всего за эту неделю с повторами: ${w.totalChapters} глав.</p>${w.repeats.length?`<details><summary>История повторов · ${w.repeats.length}</summary>${w.repeats.map(r=>`<p>✓ Круг ${r.cycle}: ${r.chapters} глав за ${r.days} ${readingDayWord(r.days)} · ${date(r.completedOn)}</p>`).join('')}</details>`:''}${canRepeat?`<button class="outline" data-week-repeat="${w.week}" data-cycle="${w.cycle}">🔁 Прочитать этот план ещё раз</button>`:''}</div>`;
+ return cardBeforeRepeats(w,u,featured).replace('</article>',extra+'</article>');
 };
-const overviewBeforeRounds=drawOverview;
-drawOverview=function(tab){overviewBeforeRounds(tab);document.querySelectorAll('tbody tr').forEach(row=>{const id=row.querySelector('[data-action=profile]')?.dataset.id,u=users.find(u=>u.id===id);if(!u||u.round<=1)return;const person=row.querySelector('.person-cell small');if(person)person.textContent+=' · Круг '+u.round;if(tab==='team')return;const w=u.weekly[(matrixWeek||currentWeek())-1];const edit=row.querySelector('[data-v2=week-edit]');if(edit)edit.disabled=!w.editable;const complete=row.querySelector('[data-v2=complete]');if(complete)complete.disabled=!w.canComplete;const label=document.createElement('small');label.textContent=' '+date(w.start)+' — '+date(w.end);row.querySelector('.person-cell span:last-child')?.append(label)});};
-document.addEventListener('click',async e=>{const history=e.target.closest('[data-round-history]'),start=e.target.closest('[data-round-start]'),lock=e.target.closest('[data-round-lock]');if(busy)return;try{
- if(history){busy=true;const a=await api('round_history',undefined,'&user='+encodeURIComponent(history.dataset.user)+'&round='+history.dataset.roundHistory);dialog(`<h2>Круг ${a.marathon.round} · история</h2><p>С ${date(a.marathon.start)} · ${a.stats.chapters} глав · ${a.stats.goalWeeks}/22 недель. Архив доступен для просмотра.</p><div class="table-scroll"><table><thead><tr><th>Неделя</th><th>Главы</th><th>Дни</th><th>Завершён</th></tr></thead><tbody>${a.stats.reports.map(w=>`<tr><td>${w.week}<small>${esc(w.title||planBookLabel(w.books))}</small></td><td>${w.chapters}/${w.goal}</td><td>${w.days}</td><td>${w.completedOn?date(w.completedOn):'—'}</td></tr>`).join('')}</tbody></table></div>`)}
- if(start){const m=profileData.marathon;dialog(`<h2>Начать круг ${m.round+1}?</h2><p>Прежние результаты сохранятся в истории. Новый круг — те же книги и главы, 22 недели с сегодняшнего дня. Telegram будет учитывать главы в новом круге.</p><form id="start-round-form"><input type="hidden" name="user" value="${start.dataset.roundStart}"><input type="hidden" name="round" value="${m.round}"><p class="form-feedback" role="alert"></p><button class="primary" type="submit">Подтвердить начало нового круга</button></form>`)}
- if(lock){busy=true;await api('week_lock',{user:lock.dataset.user,round:profileData.marathon.round,week:lock.dataset.roundLock,open:lock.dataset.open});await profile(lock.dataset.user)}
- }catch(err){toast(err.message)}finally{busy=false}});
-function planBookLabel(books){return (books||[]).map(b=>b.title+' '+b.chapter_from+'–'+b.chapter_to).join('; ')}
-document.addEventListener('submit',async e=>{if(e.target.id!=='start-round-form')return;e.preventDefault();if(busy)return;busy=true;const form=e.target,feedback=form.querySelector('.form-feedback'),b=form.querySelector('[type=submit]');b.disabled=true;try{const data=Object.fromEntries(new FormData(form));await api('start_round',data);document.querySelector('dialog')?.close();boot=await api('bootstrap');await profile(data.user);toast('Новый круг начат. История сохранена.')}catch(err){feedback.textContent=err.message}finally{busy=false;b.disabled=false}});
+const profileBeforeRepeats=drawProfile;
+drawProfile=function(){
+ const before=boot.marathon;boot.marathon=profileData.marathon;try{profileBeforeRepeats()}finally{boot.marathon=before}
+ const {stats:s,marathon:m}=profileData;
+ const first=document.querySelector('.reader-summary>div:first-child b');if(first)first.textContent=s.totalChapters;
+ const days=document.querySelector('.reader-summary>div:nth-child(2) b');if(days)days.textContent=s.totalDays;
+ const label=document.querySelector('.marathon-label>span');if(label)label.textContent=m.start.slice(0,4)+' / '+m.end.slice(0,4);
+ if(s.pace){const info=document.createElement('div');info.className='panel weekly-current-progress';info.innerHTML=`<div class="section-title"><h2>Прогресс текущей недели</h2><strong>${s.progress}%</strong></div><p>Неделя ${s.pace.week} · круг ${s.pace.cycle} · ${s.pace.chapters} из ${s.pace.goal} глав</p><div class="mini-progress"><i style="width:${s.progress}%"></i></div>`;document.querySelector('.reader-summary')?.after(info)}
+ const note=document.querySelector('.reader-other-weeks .section-title small');if(note)note.textContent=boot.user.role==='admin'?'Все недели марафона':'Прошедшие недели';
+};
+document.addEventListener('click',e=>{
+ const b=e.target.closest('[data-week-repeat]');if(!b||busy)return;
+ const w=profileData.stats.reports.find(w=>w.week===Number(b.dataset.weekRepeat));if(!w)return;
+ dialog(`<h2>Начать круг ${w.cycle+1} недели ${w.week}?</h2><p>Ещё раз прочитать тот же план: ${w.goal} глав. Срок прежний — ${date(w.end)}. Результат завершённого круга сохранится в истории, прогресс нового начнётся с нуля.</p>${bookList(w.books,true)}<form id="weekly-repeat-form"><input type="hidden" name="user" value="${profileData.user.id}"><input type="hidden" name="week" value="${w.week}"><input type="hidden" name="cycle" value="${w.cycle}"><p class="form-feedback" role="alert"></p><button class="primary" type="submit">Подтвердить повтор</button></form>`);
+});
+document.addEventListener('submit',async e=>{
+ if(e.target.id!=='weekly-repeat-form')return;e.preventDefault();if(busy)return;busy=true;const f=e.target,b=f.querySelector('[type=submit]');b.disabled=true;
+ try{const data=Object.fromEntries(new FormData(f));await api('start_week_repeat',data);document.querySelector('dialog')?.close();await profile(data.user);toast('Новый круг недели начат. Прежний результат сохранён.')}catch(err){f.querySelector('.form-feedback').textContent=err.message}finally{busy=false;b.disabled=false}
+});

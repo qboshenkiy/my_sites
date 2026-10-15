@@ -62,7 +62,8 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         profile=reader.call('profile')['stats'];current=profile['pace']
         assert current['goal']==10 and len(current['books'])==2
         assert current['status']=='in_progress' and current['plannedByToday']==6 and current['daysLeft']==4
-        assert profile['reports'][0]['status']=='overdue' and profile['reports'][2]['status']=='upcoming'
+        assert profile['reports'][0]['status']=='overdue' and len(profile['reports'])==2
+        assert admin.call('profile',suffix='&user='+uid)['stats']['reports'][2]['status']=='upcoming'
         reader.call('week_plan',{'week':2,'books':books},403)
         reader.call('complete_week',{'user':other,'week':2},403)
         reader.call('complete_week',{'week':3},400)
@@ -179,7 +180,7 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         assert before_split['reports'][0]['chapters']==4 and before_split['pace']['chapters']==0
         tg['update_id']=2003;tg['message']['text']='прочитал 16'
         accepted=json.loads(subprocess.check_output([PHP,'-r',code,str(ROOT/'lib/telegram.php')],env=env,input=json.dumps(tg),text=True))
-        assert 'Неделя 1: +6' in accepted[0]['args']['text'] and 'Неделя 2: +10' in accepted[0]['args']['text']
+        assert 'Неделя 1 · круг 1: +6' in accepted[0]['args']['text'] and 'Неделя 2 · круг 1: +10' in accepted[0]['args']['text']
         assert admin.call('profile',suffix='&user='+other)['stats']['chapters']==4, 'Preview must never write chapters'
         forged=confirm_read(accepted,2102,sender=777777)
         assert any('недоступно' in item['args'].get('text','') for item in forged)
