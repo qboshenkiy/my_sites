@@ -1,0 +1,149 @@
+<?php
+declare(strict_types=1);
+ini_set('display_errors','0');
+require __DIR__.'/lib/core.php';
+header('Content-Type: application/json; charset=utf-8');header('Cache-Control: no-store');
+sessionStart();$uid=$_SESSION['uid']??null;$csrf=$_SESSION['csrf']??=bin2hex(random_bytes(24));$sessionHash=hash('sha256',session_id());session_write_close();
+function fail(string $message,int $status=400): never { http_response_code($status);echo json_encode(['error'=>$message],JSON_UNESCAPED_UNICODE);exit; }
+function send(array $data): never { echo json_encode($data,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR);exit; }
+function text(mixed $value,int $limit,bool $required=true): string { if(!is_string($value))fail('Некорректный текст.');$v=trim($value);if(($required&&$v==='')||mb_strlen($v)>$limit)fail('Заполните текст, максимум '.$limit.' символов.');return $v; }
+function guard(bool $admin=false): array { global $me;if(!$me)fail('Войдите в систему.',401);if($me['role']==='participant'||($admin&&$me['role']!=='admin'))fail('Недостаточно прав.',403);return $me; }
+function number(mixed $value,int $min,int $max): int { $v=filter_var($value,FILTER_VALIDATE_INT);if($v===false||$v<$min||$v>$max)fail('Некорректное число.');return $v; }
+function loginAs(string $id): void { sessionStart();session_regenerate_id(true);$_SESSION['uid']=$id;$_SESSION['csrf']=bin2hex(random_bytes(24));session_write_close(); }
+try {
+    if(!extension_loaded('pdo_sqlite')||!extension_loaded('mbstring'))fail('На сервере нужны PHP-модули pdo_sqlite и mbstring.',503);
+    db();$me=$uid?user($uid):null;if($me&&!(int)$me['active'])$me=null;
+    $action=$_GET['action']??'bootstrap';$input=[];
+    if($_SERVER['REQUEST_METHOD']==='POST') {
+        if((int)($_SERVER['CONTENT_LENGTH']??0)>100000)fail('Запрос слишком большой.',413);
+        if(!hash_equals($csrf,$_SERVER['HTTP_X_CSRF_TOKEN']??''))fail('Обновите страницу и повторите.',403);
+        $input=json_decode(file_get_contents('php://input'),true);if(!is_array($input))fail('Некорректный запрос.');
+    } elseif(!in_array($action,['bootstrap','overview','profile','audit','export','export_xlsx'],true))fail('Нужен POST.',405);
+    if($action==='bootstrap')send(['user'=>$me?publicUser($me):null,'csrf'=>$csrf,'configured'=>(bool)sql("SELECT id FROM users WHERE role='admin' LIMIT 1")->fetchColumn(),'marathon'=>calendar(),'telegram'=>['configured'=>(bool)(getenv('TELEGRAM_BOT_TOKEN')&&getenv('TELEGRAM_BOT_USERNAME')),'username'=>getenv('TELEGRAM_BOT_USERNAME')?:null]]);
+    if($action==='setup'||$action==='login') {
+        $login=strtolower(text($input['login']??'',40));$password=text($input['password']??'',200);
+        if(!preg_match('/^[a-z0-9_.-]{3,40}$/',$login)||strlen($password)<8)fail('Логин: 3–40 латинских символов. Пароль: минимум 8 символов.');
+        db()->exec('BEGIN IMMEDIATE');
+        if($action==='setup') {
+            if(sql("SELECT id FROM users WHERE role='admin'")->fetchColumn())fail('Администратор уже создан.',409);
+            $id=bin2hex(random_bytes(12));$name=text($input['name']??'Администратор',80);
+            sql('INSERT INTO users(id,name,login,password,role,created_at) VALUES (?,?,?,?,?,?)',[$id,$name,$login,password_hash($password,PASSWORD_DEFAULT),'admin',time()]);
+        } else {
+            $ip=$_SERVER['REMOTE_ADDR']??'local';$attempt=sql('SELECT * FROM login_attempts WHERE ip=?',[$ip])->fetch();
+            if($attempt&&(int)$attempt['attempts']>=10&&(int)$attempt['updated_at']>time()-900)fail('Повторите вход через 15 минут.',429);
+            $u=sql("SELECT * FROM users WHERE login=? AND role IN ('admin','moderator') AND active=1",[$login])->fetch();
+            if(!$u||!password_verify($password,$u['password']??'')) {
+                $n=$attempt&&(int)$attempt['updated_at']>time()-900?(int)$attempt['attempts']+1:1;
+                sql('INSERT INTO login_attempts VALUES (?,?,?) ON CONFLICT(ip) DO UPDATE SET attempts=excluded.attempts,updated_at=excluded.updated_at',[$ip,$n,time()]);db()->exec('COMMIT');fail('Неверный логин или пароль.',401);
+            }
+            $id=$u['id'];sql('DELETE FROM login_attempts WHERE ip=?',[$ip]);
+        }
+        db()->exec('COMMIT');loginAs($id);send(['ok'=>true]);
+    }
+    if($action==='logout'){sessionStart();$_SESSION=[];session_regenerate_id(true);session_write_close();send(['ok'=>true]);}
+    if($action==='telegram_request') {
+        if(!getenv('TELEGRAM_BOT_TOKEN')||!getenv('TELEGRAM_BOT_USERNAME'))fail('Telegram ещё не настроен администратором.');
+        $kind=$input['kind']??'login';$target=null;
+        if($kind==='invite') {
+            if(!$me)fail('Войдите в систему.',401);
+            $target=$input['user']??$me['id'];
+            if($target!==$me['id'])guard();
+            $u=user($target);if(!$u||!(int)$u['active'])fail('Аккаунт не найден.',404);
+            if($u['role']!=='participant'&&$target!==$me['id'])guard(true);
+            if($u['telegram_id'])fail('Telegram уже привязан к этому аккаунту.');
+        } elseif($kind!=='login')fail('Неизвестное действие.');
+        $token=bin2hex(random_bytes(24));$expires=time()+($kind==='invite'?86400:300);
+        // Only one outstanding invitation per account; each login is tied to this browser session.
+        if($target)sql('DELETE FROM requests WHERE user_id=? AND kind=?',[$target,'invite']);
+        sql('DELETE FROM requests WHERE expires_at<?',[time()-86400]);
+        sql('INSERT INTO requests(token_hash,kind,user_id,session_hash,expires_at) VALUES (?,?,?,?,?)',[hash('sha256',$token),$kind,$target,$kind==='login'?$sessionHash:null,$expires]);
+        send(['token'=>$token,'expires'=>$expires,'url'=>'https://t.me/'.getenv('TELEGRAM_BOT_USERNAME').'?start='.($kind==='login'?'a_':'i_').$token]);
+    }
+    if($action==='telegram_status') {
+        $token=text($input['token']??'',48);db()->exec('BEGIN IMMEDIATE');
+        $r=sql('SELECT * FROM requests WHERE token_hash=?',[hash('sha256',$token)])->fetch();
+        if(!$r||$r['kind']!=='login'||!hash_equals($sessionHash,$r['session_hash']??'')||$r['expires_at']<time()||$r['consumed'])fail('Запрос входа истёк. Создайте новый.');
+        if(!$r['approved']){db()->exec('COMMIT');send(['pending'=>true]);}
+        $u=user($r['user_id']);if(!$u||!$u['active'])fail('Аккаунт недоступен.',403);
+        sql('UPDATE requests SET consumed=1 WHERE token_hash=?',[$r['token_hash']]);db()->exec('COMMIT');loginAs($u['id']);send(['ok'=>true]);
+    }
+    if(!$me)fail('Войдите в систему.',401);
+    if($action==='overview'){guard();send(['users'=>staff(),'marathon'=>calendar()]);}
+    if($action==='profile') {
+        $id=$_GET['user']??$me['id'];if($id!==$me['id'])guard();$u=user($id);if(!$u)fail('Участник не найден.',404);
+        send(['user'=>publicUser($u),'stats'=>stats($id),'marathon'=>calendar()]);
+    }
+    if($action==='add_reading') {
+        $id=$me['id'];if($me['role']!=='participant'){$id=$input['user']??'';guard();}
+        $u=user($id);if(!$u||!$u['active'])fail('Участник недоступен.',404);
+        $chapters=number($input['chapters']??0,1,100000);$date=text($input['date']??calendar()['today'],10);$title=text($input['title']??'',200,false);$note=text($input['note']??'',1000,false);
+        $key=text($input['key']??'',80);if(!preg_match('/^[a-zA-Z0-9_-]{8,80}$/',$key))fail('Некорректный идентификатор записи.');
+        db()->exec('BEGIN IMMEDIATE');$result=addReading($id,$me['id'],$chapters,$date,$title,$note,'site','web_'.$id.'_'.$key);db()->exec('COMMIT');send(['ok'=>true,'week'=>$result]);
+    }
+    if($action==='delete_reading') {
+        $r=sql('SELECT * FROM reading_entries WHERE id=?',[$input['id']??''])->fetch();if(!$r)fail('Запись не найдена.',404);
+        if($r['user_id']!==$me['id'])guard();db()->exec('BEGIN IMMEDIATE');assertWeekEditable((int)$r['week']);sql('DELETE FROM reading_entries WHERE id=?',[$r['id']]);audit($me['id'],'delete_reading',$r['user_id'],'Удалена отметка '.$r['date']);db()->exec('COMMIT');send(['ok'=>true]);
+    }
+    if($action==='week_result') {
+        guard();$id=$input['user']??'';if(!user($id))fail('Участник не найден.',404);$week=number($input['week']??0,1,22);
+        db()->exec('BEGIN IMMEDIATE');$w=assertWeekEditable($week);$total=number($input['chapters']??0,0,$w['goal']);
+        $daily=(int)(sql('SELECT SUM(chapters) FROM reading_entries WHERE user_id=? AND week=?',[$id,$week])->fetchColumn()?:0);
+        if($total<$daily)fail('Уже есть '.$daily.' глав в ежедневных отметках. Исправьте их перед уменьшением итога.');
+        $days=($input['days']??'')===''?null:number($input['days'],0,7);$title=text($input['title']??'',200,false);$note=text($input['note']??'',1000,false);
+        sql('INSERT INTO reports(user_id,week,editor_id,updated_at,chapters_manual,days_manual,title,note) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(user_id,week) DO UPDATE SET chapters_manual=excluded.chapters_manual,days_manual=excluded.days_manual,title=excluded.title,note=excluded.note,editor_id=excluded.editor_id,updated_at=excluded.updated_at',[$id,$week,$me['id'],time(),$total-$daily,$days,$title,$note]);
+        audit($me['id'],'week_result',$id,'Неделя '.$week.': итог '.$total.' глав');db()->exec('COMMIT');send(['ok'=>true]);
+    }
+    if($action==='week_plan') {
+        guard(true);$week=number($input['week']??0,1,22);$goal=number($input['goal']??0,1,100000);db()->exec('BEGIN IMMEDIATE');
+        $w=calendar()['calendar'][$week-1];if($week<calendar()['current']&&!$w['reopened'])fail('Откройте завершённую неделю перед изменением плана.');
+        foreach(staff() as $u){if($u['weekly'][$week-1]['chapters']>$goal)fail('План меньше уже внесённого результата участника '.$u['name'].'.');}
+        sql('UPDATE week_plans SET chapters=? WHERE week=?',[$goal,$week]);audit($me['id'],'week_plan',null,'План недели '.$week.': '.$goal.' глав');db()->exec('COMMIT');send(['ok'=>true]);
+    }
+    if($action==='week_lock') {
+        guard(true);$week=number($input['week']??0,1,22);$open=number($input['open']??0,0,1);
+        if($week>=calendar()['current'])fail('Открытие нужно только для завершённых недель.');
+        sql('UPDATE week_plans SET reopened=? WHERE week=?',[$open,$week]);audit($me['id'],'week_lock',null,'Неделя '.$week.($open?' открыта для исправлений':' закрыта'));send(['ok'=>true]);
+    }
+    if($action==='create_user') {
+        guard();$role=$input['role']??'participant';if(!in_array($role,['participant','moderator','admin'],true))fail('Неизвестная роль.');if($role!=='participant')guard(true);
+        $name=text($input['name']??'',80);$id=bin2hex(random_bytes(12));$login=null;$hash=null;
+        if($role!=='participant'){
+            $login=strtolower(text($input['login']??'',40));$password=text($input['password']??'',200);
+            if(!preg_match('/^[a-z0-9_.-]{3,40}$/',$login)||strlen($password)<8)fail('Логин: 3–40 латинских символов. Пароль: минимум 8 символов.');
+            if(sql('SELECT id FROM users WHERE login=?',[$login])->fetchColumn())fail('Логин уже занят.');$hash=password_hash($password,PASSWORD_DEFAULT);
+        }
+        sql('INSERT INTO users(id,name,login,password,role,created_at) VALUES (?,?,?,?,?,?)',[$id,$name,$login,$hash,$role,time()]);audit($me['id'],'create_user',$id,'Создан аккаунт: '.$name);send(['id'=>$id]);
+    }
+    if($action==='save_report') {
+        guard();$id=$input['user']??'';$u=user($id);if(!$u||$u['role']!=='participant')fail('Участник не найден.',404);
+        $week=number($input['week']??0,1,22);assertWeekEditable($week);
+        $pages=number($input['pages']??0,0,100000);$minutes=number($input['minutes']??0,0,10080);$books=number($input['books']??0,0,100);
+        $title=text($input['title']??'',200,false);$note=text($input['note']??'',1000,false);
+        db()->exec('BEGIN IMMEDIATE');
+        sql('INSERT INTO reports(user_id,week,pages,minutes,books,title,note,editor_id,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id,week) DO UPDATE SET pages=excluded.pages,minutes=excluded.minutes,books=excluded.books,title=excluded.title,note=excluded.note,editor_id=excluded.editor_id,updated_at=excluded.updated_at',[$id,$week,$pages,$minutes,$books,$title,$note,$me['id'],time()]);
+        audit($me['id'],'save_report',$id,'Неделя '.$week.': '.$pages.' страниц, '.$minutes.' минут, '.$books.' книг');db()->exec('COMMIT');send(['ok'=>true]);
+    }
+    if($action==='update_user') {
+        guard(true);$id=$input['user']??'';$u=user($id);if(!$u)fail('Аккаунт не найден.',404);
+        $name=text($input['name']??$u['name'],80);$role=$input['role']??$u['role'];$active=number($input['active']??$u['active'],0,1);
+        if(!in_array($role,['participant','moderator','admin'],true))fail('Неизвестная роль.');
+        $login=$u['login'];$password=$u['password'];
+        if(isset($input['login'])&&trim($input['login'])!==''){$login=strtolower(text($input['login'],40));if(!preg_match('/^[a-z0-9_.-]{3,40}$/',$login))fail('Некорректный логин.');if(sql('SELECT id FROM users WHERE login=? AND id!=?',[$login,$id])->fetchColumn())fail('Этот логин занят.');}
+        if(!empty($input['password'])){if(strlen($input['password'])<8)fail('Пароль: минимум 8 символов.');$password=password_hash(text($input['password'],200),PASSWORD_DEFAULT);}
+        if($role!=='participant'&&!$u['telegram_id']&&(!$login||!$password))fail('Привяжите Telegram или задайте логин и пароль для сотрудника.');
+        db()->exec('BEGIN IMMEDIATE');
+        if($u['role']==='admin'&&($role!=='admin'||!$active)&&(int)sql("SELECT COUNT(*) FROM users WHERE role='admin' AND active=1")->fetchColumn()<=1)fail('Нельзя отключить последнего администратора.');
+        if($id===$me['id']&&(!$active||$role!=='admin'))fail('Нельзя отключить или понизить свой аккаунт.');
+        sql('UPDATE users SET name=?,role=?,active=?,login=?,password=? WHERE id=?',[$name,$role,$active,$login,$password,$id]);audit($me['id'],'update_user',$id,'Роль: '.$role.', активен: '.$active);db()->exec('COMMIT');send(['ok'=>true]);
+    }
+    if($action==='settings') {
+        guard(true);$title=text($input['title']??'',100);sql("UPDATE settings SET value=? WHERE key='title'",[$title]);audit($me['id'],'settings',null,'Изменено название марафона');send(['ok'=>true]);
+    }
+    if($action==='audit'){guard();send(['events'=>sql('SELECT a.*,u.name AS actor,t.name AS target FROM audit a LEFT JOIN users u ON u.id=a.actor_id LEFT JOIN users t ON t.id=a.target_id ORDER BY a.id DESC LIMIT 100')->fetchAll()]);}
+    if($action==='export_xlsx'){guard();require __DIR__.'/lib/xlsx.php';exportReading(number($_GET['week']??max(1,min(22,calendar()['current'])),1,22));}
+    if($action==='export') {
+        guard();header('Content-Type: text/csv; charset=utf-8');header('Content-Disposition: attachment; filename="marathon-results.csv"');$f=fopen('php://output','w');fwrite($f,"\xEF\xBB\xBF");fputcsv($f,['Участник','Страницы','Минуты','Книги','Недель с отчётом','Telegram привязан'],';', '"','');
+        foreach(staff() as $u){if($u['role']!=='participant')continue;$name=preg_match('/^[=+@-]/',$u['name'])?"'".$u['name']:$u['name'];fputcsv($f,[$name,$u['pages'],$u['minutes'],$u['books'],$u['recorded'],$u['telegram_id']?'Да':'Нет'],';', '"','');}exit;
+    }
+    fail('Действие не найдено.',404);
+} catch(DomainException $e){fail($e->getMessage());}catch(Throwable $e){error_log($e->getMessage());fail('Ошибка сервера. Проверьте подключение и повторите.',500);}

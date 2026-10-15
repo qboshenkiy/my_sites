@@ -1,0 +1,5 @@
+Options -Indexes
+DirectoryIndex index.php
+<FilesMatch "(?i)(^\.|\.(sqlite|sqlite3|db|zip|log|ini|yaml|yml|md|py|ps1|sh)$|^Dockerfile$|^router\.php$)">
+    Require all denied
+</FilesMatch>

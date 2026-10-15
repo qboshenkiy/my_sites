@@ -1,0 +1,25 @@
+/storage/*.sqlite*
+/storage/*.db*
+/tests/.data/
+/dist/
+/.env
+/storage/*.log
+/storage/*.pid
+
+# Local credentials and runtime data for all three projects.
+**/.env
+**/.env.*
+!**/.env.example
+**/*.sqlite*
+**/*.db
+**/*.db-*
+**/__pycache__/
+**/*.pyc
+**/*.log
+**/*.pid
+**/.DS_Store
+**/Thumbs.db
+.idea/
+.vscode/
+*.pem
+*.key

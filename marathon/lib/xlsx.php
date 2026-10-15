@@ -1,0 +1,32 @@
+<?php
+declare(strict_types=1);
+// Standard OOXML export using a small ZIP writer; no server-side Node/Python runtime is required.
+function xmlText(string $v): string {return htmlspecialchars(preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F]/u','',$v),ENT_XML1|ENT_QUOTES,'UTF-8');}
+function zipFiles(array $files): string {
+    $body='';$directory='';$offset=0;
+    foreach($files as $name=>$content){$compressed=gzdeflate($content);$crc=crc32($content);$n=strlen($name);$size=strlen($content);$length=strlen($compressed);
+        $record=pack('VvvvvvVVVvv',0x04034b50,20,0,8,0,0,$crc,$length,$size,$n,0).$name.$compressed;
+        $directory.=pack('VvvvvvvVVVvvvvvVV',0x02014b50,20,20,0,8,0,0,$crc,$length,$size,$n,0,0,0,0,0,$offset).$name;$body.=$record;$offset+=strlen($record);
+    }return $body.$directory.pack('VvvvvVVv',0x06054b50,0,0,count($files),count($files),strlen($directory),strlen($body),0);
+}
+function excelColumn(int $n): string {$s='';while($n){$n--;$s=chr(65+$n%26).$s;$n=intdiv($n,26);}return $s;}
+function exportReading(int $week): never {
+    $users=array_values(array_filter(staff(),fn($u)=>$u['role']==='participant'));$goal=calendar()['calendar'][$week-1]['goal'];
+    $sheets=[['name'=>'Неделя '.$week,'rows'=>[['Участник','План: главы','Прочитано: главы','Дни чтения','План выполнен','Осталось глав','Глав в день до конца недели','Неделя закрыта']]],['name'=>'22 недели','rows'=>[array_merge(['Участник'],array_map(fn($i)=>'Неделя '.$i,range(1,22)),['Всего глав','Выполнено недель'])]]];
+    foreach($users as $i=>$u){$w=$u['weekly'][$week-1];$row=$i+2;
+        $sheets[0]['rows'][]=[$u['name'],$goal,$w['chapters'],$w['days'],['formula'=>'IF(C'.$row.'>=B'.$row.',"Да","Нет")','value'=>$w['completed']?'Да':'Нет'],['formula'=>'MAX(0,B'.$row.'-C'.$row.')','value'=>$w['remaining']],$w['perDay'],$w['editable']?'Нет':'Да'];
+        $sheets[1]['rows'][]=array_merge([$u['name']],array_column($u['weekly'],'chapters'),[['formula'=>'SUM(B'.$row.':W'.$row.')','value'=>$u['chapters']],$u['completed']]);
+    }
+    $files=['_rels/.rels'=>'<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'];
+    $content='<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>';
+    $workbook='<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>';
+    $rels='<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">';
+    foreach($sheets as $i=>$sheet){$n=$i+1;$content.='<Override PartName="/xl/worksheets/sheet'.$n.'.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>';$workbook.='<sheet name="'.xmlText($sheet['name']).'" sheetId="'.$n.'" r:id="rId'.$n.'"/>';$rels.='<Relationship Id="rId'.$n.'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet'.$n.'.xml"/>';
+        $xml='<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane xSplit="1" ySplit="1" topLeftCell="B2" activePane="bottomRight" state="frozen"/></sheetView></sheetViews><cols><col min="1" max="1" width="28" customWidth="1"/><col min="2" max="30" width="19" customWidth="1"/></cols><sheetData>';
+        foreach($sheet['rows'] as $r=>$values){$xml.='<row r="'.($r+1).'"'.($r===0?' ht="40" customHeight="1"':'').'>';foreach($values as $c=>$v){$ref=excelColumn($c+1).($r+1);$style=$r===0?1:0;if(is_array($v)){$value=$v['value'];$string=is_string($value);$xml.='<c r="'.$ref.'" s="'.$style.'"'.($string?' t="str"':'').'><f>'.xmlText($v['formula']).'</f><v>'.xmlText((string)$value).'</v></c>';}elseif(is_int($v)||is_float($v))$xml.='<c r="'.$ref.'" s="'.$style.'"><v>'.$v.'</v></c>';else $xml.='<c r="'.$ref.'" s="'.$style.'" t="inlineStr"><is><t xml:space="preserve">'.xmlText((string)$v).'</t></is></c>';}$xml.='</row>';}
+        $xml.='</sheetData><autoFilter ref="A1:'.excelColumn(count($sheet['rows'][0])).max(1,count($sheet['rows'])).'"/></worksheet>';$files['xl/worksheets/sheet'.$n.'.xml']=$xml;
+    }
+    $files['[Content_Types].xml']=$content.'</Types>';$files['xl/workbook.xml']=$workbook.'</sheets><calcPr calcId="191029" fullCalcOnLoad="1"/></workbook>';$files['xl/_rels/workbook.xml.rels']=$rels.'<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>';
+    $files['xl/styles.xml']='<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF315C49"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" applyAlignment="1"><alignment wrapText="1" vertical="center"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');header('Content-Disposition: attachment; filename="reading-week-'.$week.'.xlsx"');echo zipFiles($files);exit;
+}

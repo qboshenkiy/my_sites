@@ -1,0 +1,40 @@
+name: pulse
+services:
+  web:
+    build: .
+    restart: unless-stopped
+    environment:
+      QUIZ_DATA_DIR: /var/lib/pulse
+      QUIZ_TRUST_PROXY: "1"
+    volumes:
+      - pulse_data:/var/lib/pulse
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env before HTTPS startup}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+volumes:
+  pulse_data:
+  caddy_data:
+  caddy_config:

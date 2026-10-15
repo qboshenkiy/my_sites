@@ -1,0 +1,37 @@
+name: glava-marathon
+services:
+  web:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${APP_BIND:-0.0.0.0}:${APP_PORT:-8081}:80"
+    environment: &app-env
+      MARATHON_DATA_DIR: /var/lib/marathon
+      MARATHON_TIMEZONE: Asia/Bishkek
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
+      APP_URL: ${APP_URL:-}
+    volumes:
+      - marathon_data:/var/lib/marathon
+    logging: &logs
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+  bot:
+    build: .
+    profiles: [telegram]
+    restart: unless-stopped
+    user: www-data
+    command: [php, /opt/marathon/bot.php]
+    healthcheck:
+      disable: true
+    environment: *app-env
+    volumes:
+      - marathon_data:/var/lib/marathon
+    depends_on:
+      web:
+        condition: service_healthy
+    logging: *logs
+volumes:
+  marathon_data:

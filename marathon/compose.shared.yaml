@@ -1,0 +1,45 @@
+# Use the existing Pulse Caddy proxy when both sites run on one server.
+name: glava-marathon
+services:
+  web:
+    build: .
+    restart: unless-stopped
+    environment: &app-env
+      MARATHON_DATA_DIR: /var/lib/marathon
+      MARATHON_TIMEZONE: Asia/Bishkek
+      MARATHON_TRUST_PROXY: "1"
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
+      APP_URL: https://${DOMAIN:?Set DOMAIN in .env}
+    volumes:
+      - marathon_data:/var/lib/marathon
+    networks:
+      default:
+      pulse_proxy:
+        aliases: [marathon]
+    logging: &logs
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+  bot:
+    build: .
+    profiles: [telegram]
+    restart: unless-stopped
+    user: www-data
+    command: [php, /opt/marathon/bot.php]
+    healthcheck:
+      disable: true
+    environment: *app-env
+    volumes:
+      - marathon_data:/var/lib/marathon
+    depends_on:
+      web:
+        condition: service_healthy
+    logging: *logs
+networks:
+  pulse_proxy:
+    external: true
+    name: pulse_default
+volumes:
+  marathon_data:

@@ -1,0 +1,42 @@
+{
+  "state_dir": "/var/lib/gitdeck",
+  "port": 8120,
+  "projects": [
+    {
+      "id": "pulse",
+      "name": "Пульс",
+      "kind": "pulse",
+      "repo": "https://github.com/YOUR_ACCOUNT/YOUR_REPOSITORY.git",
+      "branch": "main",
+      "subdir": "",
+      "ssh_key": "",
+      "directory": "/opt/pulse",
+      "compose": "compose.https.yaml",
+      "profiles": [],
+      "services": ["web"]
+    },
+    {
+      "id": "marathon",
+      "name": "Марафон чтения",
+      "kind": "marathon",
+      "repo": "https://github.com/YOUR_ACCOUNT/YOUR_REPOSITORY.git",
+      "branch": "main",
+      "subdir": "marathon",
+      "ssh_key": "",
+      "directory": "/opt/marathon",
+      "compose": "compose.https.yaml",
+      "profiles": ["telegram"],
+      "services": ["web", "bot"]
+    },
+    {
+      "id": "gitdeck",
+      "name": "GitDeck — панель обновлений",
+      "kind": "self",
+      "repo": "https://github.com/YOUR_ACCOUNT/YOUR_REPOSITORY.git",
+      "branch": "main",
+      "subdir": "deploy-panel",
+      "ssh_key": "",
+      "directory": "/opt/gitdeck"
+    }
+  ]
+}

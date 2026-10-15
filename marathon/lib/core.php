@@ -1,0 +1,91 @@
+<?php
+declare(strict_types=1);
+date_default_timezone_set(getenv('MARATHON_TIMEZONE') ?: 'Asia/Bishkek');
+function db(): PDO {
+    static $db=null;
+    if ($db) return $db;
+    $dir=getenv('MARATHON_DATA_DIR') ?: dirname(__DIR__).'/storage';
+    if (!is_dir($dir)) mkdir($dir,0700,true);
+    $db=new PDO('sqlite:'.$dir.'/marathon.sqlite',null,null,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC]);
+    $db->exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=10000; PRAGMA foreign_keys=ON;
+    CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,name TEXT NOT NULL,login TEXT UNIQUE,password TEXT,role TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,telegram_id TEXT UNIQUE,telegram_name TEXT,created_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS reports(user_id TEXT NOT NULL REFERENCES users(id),week INTEGER NOT NULL,pages INTEGER NOT NULL DEFAULT 0,minutes INTEGER NOT NULL DEFAULT 0,books INTEGER NOT NULL DEFAULT 0,title TEXT NOT NULL DEFAULT \'\',note TEXT NOT NULL DEFAULT \'\',editor_id TEXT NOT NULL REFERENCES users(id),updated_at INTEGER NOT NULL,PRIMARY KEY(user_id,week));
+    CREATE TABLE IF NOT EXISTS requests(token_hash TEXT PRIMARY KEY,kind TEXT NOT NULL,user_id TEXT REFERENCES users(id),session_hash TEXT,expires_at INTEGER NOT NULL,approved INTEGER NOT NULL DEFAULT 0,consumed INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT,actor_id TEXT,event TEXT NOT NULL,target_id TEXT,details TEXT NOT NULL,created_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS login_attempts(ip TEXT PRIMARY KEY,attempts INTEGER NOT NULL,updated_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS bot_updates(id INTEGER PRIMARY KEY,processed_at INTEGER NOT NULL);');
+    foreach (['start'=>'2026-10-12','weeks'=>'22','weekly_goal'=>'100','title'=>'22 недели чтения'] as $k=>$v) sql('INSERT OR IGNORE INTO settings VALUES (?,?)',[$k,$v]);
+    // Additive migration: retain the old page/minute reports as historical data.
+    $db->exec('BEGIN IMMEDIATE');
+    try {
+        $columns=array_column(sql('PRAGMA table_info(reports)')->fetchAll(),'name');
+        if(!in_array('chapters_manual',$columns,true))$db->exec('ALTER TABLE reports ADD COLUMN chapters_manual INTEGER NOT NULL DEFAULT 0');
+        if(!in_array('days_manual',$columns,true))$db->exec('ALTER TABLE reports ADD COLUMN days_manual INTEGER');
+        $db->exec('CREATE TABLE IF NOT EXISTS week_plans(week INTEGER PRIMARY KEY,chapters INTEGER NOT NULL DEFAULT 7,reopened INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS reading_entries(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),week INTEGER NOT NULL,date TEXT NOT NULL,chapters INTEGER NOT NULL,title TEXT NOT NULL,note TEXT NOT NULL,actor_id TEXT NOT NULL REFERENCES users(id),source TEXT NOT NULL,created_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS migrations(version INTEGER PRIMARY KEY,created_at INTEGER NOT NULL);');
+        for($week=1;$week<=22;$week++)sql('INSERT OR IGNORE INTO week_plans(week) VALUES (?)',[$week]);
+        sql('INSERT OR IGNORE INTO migrations VALUES (2,?)',[time()]);
+        $db->exec('COMMIT');
+    }catch(Throwable $e){$db->exec('ROLLBACK');throw $e;}
+    return $db;
+}
+function sql(string $query,array $params=[]): PDOStatement { $s=db()->prepare($query);$s->execute($params);return $s; }
+function setting(string $key): string { return (string)sql('SELECT value FROM settings WHERE key=?',[$key])->fetchColumn(); }
+function calendar(): array {
+    $start=new DateTimeImmutable(setting('start'));$weeks=(int)setting('weeks');$end=$start->modify('+'.($weeks*7-1).' days');
+    $today=new DateTimeImmutable(getenv('MARATHON_TEST_TODAY') ?: 'today');$offset=(int)$start->diff($today)->format('%r%a');
+    $current=$offset<0?0:($offset>=$weeks*7?$weeks+1:intdiv($offset,7)+1);
+    $plans=sql('SELECT * FROM week_plans ORDER BY week')->fetchAll();
+    $items=[];for($i=1;$i<=$weeks;$i++) { $s=$start->modify('+'.(($i-1)*7).' days');$plan=$plans[$i-1];$items[]=['number'=>$i,'start'=>$s->format('Y-m-d'),'end'=>$s->modify('+6 days')->format('Y-m-d'),'goal'=>(int)$plan['chapters'],'reopened'=>(bool)$plan['reopened'],'editable'=>$i<=$current&&($i===$current||(bool)$plan['reopened'])]; }
+    return ['title'=>setting('title'),'start'=>$start->format('Y-m-d'),'end'=>$end->format('Y-m-d'),'today'=>$today->format('Y-m-d'),'current'=>$current,'weeks'=>$weeks,'goal'=>$items[max(0,min(21,$current-1))]['goal'],'legacyGoal'=>(int)setting('weekly_goal'),'calendar'=>$items];
+}
+function publicUser(array $u): array { unset($u['password']);return $u; }
+function user(string $id): ?array { return sql('SELECT * FROM users WHERE id=?',[$id])->fetch() ?: null; }
+function audit(string $actor,string $event,?string $target,string $details): void { sql('INSERT INTO audit(actor_id,event,target_id,details,created_at) VALUES (?,?,?,?,?)',[$actor,$event,$target,$details,time()]); }
+function legacyStats(string $id): array {
+    $reports=sql('SELECT r.*,u.name AS editor FROM reports r JOIN users u ON u.id=r.editor_id WHERE r.user_id=? ORDER BY week',[$id])->fetchAll();
+    $goal=(int)setting('weekly_goal');$pages=0;$minutes=0;$books=0;$done=0;
+    foreach($reports as $r) {$pages+=(int)$r['pages'];$minutes+=(int)$r['minutes'];$books+=(int)$r['books'];if((int)$r['pages']>=$goal)$done++;}
+    return ['reports'=>$reports,'pages'=>$pages,'minutes'=>$minutes,'books'=>$books,'recorded'=>count($reports),'goalWeeks'=>$done,'goal'=>$goal,'progress'=>min(100,(int)round($pages/max(1,$goal*(int)setting('weeks'))*100))];
+}
+function legacyStaff(): array {
+    return sql("SELECT u.id,u.name,u.role,u.active,u.telegram_id,u.telegram_name,u.login,u.created_at,COALESCE(SUM(r.pages),0) AS pages,COALESCE(SUM(r.minutes),0) AS minutes,COALESCE(SUM(r.books),0) AS books,COUNT(r.week) AS recorded FROM users u LEFT JOIN reports r ON r.user_id=u.id GROUP BY u.id ORDER BY pages DESC,u.name")->fetchAll();
+}
+function weekResults(string $id): array {
+    $c=calendar();$reports=sql('SELECT r.*,u.name AS editor FROM reports r JOIN users u ON u.id=r.editor_id WHERE r.user_id=?',[$id])->fetchAll();
+    $daily=sql('SELECT week,SUM(chapters) AS chapters,COUNT(DISTINCT date) AS days FROM reading_entries WHERE user_id=? GROUP BY week',[$id])->fetchAll();
+    $rmap=[];$dmap=[];foreach($reports as $r)$rmap[(int)$r['week']]=$r;foreach($daily as $d)$dmap[(int)$d['week']]=$d;
+    $result=[];
+    foreach($c['calendar'] as $w){$n=$w['number'];$r=$rmap[$n]??[];$d=$dmap[$n]??[];$chapters=(int)($r['chapters_manual']??0)+(int)($d['chapters']??0);$days=$r['days_manual']??null;
+        $remaining=max(0,$w['goal']-$chapters);$start=new DateTimeImmutable(max($c['today'],$w['start']));$end=new DateTimeImmutable($w['end']);$daysLeft=max(0,(int)$start->diff($end)->format('%r%a')+1);
+        $result[]=array_merge($w,['week'=>$n,'chapters'=>$chapters,'days'=>$days===null?(int)($d['days']??0):(int)$days,'daysAuto'=>(int)($d['days']??0),'daysManual'=>$days,'completed'=>$chapters>=$w['goal'],'remaining'=>$remaining,'daysLeft'=>$daysLeft,'perDay'=>$remaining&&$daysLeft?(int)ceil($remaining/$daysLeft):0,'recorded'=>isset($rmap[$n])||isset($dmap[$n]),'title'=>$r['title']??'','note'=>$r['note']??'','editor'=>$r['editor']??'','legacyPages'=>(int)($r['pages']??0),'legacyMinutes'=>(int)($r['minutes']??0)]);
+    }return $result;
+}
+function stats(string $id): array {
+    $weeks=weekResults($id);$legacy=legacyStats($id);$entries=sql('SELECT e.*,u.name AS actor FROM reading_entries e JOIN users u ON u.id=e.actor_id WHERE e.user_id=? ORDER BY date DESC,created_at DESC',[$id])->fetchAll();
+    $current=calendar()['current'];$goalTotal=array_sum(array_column($weeks,'goal'));$chapters=array_sum(array_column($weeks,'chapters'));
+    return ['reports'=>$weeks,'entries'=>$entries,'chapters'=>$chapters,'days'=>array_sum(array_column($weeks,'days')),'recorded'=>count(array_filter($weeks,fn($w)=>$w['recorded'])),'goalWeeks'=>count(array_filter($weeks,fn($w)=>$w['completed'])),'progress'=>(int)round($chapters/max(1,$goalTotal)*100),'goalTotal'=>$goalTotal,'pace'=>$current>=1&&$current<=22?$weeks[$current-1]:null,'legacy'=>$legacy];
+}
+function staff(): array {
+    $users=legacyStaff();foreach($users as &$u){$w=weekResults($u['id']);$u['chapters']=array_sum(array_column($w,'chapters'));$u['days']=array_sum(array_column($w,'days'));$u['completed']=count(array_filter($w,fn($w)=>$w['completed']));$u['weekly']=$w;}unset($u);
+    usort($users,fn($a,$b)=>$b['chapters']<=>$a['chapters']?:strcmp($a['name'],$b['name']));return $users;
+}
+function assertWeekEditable(int $week): array {
+    if($week<1||$week>22)throw new DomainException('Неделя должна быть от 1 до 22.');$w=calendar()['calendar'][$week-1];
+    if(!$w['editable'])throw new DomainException('Эта неделя закрыта. Администратор может открыть её для исправления.');return $w;
+}
+function addReading(string $id,string $actor,int $chapters,string $date,string $title,string $note,string $source,string $entryId): array {
+    $c=calendar();$d=DateTimeImmutable::createFromFormat('!Y-m-d',$date);if(!$d||$d->format('Y-m-d')!==$date||$date<$c['start']||$date>$c['end']||$date>$c['today'])throw new DomainException('Выберите дату марафона не позже сегодняшней.');
+    $week=intdiv((int)(new DateTimeImmutable($c['start']))->diff($d)->format('%a'),7)+1;$w=assertWeekEditable($week);
+    if($chapters<1||$chapters>100000)throw new DomainException('Укажите положительное число глав.');
+    $existing=sql('SELECT * FROM reading_entries WHERE id=?',[$entryId])->fetch();if($existing){if($existing['user_id']!==$id)throw new DomainException('Запись недоступна.');return weekResults($id)[$week-1];}
+    $total=weekResults($id)[$week-1]['chapters'];$left=max(0,$w['goal']-$total);if($chapters>$left)throw new DomainException('Можно зачесть не больше '.$left.' глав: недельный план — '.$w['goal'].'.');
+    sql('INSERT INTO reading_entries VALUES (?,?,?,?,?,?,?,?,?,?)',[$entryId,$id,$week,$date,$chapters,$title,$note,$actor,$source,time()]);audit($actor,'reading',$id,$date.': +'.$chapters.' глав ('.$source.')');return weekResults($id)[$week-1];
+}
+function sessionStart(): void {
+    $https=(!empty($_SERVER['HTTPS'])&&$_SERVER['HTTPS']!=='off')||(getenv('MARATHON_TRUST_PROXY')==='1'&&($_SERVER['HTTP_X_FORWARDED_PROTO']??'')==='https');
+    ini_set('session.use_strict_mode','1');session_name('marathon_session');
+    session_set_cookie_params(['httponly'=>true,'samesite'=>'Lax','secure'=>$https]);session_start();
+}

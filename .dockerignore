@@ -1,0 +1,11 @@
+storage
+tests
+dist
+.git
+.env
+*.zip
+*.log
+*.sqlite*
+__pycache__
+marathon
+deploy-panel
