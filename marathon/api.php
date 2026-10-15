@@ -3,6 +3,10 @@ declare(strict_types=1);
 ini_set('display_errors','0');
 require __DIR__.'/lib/core.php';
 header('Content-Type: application/json; charset=utf-8');header('Cache-Control: no-store');
+// Container probes must not create long-lived guest sessions.
+if($_SERVER['REQUEST_METHOD']==='GET'&&($_GET['action']??'')==='health'){
+    try{db();echo json_encode(['ok'=>true]);}catch(Throwable $e){http_response_code(503);echo json_encode(['ok'=>false]);}exit;
+}
 sessionStart();$uid=$_SESSION['uid']??null;$epoch=$_SESSION['epoch']??0;$csrf=$_SESSION['csrf']??=bin2hex(random_bytes(24));$sessionHash=hash('sha256',session_id());session_write_close();
 function fail(string $message,int $status=400): never { http_response_code($status);echo json_encode(['error'=>$message],JSON_UNESCAPED_UNICODE);exit; }
 function send(array $data): never { echo json_encode($data,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR);exit; }

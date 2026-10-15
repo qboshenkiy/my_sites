@@ -154,6 +154,15 @@ function completeWeek(string $id,string $actor,int $week,?int $days): array {
 }
 function sessionStart(): void {
     $https=(!empty($_SERVER['HTTPS'])&&$_SERVER['HTTPS']!=='off')||(getenv('MARATHON_TRUST_PROXY')==='1'&&($_SERVER['HTTP_X_FORWARDED_PROTO']??'')==='https');
-    ini_set('session.use_strict_mode','1');session_name('marathon_session');
-    session_set_cookie_params(['httponly'=>true,'samesite'=>'Lax','secure'=>$https]);session_start();
+    // Store sessions in the existing persistent data volume, rather than the container filesystem.
+    $dir=(getenv('MARATHON_DATA_DIR')?:dirname(__DIR__).'/storage').'/sessions';
+    if(!is_dir($dir)&&!mkdir($dir,0700,true)&&!is_dir($dir))throw new RuntimeException('Cannot create session directory.');
+    $lifetime=400*86400;
+    ini_set('session.save_handler','files');session_save_path($dir);
+    ini_set('session.use_strict_mode','1');ini_set('session.use_only_cookies','1');ini_set('session.use_trans_sid','0');
+    ini_set('session.gc_maxlifetime',(string)$lifetime);session_name('marathon_session');
+    $options=['path'=>'/','httponly'=>true,'samesite'=>'Lax','secure'=>$https];
+    session_set_cookie_params(['lifetime'=>$lifetime]+$options);session_start();
+    // Browsers cap persistent cookies; renew the deadline on every visit.
+    setcookie(session_name(),session_id(),['expires'=>time()+$lifetime]+$options);
 }

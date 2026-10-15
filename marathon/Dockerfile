@@ -19,4 +19,4 @@ RUN mkdir -p /var/lib/marathon /opt/lib \
 ENV MARATHON_DATA_DIR=/var/lib/marathon
 VOLUME ["/var/lib/marathon"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD php -r 'exit(@file_get_contents("http://127.0.0.1/api.php?action=bootstrap") === false ? 1 : 0);'
+    CMD php -r 'exit(@file_get_contents("http://127.0.0.1/api.php?action=health") === false ? 1 : 0);'
