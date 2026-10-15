@@ -76,6 +76,27 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         assert result['status']=='completed' and result['completedOn']=='2026-10-22'
         again=reader.call('complete_week',{'week':2,'days':1})['week']
         assert again['chapters']==10 and again['days']==3
+        corrected=reader.call('week_result',{'week':2,'chapters':2,'days':2,'title':'Corrected total'})['week']
+        assert corrected['chapters']==2 and corrected['chaptersDaily']==3 and corrected['days']==2
+        assert corrected['actualPerDay']==1 and corrected['status']=='in_progress' and corrected['completedOn'] is None
+        assert len(reader.call('profile')['stats']['entries'])==1, 'Weekly correction must preserve daily history'
+        reader.call('week_result',{'week':2,'chapters':11,'days':2},400)
+        reader.call('week_result',{'week':2,'chapters':3,'days':5},400)
+        reader.call('week_result',{'user':other,'week':2,'chapters':3,'days':2},403)
+        reader.call('clear_week_result',{'user':other,'week':2},403)
+        reader.call('clear_week_result',{'week':3},400)
+        cleared=reader.call('clear_week_result',{'week':2})['week']
+        assert cleared['chapters']==0 and cleared['days']==0 and not cleared['recorded']
+        assert not reader.call('profile')['stats']['entries']
+        reader.call('week_result',{'week':2,'chapters':4,'days':2})
+        reader.call('add_reading',{'chapters':1,'date':'2026-10-22','title':'Extra','key':'after_correction'})
+        state=reader.call('profile')['stats'];assert state['pace']['chapters']==5
+        entry=next(e for e in state['entries'] if e['title']=='Extra')
+        reader.call('delete_reading',{'id':entry['id']})
+        assert reader.call('profile')['stats']['pace']['chapters']==4
+        reader.call('complete_week',{'week':2,'days':3})
+        edited=reader.call('week_result',{'week':2,'chapters':10,'days':4})['week']
+        assert edited['days']==4 and edited['actualPerDay']==2.5 and edited['completedOn']=='2026-10-22'
         reader.call('add_reading',{'chapters':1,'date':'2026-10-22','key':'no_more_chapters'},400)
         admin.call('week_plan',{'week':2,'books':[{'title':'Short','chapter_from':1,'chapter_to':9}]},400)
         assert reader.call('profile')['stats']['pace']['goal']==10
@@ -88,6 +109,8 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         assert late['chapters']==10 and late['days']==9 and late['actualPerDay']==1.11
         assert len(late['completedBooks'])==2
         admin.call('week_result',{'user':uid,'week':1,'chapters':8},400)
+        reader.call('week_result',{'week':1,'chapters':8,'days':3},400)
+        reader.call('clear_week_result',{'week':1},400)
         export=admin.call('export_xlsx',suffix='&week=1')
         with zipfile.ZipFile(io.BytesIO(export)) as archive:
             assert archive.testzip() is None
@@ -96,6 +119,12 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
             assert 'План чтения' in archive.read('xl/workbook.xml').decode()
             assert 'С опозданием' in archive.read('xl/worksheets/sheet1.xml').decode()
             assert 'Матфей' in archive.read('xl/worksheets/sheet3.xml').decode()
-        print('PASS: book ranges/goal totals, overlap checks, pace, participant permissions, daily+whole-plan totals, idempotence, manual days, late marks on closed weeks, preserved locks and XLSX plan/status.')
+        admin.call('save_report',{'user':uid,'week':2,'pages':50,'minutes':20,'books':1,'title':'Legacy title','note':'Legacy note'})
+        reader.call('clear_week_result',{'week':2})
+        archive_stats=reader.call('profile')['stats']
+        legacy=next(r for r in archive_stats['legacy']['reports'] if r['week']==2)
+        assert archive_stats['pace']['chapters']==0 and archive_stats['legacy']['pages']==50
+        assert legacy['title']=='Legacy title' and legacy['note']=='Legacy note'
+        print('PASS: weekly CRUD/corrections below daily totals, retained history, new readings after correction, reset, ownership/locks, books, manual days, late marks and XLSX.')
     finally:
         server.terminate();server.wait(timeout=10)

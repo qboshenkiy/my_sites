@@ -82,7 +82,7 @@ try {
     }
     if($action==='delete_reading') {
         $r=sql('SELECT * FROM reading_entries WHERE id=?',[$input['id']??''])->fetch();if(!$r)fail('Запись не найдена.',404);
-        if($r['user_id']!==$me['id'])guard();db()->exec('BEGIN IMMEDIATE');assertWeekEditable((int)$r['week']);sql('DELETE FROM reading_entries WHERE id=?',[$r['id']]);syncCompletion($r['user_id'],(int)$r['week']);audit($me['id'],'delete_reading',$r['user_id'],'Удалена отметка '.$r['date']);db()->exec('COMMIT');send(['ok'=>true]);
+        if($r['user_id']!==$me['id'])guard();db()->exec('BEGIN IMMEDIATE');assertWeekEditable((int)$r['week']);sql('DELETE FROM reading_entries WHERE id=?',[$r['id']]);sql('UPDATE reports SET chapters_override=MAX(0,chapters_override-?) WHERE user_id=? AND week=? AND chapters_override IS NOT NULL',[(int)$r['chapters'],$r['user_id'],(int)$r['week']]);syncCompletion($r['user_id'],(int)$r['week']);audit($me['id'],'delete_reading',$r['user_id'],'Удалена отметка '.$r['date']);db()->exec('COMMIT');send(['ok'=>true]);
     }
     if($action==='complete_week') {
         $id=$input['user']??$me['id'];if($id!==$me['id'])guard();$u=user($id);if(!$u||!(int)$u['active']||$u['role']!=='participant')fail('Участник недоступен.',404);
@@ -90,13 +90,23 @@ try {
         db()->exec('BEGIN IMMEDIATE');$result=completeWeek($id,$me['id'],$week,$days);db()->exec('COMMIT');send(['ok'=>true,'week'=>$result]);
     }
     if($action==='week_result') {
-        guard();$id=$input['user']??'';if(!user($id))fail('Участник не найден.',404);$week=number($input['week']??0,1,22);
+        $id=$input['user']??$me['id'];if($id!==$me['id'])guard();$u=user($id);if(!$u||!(int)$u['active']||$u['role']!=='participant')fail('Участник не найден.',404);$week=number($input['week']??0,1,22);
         db()->exec('BEGIN IMMEDIATE');$w=assertWeekEditable($week);$total=number($input['chapters']??0,0,$w['goal']);
         $daily=(int)(sql('SELECT SUM(chapters) FROM reading_entries WHERE user_id=? AND week=?',[$id,$week])->fetchColumn()?:0);
-        if($total<$daily)fail('Уже есть '.$daily.' глав в ежедневных отметках. Исправьте их перед уменьшением итога.');
-        $days=($input['days']??'')===''?null:number($input['days'],0,3660);$title=text($input['title']??'',200,false);$note=text($input['note']??'',1000,false);
-        sql('INSERT INTO reports(user_id,week,editor_id,updated_at,chapters_manual,days_manual,title,note) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(user_id,week) DO UPDATE SET chapters_manual=excluded.chapters_manual,days_manual=excluded.days_manual,title=excluded.title,note=excluded.note,editor_id=excluded.editor_id,updated_at=excluded.updated_at',[$id,$week,$me['id'],time(),$total-$daily,$days,$title,$note]);
-        syncCompletion($id,$week);audit($me['id'],'week_result',$id,'Неделя '.$week.': итог '.$total.' глав');db()->exec('COMMIT');send(['ok'=>true]);
+        $elapsed=max(1,(int)(new DateTimeImmutable($w['start']))->diff(new DateTimeImmutable(calendar()['today']))->format('%r%a')+1);
+        $days=($input['days']??'')===''?null:number($input['days'],$total?1:0,min(3660,$elapsed));$title=text($input['title']??'',200,false);$note=text($input['note']??'',1000,false);
+        if($days===null&&$total>0&&!(int)sql('SELECT COUNT(DISTINCT date) FROM reading_entries WHERE user_id=? AND week=?',[$id,$week])->fetchColumn())$days=min(7,$elapsed);
+        sql('INSERT INTO reports(user_id,week,editor_id,updated_at,chapters_manual,days_manual,title,note) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(user_id,week) DO UPDATE SET chapters_manual=excluded.chapters_manual,days_manual=excluded.days_manual,title=excluded.title,note=excluded.note,editor_id=excluded.editor_id,updated_at=excluded.updated_at',[$id,$week,$me['id'],time(),max(0,$total-$daily),$days,$title,$note]);
+        sql('UPDATE reports SET chapters_override=? WHERE user_id=? AND week=?',[$total,$id,$week]);
+        syncCompletion($id,$week);audit($me['id'],'week_result',$id,'Неделя '.$week.': ручной итог '.$total.' глав'.($days!==null?', '.$days.' дн.':''));$result=weekResults($id)[$week-1];db()->exec('COMMIT');send(['ok'=>true,'week'=>$result]);
+    }
+    if($action==='clear_week_result') {
+        $id=$input['user']??$me['id'];if($id!==$me['id'])guard();$u=user($id);if(!$u||!(int)$u['active']||$u['role']!=='participant')fail('Участник не найден.',404);$week=number($input['week']??0,1,22);
+        db()->exec('BEGIN IMMEDIATE');assertWeekEditable($week);$before=weekResults($id)[$week-1];
+        sql('DELETE FROM reading_entries WHERE user_id=? AND week=?',[$id,$week]);sql('DELETE FROM week_completions WHERE user_id=? AND week=?',[$id,$week]);
+        sql('UPDATE reports SET chapters_manual=0,chapters_override=NULL,days_manual=NULL,title=CASE WHEN pages>0 OR minutes>0 OR books>0 THEN title ELSE \'\' END,note=CASE WHEN pages>0 OR minutes>0 OR books>0 THEN note ELSE \'\' END,editor_id=?,updated_at=? WHERE user_id=? AND week=?',[$me['id'],time(),$id,$week]);
+        sql('DELETE FROM reports WHERE user_id=? AND week=? AND pages=0 AND minutes=0 AND books=0',[$id,$week]);
+        audit($me['id'],'clear_week_result',$id,'Сброшен результат недели '.$week.': '.$before['chapters'].' глав, '.$before['days'].' дн.');$result=weekResults($id)[$week-1];db()->exec('COMMIT');send(['ok'=>true,'week'=>$result]);
     }
     if($action==='week_plan') {
         guard(true);$week=number($input['week']??0,1,22);$books=null;

@@ -22,6 +22,7 @@ function db(): PDO {
         $columns=array_column(sql('PRAGMA table_info(reports)')->fetchAll(),'name');
         if(!in_array('chapters_manual',$columns,true))$db->exec('ALTER TABLE reports ADD COLUMN chapters_manual INTEGER NOT NULL DEFAULT 0');
         if(!in_array('days_manual',$columns,true))$db->exec('ALTER TABLE reports ADD COLUMN days_manual INTEGER');
+        if(!in_array('chapters_override',$columns,true))$db->exec('ALTER TABLE reports ADD COLUMN chapters_override INTEGER');
         $db->exec('CREATE TABLE IF NOT EXISTS week_plans(week INTEGER PRIMARY KEY,chapters INTEGER NOT NULL DEFAULT 7,reopened INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS reading_entries(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),week INTEGER NOT NULL,date TEXT NOT NULL,chapters INTEGER NOT NULL,title TEXT NOT NULL,note TEXT NOT NULL,actor_id TEXT NOT NULL REFERENCES users(id),source TEXT NOT NULL,created_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS migrations(version INTEGER PRIMARY KEY,created_at INTEGER NOT NULL);');
@@ -30,6 +31,7 @@ function db(): PDO {
         for($week=1;$week<=22;$week++)sql('INSERT OR IGNORE INTO week_plans(week) VALUES (?)',[$week]);
         sql('INSERT OR IGNORE INTO migrations VALUES (2,?)',[time()]);
         sql('INSERT OR IGNORE INTO migrations VALUES (3,?)',[time()]);
+        sql('INSERT OR IGNORE INTO migrations VALUES (4,?)',[time()]);
         $db->exec('COMMIT');
     }catch(Throwable $e){$db->exec('ROLLBACK');throw $e;}
     return $db;
@@ -63,7 +65,7 @@ function weekResults(string $id): array {
     $rmap=[];$dmap=[];foreach($reports as $r)$rmap[(int)$r['week']]=$r;foreach($daily as $d)$dmap[(int)$d['week']]=$d;
     $completions=[];foreach(sql('SELECT * FROM week_completions WHERE user_id=?',[$id])->fetchAll() as $row)$completions[(int)$row['week']]=$row;
     $result=[];
-    foreach($c['calendar'] as $w){$n=$w['number'];$r=$rmap[$n]??[];$d=$dmap[$n]??[];$chapters=(int)($r['chapters_manual']??0)+(int)($d['chapters']??0);$days=$r['days_manual']??null;
+    foreach($c['calendar'] as $w){$n=$w['number'];$r=$rmap[$n]??[];$d=$dmap[$n]??[];$chapters=isset($r['chapters_override'])?(int)$r['chapters_override']:(int)($r['chapters_manual']??0)+(int)($d['chapters']??0);$days=$r['days_manual']??null;
         $remaining=max(0,$w['goal']-$chapters);$start=new DateTimeImmutable(max($c['today'],$w['start']));$end=new DateTimeImmutable($w['end']);$daysLeft=max(0,(int)$start->diff($end)->format('%r%a')+1);
         $actualDays=$days===null?(int)($d['days']??0):(int)$days;$completed=$chapters>=$w['goal'];$completion=$completions[$n]??null;
         // Infer older completion dates without modifying or reinterpreting their chapter counts.
@@ -71,7 +73,7 @@ function weekResults(string $id): array {
         if($completed&&!$completedOn){$entries=sql('SELECT date,chapters FROM reading_entries WHERE user_id=? AND week=? ORDER BY date,created_at,id',[$id,$n])->fetchAll();$sum=0;foreach($entries as $entry){$sum+=(int)$entry['chapters'];if($sum>=$w['goal']){$completedOn=$entry['date'];break;}}}
         $elapsed=max(0,(int)(new DateTimeImmutable($w['start']))->diff(new DateTimeImmutable($c['today']))->format('%r%a')+1);$plannedByToday=(int)ceil($w['goal']*min(7,$elapsed)/7);$overdueDays=max(0,(int)(new DateTimeImmutable($w['end']))->diff(new DateTimeImmutable($c['today']))->format('%r%a'));
         $late=$completed&&$completedOn&&$completedOn>$w['end'];$status=$completed?($late?'completed_late':'completed'):($c['today']<$w['start']?'upcoming':($overdueDays?'overdue':'in_progress'));
-        $result[]=array_merge($w,['week'=>$n,'chapters'=>$chapters,'days'=>$actualDays,'daysAuto'=>(int)($d['days']??0),'daysManual'=>$days,'completed'=>$completed,'completedOn'=>$completedOn,'completedBooks'=>$completion?json_decode($completion['plan_snapshot'],true):[],'status'=>$status,'late'=>(bool)$late,'overdueDays'=>$completed&&$completedOn?max(0,(int)(new DateTimeImmutable($w['end']))->diff(new DateTimeImmutable($completedOn))->format('%r%a')):$overdueDays,'elapsedDays'=>$elapsed,'plannedByToday'=>$plannedByToday,'behindChapters'=>max(0,$plannedByToday-$chapters),'plannedPerDay'=>round($w['goal']/7,2),'actualPerDay'=>$actualDays?round($chapters/$actualDays,2):0,'remaining'=>$remaining,'daysLeft'=>$daysLeft,'perDay'=>$remaining&&$daysLeft?(int)ceil($remaining/$daysLeft):0,'recorded'=>isset($rmap[$n])||isset($dmap[$n]),'title'=>$r['title']??'','note'=>$r['note']??'','editor'=>$r['editor']??'','legacyPages'=>(int)($r['pages']??0),'legacyMinutes'=>(int)($r['minutes']??0)]);
+        $result[]=array_merge($w,['week'=>$n,'chapters'=>$chapters,'chaptersOverride'=>isset($r['chapters_override'])?(int)$r['chapters_override']:null,'chaptersDaily'=>(int)($d['chapters']??0),'days'=>$actualDays,'daysAuto'=>(int)($d['days']??0),'daysManual'=>$days,'completed'=>$completed,'completedOn'=>$completedOn,'completedBooks'=>$completion?json_decode($completion['plan_snapshot'],true):[],'status'=>$status,'late'=>(bool)$late,'overdueDays'=>$completed&&$completedOn?max(0,(int)(new DateTimeImmutable($w['end']))->diff(new DateTimeImmutable($completedOn))->format('%r%a')):$overdueDays,'elapsedDays'=>$elapsed,'plannedByToday'=>$plannedByToday,'behindChapters'=>max(0,$plannedByToday-$chapters),'plannedPerDay'=>round($w['goal']/7,2),'actualPerDay'=>$actualDays?round($chapters/$actualDays,2):0,'remaining'=>$remaining,'daysLeft'=>$daysLeft,'perDay'=>$remaining&&$daysLeft?(int)ceil($remaining/$daysLeft):0,'recorded'=>isset($rmap[$n])||isset($dmap[$n]),'title'=>$r['title']??'','note'=>$r['note']??'','editor'=>$r['editor']??'','legacyPages'=>(int)($r['pages']??0),'legacyMinutes'=>(int)($r['minutes']??0)]);
     }return $result;
 }
 function stats(string $id): array {
@@ -93,7 +95,7 @@ function addReading(string $id,string $actor,int $chapters,string $date,string $
     if($chapters<1||$chapters>100000)throw new DomainException('Укажите положительное число глав.');
     $existing=sql('SELECT * FROM reading_entries WHERE id=?',[$entryId])->fetch();if($existing){if($existing['user_id']!==$id)throw new DomainException('Запись недоступна.');return weekResults($id)[$week-1];}
     $total=weekResults($id)[$week-1]['chapters'];$left=max(0,$w['goal']-$total);if($chapters>$left)throw new DomainException('Можно зачесть не больше '.$left.' глав: недельный план — '.$w['goal'].'.');
-    sql('INSERT INTO reading_entries VALUES (?,?,?,?,?,?,?,?,?,?)',[$entryId,$id,$week,$date,$chapters,$title,$note,$actor,$source,time()]);syncCompletion($id,$week);audit($actor,'reading',$id,$date.': +'.$chapters.' глав ('.$source.')');return weekResults($id)[$week-1];
+    sql('INSERT INTO reading_entries VALUES (?,?,?,?,?,?,?,?,?,?)',[$entryId,$id,$week,$date,$chapters,$title,$note,$actor,$source,time()]);sql('UPDATE reports SET chapters_override=chapters_override+? WHERE user_id=? AND week=? AND chapters_override IS NOT NULL',[$chapters,$id,$week]);syncCompletion($id,$week);audit($actor,'reading',$id,$date.': +'.$chapters.' глав ('.$source.')');return weekResults($id)[$week-1];
 }
 
 function syncCompletion(string $id,int $week): void {
@@ -109,6 +111,7 @@ function completeWeek(string $id,string $actor,int $week,?int $days): array {
     $daily=(int)(sql('SELECT SUM(chapters) FROM reading_entries WHERE user_id=? AND week=?',[$id,$week])->fetchColumn()?:0);
     $title=mb_substr(planBookText($w['books']),0,200);
     sql('INSERT INTO reports(user_id,week,editor_id,updated_at,chapters_manual,days_manual,title) VALUES (?,?,?,?,?,?,?) ON CONFLICT(user_id,week) DO UPDATE SET chapters_manual=excluded.chapters_manual,days_manual=excluded.days_manual,editor_id=excluded.editor_id,updated_at=excluded.updated_at',[$id,$week,$actor,time(),max(0,$w['goal']-$daily),$effectiveDays,$title]);
+    sql('UPDATE reports SET chapters_override=? WHERE user_id=? AND week=?',[$w['goal'],$id,$week]);
     syncCompletion($id,$week);audit($actor,'complete_week',$id,'Неделя '.$week.': '.$w['goal'].' глав за '.$effectiveDays.' дн.'.($c['today']>$w['end']?' (с опозданием)':''));return weekResults($id)[$week-1];
 }
 function sessionStart(): void {
