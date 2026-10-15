@@ -33,7 +33,7 @@ try {
     $action=$_GET['action']??'bootstrap';
     $input=[];
     if ($_SERVER['REQUEST_METHOD']==='POST') {
-        if ((int)($_SERVER['CONTENT_LENGTH']??0)>3000000) fail('Слишком большой запрос.',413);
+        if ((int)($_SERVER['CONTENT_LENGTH']??0)>(($action==='import_preview')?20000000:3000000)) fail('Слишком большой запрос.',413);
         $input=json_decode(file_get_contents('php://input'),true);
         if (!is_array($input)) fail('Некорректный запрос.');
         if (!in_array($action,['join','answer'],true) && !hash_equals($csrf,$_SERVER['HTTP_X_CSRF_TOKEN']??'')) fail('Обновите страницу и повторите.',403);

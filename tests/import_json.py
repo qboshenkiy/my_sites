@@ -41,6 +41,8 @@ with tempfile.TemporaryDirectory(prefix='pulse-import-') as folder:
         source=fixture();payload={'json':json.dumps(source,ensure_ascii=False)}
         guest.call('import_preview',payload,401)
         before=len(host.call('quizzes')['quizzes'])
+        large=copy.deepcopy(source);large['padding']='x'*3200000
+        assert host.call('import_preview',{'json':json.dumps(large,ensure_ascii=False)})['summary']['count']==25
         preview=host.call('import_preview',payload)
         quiz=preview['quiz'];assert quiz['mode']=='board' and quiz['scoring']=='fixed'
         assert preview['summary']['count']==25 and len(preview['summary']['categories'])==5

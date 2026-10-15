@@ -9,7 +9,7 @@ function importQuizNumber(mixed $v,int $min,int $max,string $where): int {
     if(is_bool($v)||(!is_int($v)&&!is_string($v))||filter_var($v,FILTER_VALIDATE_INT)===false||(int)$v<$min||(int)$v>$max)throw new DomainException($where.': целое число от '.$min.' до '.$max.'.');return (int)$v;
 }
 function normalizeQuizImport(string $json,array $settings=[]): array {
-    if(strlen($json)>1000000)throw new DomainException('JSON: максимум 1 МБ.');
+    if(strlen($json)>10000000)throw new DomainException('JSON: максимум 10 МБ.');
     $json=trim(preg_replace('/^\xEF\xBB\xBF/','',$json));
     if(preg_match('/^```(?:json)?\s*\n(.*)\n```$/is',$json,$fence))$json=$fence[1];
     try{$source=json_decode($json,true,64,JSON_THROW_ON_ERROR);}catch(JsonException $e){throw new DomainException('Неверный или неполный JSON. Проверьте кавычки, запятые и закрывающие скобки; текст мог оборваться.');}
