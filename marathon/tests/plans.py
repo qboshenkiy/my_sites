@@ -70,15 +70,15 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         reader.call('complete_week',{'week':2,'days':5},403)
         admin.call('week_plan',{'week':2,'books':[{'title':'Same','chapter_from':1,'chapter_to':4},{'title':'Same','chapter_from':4,'chapter_to':7}]},400)
         reader.call('add_reading',{'chapters':3,'date':'2026-10-22','title':'Some reading','key':'first_daily_entry'})
-        current=reader.call('profile')['stats']['pace'];assert current['chapters']==3 and current['perDay']==2 and current['days']==0 and current['completedOn'] is None
+        current=reader.call('profile')['stats']['pace'];assert current['chapters']==3 and current['perDay']==2 and current['days']==1 and current['completedOn'] is None
         result=reader.call('complete_week',{'week':2})['week']
         assert result['chapters']==10 and result['days']==1 and result['actualPerDay']==10
         assert result['status']=='completed' and result['completedOn']=='2026-10-22'
         again=reader.call('complete_week',{'week':2})['week']
         assert again['chapters']==10 and again['days']==1
         corrected=reader.call('week_result',{'week':2,'chapters':2,'title':'Corrected total'})['week']
-        assert corrected['chapters']==2 and corrected['chaptersDaily']==3 and corrected['days']==0
-        assert corrected['actualPerDay']==0 and corrected['status']=='in_progress' and corrected['completedOn'] is None
+        assert corrected['chapters']==2 and corrected['chaptersDaily']==3 and corrected['days']==1
+        assert corrected['actualPerDay']==2 and corrected['status']=='in_progress' and corrected['completedOn'] is None
         assert len(reader.call('profile')['stats']['entries'])==1, 'Weekly correction must preserve daily history'
         reader.call('week_result',{'week':2,'chapters':11},400)
         reader.call('week_result',{'week':2,'chapters':3,'days':5},403)
@@ -88,6 +88,10 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         cleared=reader.call('clear_week_result',{'week':2})['week']
         assert cleared['chapters']==0 and cleared['days']==0 and not cleared['recorded']
         assert not reader.call('profile')['stats']['entries']
+        partial=admin.call('week_result',{'user':uid,'week':2,'chapters':4,'days':2})['week']
+        assert partial['days']==2 and partial['actualPerDay']==2 and partial['completedOn'] is None
+        partial=admin.call('week_result',{'user':uid,'week':2,'chapters':4,'days':3})['week']
+        assert partial['days']==3, 'Staff must be able to correct days before completion'
         reader.call('week_result',{'week':2,'chapters':4})
         reader.call('add_reading',{'chapters':1,'date':'2026-10-22','title':'Extra','key':'after_correction'})
         state=reader.call('profile')['stats'];assert state['pace']['chapters']==5
@@ -97,6 +101,18 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         reader.call('complete_week',{'week':2})
         edited=admin.call('week_result',{'user':uid,'week':2,'chapters':10,'days':4})['week']
         assert edited['days']==4 and edited['actualPerDay']==2.5 and edited['completedOn']=='2026-10-22'
+        reader.call('week_result',{'week':2,'chapters':9})
+        corrected=reader.call('profile')['stats']['pace']
+        assert corrected['chapters']==9 and not corrected['completed'] and corrected['completedOn'] is None
+        reader.call('week_result',{'week':2,'chapters':10})
+        assert reader.call('profile')['stats']['pace']['days']>0
+        # Legacy full results with missing/zero days must never show completed in zero days.
+        with sqlite3.connect(Path(folder)/'marathon.sqlite') as db:
+            db.execute('UPDATE reports SET days_manual=0 WHERE user_id=? AND week=2',(uid,))
+        db.close()
+        assert reader.call('profile')['stats']['pace']['days']>0
+        admin.call('week_result',{'user':uid,'week':2,'chapters':10,'days':3})
+        assert reader.call('profile')['stats']['pace']['days']==3
         reader.call('add_reading',{'chapters':1,'date':'2026-10-22','key':'no_more_chapters'},400)
         admin.call('week_plan',{'week':2,'books':[{'title':'Short','chapter_from':1,'chapter_to':9}]},400)
         assert reader.call('profile')['stats']['pace']['goal']==10
@@ -171,7 +187,7 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         db.close()
         reader.call('complete_week',{'week':1},400)
         assert reader.call('profile')['stats']['reports'][0]['canComplete'] is False
-        print('PASS: participant days cannot be forged, partial results have no completion days/date, automatic completion and current/previous week restriction.')
+        print('PASS: participant days cannot be forged, daily and manual days, participant chapter corrections, zero-day legacy completion recovery, automatic completion and current/previous week restriction.')
         print('PASS: role-independent reading, staff weekly editing, staff XLSX, account editing, archive/restore, permissions and session revocation.')
         print('PASS: weekly CRUD/corrections below daily totals, retained history, new readings after correction, reset, ownership/locks, books, manual days, late marks and XLSX.')
     finally:

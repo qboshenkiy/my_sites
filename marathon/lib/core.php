@@ -70,11 +70,12 @@ function weekResults(string $id): array {
     $result=[];
     foreach($c['calendar'] as $w){$n=$w['number'];$r=$rmap[$n]??[];$d=$dmap[$n]??[];$chapters=isset($r['chapters_override'])?(int)$r['chapters_override']:(int)($r['chapters_manual']??0)+(int)($d['chapters']??0);$days=$r['days_manual']??null;
         $remaining=max(0,$w['goal']-$chapters);$start=new DateTimeImmutable(max($c['today'],$w['start']));$end=new DateTimeImmutable($w['end']);$daysLeft=max(0,(int)$start->diff($end)->format('%r%a')+1);
-        $completed=$chapters>=$w['goal'];$actualDays=$completed?($days===null?(int)($d['days']??0):(int)$days):0;$completion=$completions[$n]??null;
+        $completed=$chapters>=$w['goal'];$actualDays=$days===null?(int)($d['days']??0):(int)$days;$completion=$completions[$n]??null;
         // Infer older completion dates without modifying or reinterpreting their chapter counts.
         $completedOn=$completed?($completion['completed_on']??($r&&($r['chapters_manual']??0)>0?date('Y-m-d',(int)$r['updated_at']):null)):null;
         if($completed&&!$completedOn){$entries=sql('SELECT date,chapters FROM reading_entries WHERE user_id=? AND week=? ORDER BY date,created_at,id',[$id,$n])->fetchAll();$sum=0;foreach($entries as $entry){$sum+=(int)$entry['chapters'];if($sum>=$w['goal']){$completedOn=$entry['date'];break;}}}
         $elapsed=max(0,(int)(new DateTimeImmutable($w['start']))->diff(new DateTimeImmutable($c['today']))->format('%r%a')+1);$plannedByToday=(int)ceil($w['goal']*min(7,$elapsed)/7);$overdueDays=max(0,(int)(new DateTimeImmutable($w['end']))->diff(new DateTimeImmutable($c['today']))->format('%r%a'));
+        if($completed&&$actualDays<1){$finished=new DateTimeImmutable($completedOn??$c['today']);$finishElapsed=max(1,(int)(new DateTimeImmutable($w['start']))->diff($finished)->format('%r%a')+1);$actualDays=min(7,$finishElapsed);}
         $late=$completed&&$completedOn&&$completedOn>$w['end'];$status=$completed?($late?'completed_late':'completed'):($c['today']<$w['start']?'upcoming':($overdueDays?'overdue':'in_progress'));
         $result[]=array_merge($w,['week'=>$n,'chapters'=>$chapters,'chaptersOverride'=>isset($r['chapters_override'])?(int)$r['chapters_override']:null,'chaptersDaily'=>(int)($d['chapters']??0),'days'=>$actualDays,'daysAuto'=>(int)($d['days']??0),'daysManual'=>$days,'completed'=>$completed,'completedOn'=>$completedOn,'completedBooks'=>$completion?json_decode($completion['plan_snapshot'],true):[],'status'=>$status,'late'=>(bool)$late,'overdueDays'=>$completed&&$completedOn?max(0,(int)(new DateTimeImmutable($w['end']))->diff(new DateTimeImmutable($completedOn))->format('%r%a')):$overdueDays,'elapsedDays'=>$elapsed,'plannedByToday'=>$plannedByToday,'behindChapters'=>max(0,$plannedByToday-$chapters),'plannedPerDay'=>round($w['goal']/7,2),'actualPerDay'=>$actualDays?round($chapters/$actualDays,2):0,'remaining'=>$remaining,'daysLeft'=>$daysLeft,'perDay'=>$remaining&&$daysLeft?(int)ceil($remaining/$daysLeft):0,'recorded'=>isset($rmap[$n])||isset($dmap[$n]),'title'=>$r['title']??'','note'=>$r['note']??'','editor'=>$r['editor']??'','legacyPages'=>(int)($r['pages']??0),'legacyMinutes'=>(int)($r['minutes']??0)]);
     }return $result;
@@ -106,8 +107,8 @@ function syncCompletion(string $id,int $week): void {
     $w=weekResults($id)[$week-1];
     if(!$w['completed']){sql('DELETE FROM week_completions WHERE user_id=? AND week=?',[$id,$week]);return;}
     sql('INSERT OR IGNORE INTO week_completions(user_id,week,completed_on,plan_snapshot) VALUES (?,?,?,?)',[$id,$week,calendar()['today'],json_encode($w['books'],JSON_UNESCAPED_UNICODE)]);
-    $days=$w['daysManual']??($w['daysAuto']?:min(7,max(1,$w['elapsedDays'])));
-    sql('INSERT INTO reports(user_id,week,editor_id,updated_at,days_manual) VALUES (?,?,?,?,?) ON CONFLICT(user_id,week) DO UPDATE SET days_manual=COALESCE(reports.days_manual,excluded.days_manual)',[$id,$week,$id,time(),$days]);
+    $days=(int)($w['daysManual']??0)>0?(int)$w['daysManual']:($w['daysAuto']?:max(1,$w['days']));
+    sql('INSERT INTO reports(user_id,week,editor_id,updated_at,days_manual) VALUES (?,?,?,?,?) ON CONFLICT(user_id,week) DO UPDATE SET days_manual=CASE WHEN reports.days_manual IS NULL OR reports.days_manual<1 THEN excluded.days_manual ELSE reports.days_manual END',[$id,$week,$id,time(),$days]);
 }
 function assertCompletionAllowed(string $actor,int $week): void {
     $c=calendar();if(user($actor)['role']==='participant'&&($week<$c['current']-1||$week>$c['current']))throw new DomainException('Участник может завершить только текущую или предыдущую неделю.');
