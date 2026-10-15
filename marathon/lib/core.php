@@ -70,7 +70,7 @@ function weekResults(string $id): array {
     $result=[];
     foreach($c['calendar'] as $w){$n=$w['number'];$r=$rmap[$n]??[];$d=$dmap[$n]??[];$chapters=isset($r['chapters_override'])?(int)$r['chapters_override']:(int)($r['chapters_manual']??0)+(int)($d['chapters']??0);$days=$r['days_manual']??null;
         $remaining=max(0,$w['goal']-$chapters);$start=new DateTimeImmutable(max($c['today'],$w['start']));$end=new DateTimeImmutable($w['end']);$daysLeft=max(0,(int)$start->diff($end)->format('%r%a')+1);
-        $actualDays=$days===null?(int)($d['days']??0):(int)$days;$completed=$chapters>=$w['goal'];$completion=$completions[$n]??null;
+        $completed=$chapters>=$w['goal'];$actualDays=$completed?($days===null?(int)($d['days']??0):(int)$days):0;$completion=$completions[$n]??null;
         // Infer older completion dates without modifying or reinterpreting their chapter counts.
         $completedOn=$completed?($completion['completed_on']??($r&&($r['chapters_manual']??0)>0?date('Y-m-d',(int)$r['updated_at']):null)):null;
         if($completed&&!$completedOn){$entries=sql('SELECT date,chapters FROM reading_entries WHERE user_id=? AND week=? ORDER BY date,created_at,id',[$id,$n])->fetchAll();$sum=0;foreach($entries as $entry){$sum+=(int)$entry['chapters'];if($sum>=$w['goal']){$completedOn=$entry['date'];break;}}}
@@ -98,6 +98,7 @@ function addReading(string $id,string $actor,int $chapters,string $date,string $
     if($chapters<1||$chapters>100000)throw new DomainException('Укажите положительное число глав.');
     $existing=sql('SELECT * FROM reading_entries WHERE id=?',[$entryId])->fetch();if($existing){if($existing['user_id']!==$id)throw new DomainException('Запись недоступна.');return weekResults($id)[$week-1];}
     $total=weekResults($id)[$week-1]['chapters'];$left=max(0,$w['goal']-$total);if($chapters>$left)throw new DomainException('Можно зачесть не больше '.$left.' глав: недельный план — '.$w['goal'].'.');
+    if($total+$chapters===$w['goal'])assertCompletionAllowed($actor,$week);
     sql('INSERT INTO reading_entries VALUES (?,?,?,?,?,?,?,?,?,?)',[$entryId,$id,$week,$date,$chapters,$title,$note,$actor,$source,time()]);sql('UPDATE reports SET chapters_override=chapters_override+? WHERE user_id=? AND week=? AND chapters_override IS NOT NULL',[$chapters,$id,$week]);syncCompletion($id,$week);audit($actor,'reading',$id,$date.': +'.$chapters.' глав ('.$source.')');return weekResults($id)[$week-1];
 }
 
@@ -105,10 +106,16 @@ function syncCompletion(string $id,int $week): void {
     $w=weekResults($id)[$week-1];
     if(!$w['completed']){sql('DELETE FROM week_completions WHERE user_id=? AND week=?',[$id,$week]);return;}
     sql('INSERT OR IGNORE INTO week_completions(user_id,week,completed_on,plan_snapshot) VALUES (?,?,?,?)',[$id,$week,calendar()['today'],json_encode($w['books'],JSON_UNESCAPED_UNICODE)]);
+    $days=$w['daysManual']??($w['daysAuto']?:min(7,max(1,$w['elapsedDays'])));
+    sql('INSERT INTO reports(user_id,week,editor_id,updated_at,days_manual) VALUES (?,?,?,?,?) ON CONFLICT(user_id,week) DO UPDATE SET days_manual=COALESCE(reports.days_manual,excluded.days_manual)',[$id,$week,$id,time(),$days]);
+}
+function assertCompletionAllowed(string $actor,int $week): void {
+    $c=calendar();if(user($actor)['role']==='participant'&&($week<$c['current']-1||$week>$c['current']))throw new DomainException('Участник может завершить только текущую или предыдущую неделю.');
 }
 function planBookText(array $books): string {return implode('; ',array_map(fn($b)=>$b['title'].' '.$b['chapter_from'].'–'.$b['chapter_to'],$books));}
 function completeWeek(string $id,string $actor,int $week,?int $days): array {
     $c=calendar();if($week<1||$week>22||!$c['calendar'][$week-1]['canComplete'])throw new DomainException('Эта неделя ещё не началась.');
+    assertCompletionAllowed($actor,$week);
     $w=weekResults($id)[$week-1];if($w['completed'])return $w;
     $effectiveDays=$days??($w['daysAuto']?:min(7,$w['elapsedDays']));if($effectiveDays<1||$effectiveDays>min(3660,$w['elapsedDays']))throw new DomainException('Количество дней должно быть от 1 до '.min(3660,$w['elapsedDays']).'.');
     $daily=(int)(sql('SELECT SUM(chapters) FROM reading_entries WHERE user_id=? AND week=?',[$id,$week])->fetchColumn()?:0);

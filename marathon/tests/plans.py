@@ -64,38 +64,38 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         assert current['status']=='in_progress' and current['plannedByToday']==6 and current['daysLeft']==4
         assert profile['reports'][0]['status']=='overdue' and profile['reports'][2]['status']=='upcoming'
         reader.call('week_plan',{'week':2,'books':books},403)
-        reader.call('complete_week',{'user':other,'week':2,'days':2},403)
-        reader.call('complete_week',{'week':3,'days':1},400)
-        reader.call('complete_week',{'week':2,'days':0},400)
-        reader.call('complete_week',{'week':2,'days':5},400)
+        reader.call('complete_week',{'user':other,'week':2},403)
+        reader.call('complete_week',{'week':3},400)
+        reader.call('complete_week',{'week':2,'days':0},403)
+        reader.call('complete_week',{'week':2,'days':5},403)
         admin.call('week_plan',{'week':2,'books':[{'title':'Same','chapter_from':1,'chapter_to':4},{'title':'Same','chapter_from':4,'chapter_to':7}]},400)
         reader.call('add_reading',{'chapters':3,'date':'2026-10-22','title':'Some reading','key':'first_daily_entry'})
-        current=reader.call('profile')['stats']['pace'];assert current['chapters']==3 and current['perDay']==2
-        result=reader.call('complete_week',{'week':2,'days':3})['week']
-        assert result['chapters']==10 and result['days']==3 and result['actualPerDay']==3.33
+        current=reader.call('profile')['stats']['pace'];assert current['chapters']==3 and current['perDay']==2 and current['days']==0 and current['completedOn'] is None
+        result=reader.call('complete_week',{'week':2})['week']
+        assert result['chapters']==10 and result['days']==1 and result['actualPerDay']==10
         assert result['status']=='completed' and result['completedOn']=='2026-10-22'
-        again=reader.call('complete_week',{'week':2,'days':1})['week']
-        assert again['chapters']==10 and again['days']==3
-        corrected=reader.call('week_result',{'week':2,'chapters':2,'days':2,'title':'Corrected total'})['week']
-        assert corrected['chapters']==2 and corrected['chaptersDaily']==3 and corrected['days']==2
-        assert corrected['actualPerDay']==1 and corrected['status']=='in_progress' and corrected['completedOn'] is None
+        again=reader.call('complete_week',{'week':2})['week']
+        assert again['chapters']==10 and again['days']==1
+        corrected=reader.call('week_result',{'week':2,'chapters':2,'title':'Corrected total'})['week']
+        assert corrected['chapters']==2 and corrected['chaptersDaily']==3 and corrected['days']==0
+        assert corrected['actualPerDay']==0 and corrected['status']=='in_progress' and corrected['completedOn'] is None
         assert len(reader.call('profile')['stats']['entries'])==1, 'Weekly correction must preserve daily history'
-        reader.call('week_result',{'week':2,'chapters':11,'days':2},400)
-        reader.call('week_result',{'week':2,'chapters':3,'days':5},400)
+        reader.call('week_result',{'week':2,'chapters':11},400)
+        reader.call('week_result',{'week':2,'chapters':3,'days':5},403)
         reader.call('week_result',{'user':other,'week':2,'chapters':3,'days':2},403)
         reader.call('clear_week_result',{'user':other,'week':2},403)
         reader.call('clear_week_result',{'week':3},400)
         cleared=reader.call('clear_week_result',{'week':2})['week']
         assert cleared['chapters']==0 and cleared['days']==0 and not cleared['recorded']
         assert not reader.call('profile')['stats']['entries']
-        reader.call('week_result',{'week':2,'chapters':4,'days':2})
+        reader.call('week_result',{'week':2,'chapters':4})
         reader.call('add_reading',{'chapters':1,'date':'2026-10-22','title':'Extra','key':'after_correction'})
         state=reader.call('profile')['stats'];assert state['pace']['chapters']==5
         entry=next(e for e in state['entries'] if e['title']=='Extra')
         reader.call('delete_reading',{'id':entry['id']})
         assert reader.call('profile')['stats']['pace']['chapters']==4
-        reader.call('complete_week',{'week':2,'days':3})
-        edited=reader.call('week_result',{'week':2,'chapters':10,'days':4})['week']
+        reader.call('complete_week',{'week':2})
+        edited=admin.call('week_result',{'user':uid,'week':2,'chapters':10,'days':4})['week']
         assert edited['days']==4 and edited['actualPerDay']==2.5 and edited['completedOn']=='2026-10-22'
         reader.call('add_reading',{'chapters':1,'date':'2026-10-22','key':'no_more_chapters'},400)
         admin.call('week_plan',{'week':2,'books':[{'title':'Short','chapter_from':1,'chapter_to':9}]},400)
@@ -104,12 +104,12 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         admin.call('week_plan',{'week':1,'books':books})
         admin.call('week_lock',{'week':1,'open':0})
         reader.call('add_reading',{'chapters':1,'date':'2026-10-15','key':'closed_daily_entry'},400)
-        late=reader.call('complete_week',{'week':1,'days':9})['week']
+        late=reader.call('complete_week',{'week':1})['week']
         assert late['status']=='completed_late' and late['overdueDays']==4 and not late['editable']
-        assert late['chapters']==10 and late['days']==9 and late['actualPerDay']==1.11
+        assert late['chapters']==10 and late['days']==7 and late['actualPerDay']==1.43
         assert len(late['completedBooks'])==2
         admin.call('week_result',{'user':uid,'week':1,'chapters':8},400)
-        reader.call('week_result',{'week':1,'chapters':8,'days':3},400)
+        reader.call('week_result',{'week':1,'chapters':8},400)
         reader.call('clear_week_result',{'week':1},400)
         export=admin.call('export_xlsx',suffix='&week=1')
         with zipfile.ZipFile(io.BytesIO(export)) as archive:
@@ -165,6 +165,13 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         subprocess.run([PHP,'-r',code,str(ROOT/'lib/telegram.php')],env=env,input=json.dumps(update),text=True,check=True,stdout=subprocess.DEVNULL)
         reader.call('telegram_status',{'token':request['token']})
         assert reader.boot()['user']['id']==uid
+        admin.call('update_user',{'user':uid,'role':'participant'})
+        with sqlite3.connect(Path(folder)/'marathon.sqlite') as db:
+            db.execute("UPDATE settings SET value='2026-09-28' WHERE key='start'")
+        db.close()
+        reader.call('complete_week',{'week':1},400)
+        assert reader.call('profile')['stats']['reports'][0]['canComplete'] is False
+        print('PASS: participant days cannot be forged, partial results have no completion days/date, automatic completion and current/previous week restriction.')
         print('PASS: role-independent reading, staff weekly editing, staff XLSX, account editing, archive/restore, permissions and session revocation.')
         print('PASS: weekly CRUD/corrections below daily totals, retained history, new readings after correction, reset, ownership/locks, books, manual days, late marks and XLSX.')
     finally:

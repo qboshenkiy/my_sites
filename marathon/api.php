@@ -71,7 +71,8 @@ try {
     if($action==='overview'){guard();send(['users'=>staff(),'marathon'=>calendar()]);}
     if($action==='profile') {
         $id=$_GET['user']??$me['id'];if($id!==$me['id'])guard();$u=user($id);if(!$u)fail('Участник не найден.',404);
-        send(['user'=>publicUser($u),'stats'=>stats($id),'marathon'=>calendar()]);
+        $results=stats($id);if($me['role']==='participant')foreach($results['reports'] as &$weekResult)$weekResult['canComplete']=$weekResult['canComplete']&&$weekResult['week']>=calendar()['current']-1;unset($weekResult);
+        send(['user'=>publicUser($u),'stats'=>$results,'marathon'=>calendar()]);
     }
     if($action==='add_reading') {
         $id=$input['user']??$me['id'];if($id!==$me['id'])guard();
@@ -85,17 +86,20 @@ try {
         if($r['user_id']!==$me['id'])guard();db()->exec('BEGIN IMMEDIATE');assertWeekEditable((int)$r['week']);sql('DELETE FROM reading_entries WHERE id=?',[$r['id']]);sql('UPDATE reports SET chapters_override=MAX(0,chapters_override-?) WHERE user_id=? AND week=? AND chapters_override IS NOT NULL',[(int)$r['chapters'],$r['user_id'],(int)$r['week']]);syncCompletion($r['user_id'],(int)$r['week']);audit($me['id'],'delete_reading',$r['user_id'],'Удалена отметка '.$r['date']);db()->exec('COMMIT');send(['ok'=>true]);
     }
     if($action==='complete_week') {
+        if($me['role']==='participant'&&($input['days']??'')!=='')fail('Дни чтения рассчитываются автоматически после выполнения плана.',403);
         $id=$input['user']??$me['id'];if($id!==$me['id'])guard();$u=user($id);if(!$u||!(int)$u['active']||$u['deleted_at']!==null)fail('Участник недоступен.',404);
-        $week=number($input['week']??0,1,22);$days=($input['days']??'')===''?null:number($input['days'],1,3660);
+        $week=number($input['week']??0,1,22);$days=$me['role']==='participant'||($input['days']??'')===''?null:number($input['days'],1,3660);
         db()->exec('BEGIN IMMEDIATE');$result=completeWeek($id,$me['id'],$week,$days);db()->exec('COMMIT');send(['ok'=>true,'week'=>$result]);
     }
     if($action==='week_result') {
+        if($me['role']==='participant'&&($input['days']??'')!=='')fail('Участник не может менять дни чтения.',403);
         $id=$input['user']??$me['id'];if($id!==$me['id'])guard();$u=user($id);if(!$u||!(int)$u['active']||$u['deleted_at']!==null)fail('Участник не найден.',404);$week=number($input['week']??0,1,22);
         db()->exec('BEGIN IMMEDIATE');$w=assertWeekEditable($week);$total=number($input['chapters']??0,0,$w['goal']);
         $daily=(int)(sql('SELECT SUM(chapters) FROM reading_entries WHERE user_id=? AND week=?',[$id,$week])->fetchColumn()?:0);
         $elapsed=max(1,(int)(new DateTimeImmutable($w['start']))->diff(new DateTimeImmutable(calendar()['today']))->format('%r%a')+1);
-        $days=($input['days']??'')===''?null:number($input['days'],$total?1:0,min(3660,$elapsed));$title=text($input['title']??'',200,false);$note=text($input['note']??'',1000,false);
-        if($days===null&&$total>0&&!(int)sql('SELECT COUNT(DISTINCT date) FROM reading_entries WHERE user_id=? AND week=?',[$id,$week])->fetchColumn())$days=min(7,$elapsed);
+        $before=weekResults($id)[$week-1];
+        $days=$me['role']==='participant'?($total===$w['goal']&&$before['completed']?$before['daysManual']:null):(($input['days']??'')===''?null:number($input['days'],$total?1:0,min(3660,$elapsed)));$title=text($input['title']??'',200,false);$note=text($input['note']??'',1000,false);
+        if($total===$w['goal'])assertCompletionAllowed($me['id'],$week);
         sql('INSERT INTO reports(user_id,week,editor_id,updated_at,chapters_manual,days_manual,title,note) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(user_id,week) DO UPDATE SET chapters_manual=excluded.chapters_manual,days_manual=excluded.days_manual,title=excluded.title,note=excluded.note,editor_id=excluded.editor_id,updated_at=excluded.updated_at',[$id,$week,$me['id'],time(),max(0,$total-$daily),$days,$title,$note]);
         sql('UPDATE reports SET chapters_override=? WHERE user_id=? AND week=?',[$total,$id,$week]);
         syncCompletion($id,$week);audit($me['id'],'week_result',$id,'Неделя '.$week.': ручной итог '.$total.' глав'.($days!==null?', '.$days.' дн.':''));$result=weekResults($id)[$week-1];db()->exec('COMMIT');send(['ok'=>true,'week'=>$result]);
