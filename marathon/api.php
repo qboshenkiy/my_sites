@@ -13,6 +13,10 @@ function send(array $data): never { echo json_encode($data,JSON_UNESCAPED_UNICOD
 function text(mixed $value,int $limit,bool $required=true): string { if(!is_string($value))fail('Некорректный текст.');$v=trim($value);if(($required&&$v==='')||mb_strlen($v)>$limit)fail('Заполните текст, максимум '.$limit.' символов.');return $v; }
 function guard(bool $admin=false): array { global $me;if(!$me)fail('Войдите в систему.',401);if($me['role']==='participant'||($admin&&$me['role']!=='admin'))fail('Недостаточно прав.',403);return $me; }
 function number(mixed $value,int $min,int $max): int { $v=filter_var($value,FILTER_VALIDATE_INT);if($v===false||$v<$min||$v>$max)fail('Некорректное число.');return $v; }
+function assertInputRound(string $id,array $input): void {
+    $current=(int)(activeRound($id)['number']??1);
+    if(($current>1&&!isset($input['round']))||(isset($input['round'])&&(int)$input['round']!==$current))fail('Круг изменился. Обновите страницу и проверьте план.',409);
+}
 function loginAs(string $id): void { sessionStart();session_regenerate_id(true);$_SESSION['uid']=$id;$_SESSION['epoch']=(int)user($id)['session_epoch'];$_SESSION['csrf']=bin2hex(random_bytes(24));session_write_close(); }
 try {
     if(!extension_loaded('pdo_sqlite')||!extension_loaded('mbstring'))fail('На сервере нужны PHP-модули pdo_sqlite и mbstring.',503);
@@ -22,8 +26,8 @@ try {
         if((int)($_SERVER['CONTENT_LENGTH']??0)>100000)fail('Запрос слишком большой.',413);
         if(!hash_equals($csrf,$_SERVER['HTTP_X_CSRF_TOKEN']??''))fail('Обновите страницу и повторите.',403);
         $input=json_decode(file_get_contents('php://input'),true);if(!is_array($input))fail('Некорректный запрос.');
-    } elseif(!in_array($action,['bootstrap','overview','profile','audit','export','export_xlsx','archived_users'],true))fail('Нужен POST.',405);
-    if($action==='bootstrap')send(['user'=>$me?publicUser($me):null,'csrf'=>$csrf,'configured'=>(bool)sql("SELECT id FROM users WHERE role='admin' LIMIT 1")->fetchColumn(),'marathon'=>calendar(),'telegram'=>['configured'=>(bool)(getenv('TELEGRAM_BOT_TOKEN')&&getenv('TELEGRAM_BOT_USERNAME')),'username'=>getenv('TELEGRAM_BOT_USERNAME')?:null]]);
+    } elseif(!in_array($action,['bootstrap','overview','profile','audit','export','export_xlsx','archived_users','round_history'],true))fail('Нужен POST.',405);
+    if($action==='bootstrap')send(['user'=>$me?publicUser($me):null,'csrf'=>$csrf,'configured'=>(bool)sql("SELECT id FROM users WHERE role='admin' LIMIT 1")->fetchColumn(),'marathon'=>calendar($me&&$me['role']==='participant'?$me['id']:null),'telegram'=>['configured'=>(bool)(getenv('TELEGRAM_BOT_TOKEN')&&getenv('TELEGRAM_BOT_USERNAME')),'username'=>getenv('TELEGRAM_BOT_USERNAME')?:null]]);
     if($action==='setup'||$action==='login') {
         $login=strtolower(text($input['login']??'',40));$password=text($input['password']??'',200);
         if(!preg_match('/^[a-z0-9_.-]{3,40}$/',$login)||strlen($password)<8)fail('Логин: 3–40 латинских символов. Пароль: минимум 8 символов.');
@@ -72,45 +76,50 @@ try {
         sql('UPDATE requests SET consumed=1 WHERE token_hash=?',[$r['token_hash']]);db()->exec('COMMIT');loginAs($u['id']);send(['ok'=>true]);
     }
     if(!$me)fail('Войдите в систему.',401);
+    if($action==='round_history'){$id=$_GET['user']??$me['id'];if($id!==$me['id'])guard();if(!user($id))fail('Участник не найден.',404);$history=archivedReadingRound($id,number($_GET['round']??0,1,100000));unset($history['raw']);send($history);}
+    if($action==='start_round'){$id=$input['user']??$me['id'];if($id!==$me['id'])guard(true);db()->exec('BEGIN IMMEDIATE');$round=startReadingRound($id,$me['id'],number($input['round']??0,1,100000));db()->exec('COMMIT');send(['ok'=>true,'marathon'=>$round]);}
+    if(in_array($action,['week_result','complete_week','clear_week_result','add_reading','save_report'],true)){
+        assertInputRound($input['user']??$me['id'],$input);
+    }
     if($action==='overview'){guard();send(['users'=>staff(),'marathon'=>calendar()]);}
     if($action==='profile') {
         $id=$_GET['user']??$me['id'];if($id!==$me['id'])guard();$u=user($id);if(!$u)fail('Участник не найден.',404);
-        $results=stats($id);if($me['role']==='participant')foreach($results['reports'] as &$weekResult)$weekResult['canComplete']=$weekResult['canComplete']&&$weekResult['week']>=calendar()['current']-1;unset($weekResult);
-        send(['user'=>publicUser($u),'stats'=>$results,'marathon'=>calendar()]);
+        $results=stats($id);if($me['role']==='participant')foreach($results['reports'] as &$weekResult)$weekResult['canComplete']=$weekResult['canComplete']&&$weekResult['week']>=calendar($id)['current']-1;unset($weekResult);
+        send(['user'=>publicUser($u),'stats'=>$results,'marathon'=>calendar($id),'rounds'=>readingRounds($id)]);
     }
     if($action==='add_reading') {
         $id=$input['user']??$me['id'];if($id!==$me['id'])guard();
         $u=user($id);if(!$u||!$u['active'])fail('Участник недоступен.',404);
         $chapters=number($input['chapters']??0,1,100000);$date=text($input['date']??calendar()['today'],10);$title=text($input['title']??'',200,false);$note=text($input['note']??'',1000,false);
         $key=text($input['key']??'',80);if(!preg_match('/^[a-zA-Z0-9_-]{8,80}$/',$key))fail('Некорректный идентификатор записи.');
-        db()->exec('BEGIN IMMEDIATE');$result=addReading($id,$me['id'],$chapters,$date,$title,$note,'site','web_'.$id.'_'.$key);db()->exec('COMMIT');send(['ok'=>true,'week'=>$result]);
+        db()->exec('BEGIN IMMEDIATE');assertInputRound($id,$input);$result=addReading($id,$me['id'],$chapters,$date,$title,$note,'site','web_'.$id.'_'.$key);db()->exec('COMMIT');send(['ok'=>true,'week'=>$result]);
     }
     if($action==='delete_reading') {
         $r=sql('SELECT * FROM reading_entries WHERE id=?',[$input['id']??''])->fetch();if(!$r)fail('Запись не найдена.',404);
-        if($r['user_id']!==$me['id'])guard();db()->exec('BEGIN IMMEDIATE');assertWeekEditable((int)$r['week']);sql('DELETE FROM reading_entries WHERE id=?',[$r['id']]);sql('UPDATE reports SET chapters_override=MAX(0,chapters_override-?) WHERE user_id=? AND week=? AND chapters_override IS NOT NULL',[(int)$r['chapters'],$r['user_id'],(int)$r['week']]);syncCompletion($r['user_id'],(int)$r['week']);audit($me['id'],'delete_reading',$r['user_id'],'Удалена отметка '.$r['date']);db()->exec('COMMIT');send(['ok'=>true]);
+        if($r['user_id']!==$me['id'])guard();db()->exec('BEGIN IMMEDIATE');if(!sql('SELECT id FROM reading_entries WHERE id=?',[$r['id']])->fetchColumn())fail('Запись уже перенесена в историю. Обновите страницу.',409);assertWeekEditable((int)$r['week'],$r['user_id']);sql('DELETE FROM reading_entries WHERE id=?',[$r['id']]);sql('UPDATE reports SET chapters_override=MAX(0,chapters_override-?) WHERE user_id=? AND week=? AND chapters_override IS NOT NULL',[(int)$r['chapters'],$r['user_id'],(int)$r['week']]);syncCompletion($r['user_id'],(int)$r['week']);audit($me['id'],'delete_reading',$r['user_id'],'Удалена отметка '.$r['date']);db()->exec('COMMIT');send(['ok'=>true]);
     }
     if($action==='complete_week') {
         if($me['role']==='participant'&&($input['days']??'')!=='')fail('Дни чтения рассчитываются автоматически после выполнения плана.',403);
         $id=$input['user']??$me['id'];if($id!==$me['id'])guard();$u=user($id);if(!$u||!(int)$u['active']||$u['deleted_at']!==null)fail('Участник недоступен.',404);
         $week=number($input['week']??0,1,22);$days=$me['role']==='participant'||($input['days']??'')===''?null:number($input['days'],1,3660);
-        db()->exec('BEGIN IMMEDIATE');$result=completeWeek($id,$me['id'],$week,$days);db()->exec('COMMIT');send(['ok'=>true,'week'=>$result]);
+        db()->exec('BEGIN IMMEDIATE');assertInputRound($id,$input);$result=completeWeek($id,$me['id'],$week,$days);db()->exec('COMMIT');send(['ok'=>true,'week'=>$result]);
     }
     if($action==='week_result') {
         if($me['role']==='participant'&&($input['days']??'')!=='')fail('Участник не может менять дни чтения.',403);
         $id=$input['user']??$me['id'];if($id!==$me['id'])guard();$u=user($id);if(!$u||!(int)$u['active']||$u['deleted_at']!==null)fail('Участник не найден.',404);$week=number($input['week']??0,1,22);
-        db()->exec('BEGIN IMMEDIATE');$w=assertWeekEditable($week);$total=number($input['chapters']??0,0,$w['goal']);
+        db()->exec('BEGIN IMMEDIATE');assertInputRound($id,$input);$w=assertWeekEditable($week,$id);$total=number($input['chapters']??0,0,$w['goal']);
         $daily=(int)(sql('SELECT SUM(chapters) FROM reading_entries WHERE user_id=? AND week=?',[$id,$week])->fetchColumn()?:0);
-        $elapsed=max(1,(int)(new DateTimeImmutable($w['start']))->diff(new DateTimeImmutable(calendar()['today']))->format('%r%a')+1);
+        $elapsed=max(1,(int)(new DateTimeImmutable($w['start']))->diff(new DateTimeImmutable(calendar($id)['today']))->format('%r%a')+1);
         $before=weekResults($id)[$week-1];
         $days=$me['role']==='participant'?($total>0?$before['daysManual']:null):(($input['days']??'')===''?null:number($input['days'],$total?1:0,3660));$title=text($input['title']??'',200,false);$note=text($input['note']??'',1000,false);
-        if($total===$w['goal'])assertCompletionAllowed($me['id'],$week);
+        if($total===$w['goal'])assertCompletionAllowed($me['id'],$week,$id);
         sql('INSERT INTO reports(user_id,week,editor_id,updated_at,chapters_manual,days_manual,title,note) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(user_id,week) DO UPDATE SET chapters_manual=excluded.chapters_manual,days_manual=excluded.days_manual,title=excluded.title,note=excluded.note,editor_id=excluded.editor_id,updated_at=excluded.updated_at',[$id,$week,$me['id'],time(),max(0,$total-$daily),$days,$title,$note]);
         sql('UPDATE reports SET chapters_override=? WHERE user_id=? AND week=?',[$total,$id,$week]);
         syncCompletion($id,$week);audit($me['id'],'week_result',$id,'Неделя '.$week.': ручной итог '.$total.' глав'.($days!==null?', '.$days.' дн.':''));$result=weekResults($id)[$week-1];db()->exec('COMMIT');send(['ok'=>true,'week'=>$result]);
     }
     if($action==='clear_week_result') {
         $id=$input['user']??$me['id'];if($id!==$me['id'])guard();$u=user($id);if(!$u||!(int)$u['active']||$u['deleted_at']!==null)fail('Участник не найден.',404);$week=number($input['week']??0,1,22);
-        db()->exec('BEGIN IMMEDIATE');assertWeekEditable($week);$before=weekResults($id)[$week-1];
+        db()->exec('BEGIN IMMEDIATE');assertInputRound($id,$input);assertWeekEditable($week,$id);$before=weekResults($id)[$week-1];
         sql('DELETE FROM reading_entries WHERE user_id=? AND week=?',[$id,$week]);sql('DELETE FROM week_completions WHERE user_id=? AND week=?',[$id,$week]);
         sql('UPDATE reports SET chapters_manual=0,chapters_override=NULL,days_manual=NULL,title=CASE WHEN pages>0 OR minutes>0 OR books>0 THEN title ELSE \'\' END,note=CASE WHEN pages>0 OR minutes>0 OR books>0 THEN note ELSE \'\' END,editor_id=?,updated_at=? WHERE user_id=? AND week=?',[$me['id'],time(),$id,$week]);
         sql('DELETE FROM reports WHERE user_id=? AND week=? AND pages=0 AND minutes=0 AND books=0',[$id,$week]);
@@ -128,12 +137,13 @@ try {
         }else{$goal=number($input['goal']??0,1,100000);$bookGoal=(int)(sql('SELECT SUM(chapter_to-chapter_from+1) FROM week_plan_books WHERE week=?',[$week])->fetchColumn()?:0);if($bookGoal&&$bookGoal!==$goal)fail('План рассчитан по книгам. Измените книги и главы в плане чтения.');}
         db()->exec('BEGIN IMMEDIATE');
         $w=calendar()['calendar'][$week-1];if($week<calendar()['current']&&!$w['reopened'])fail('Откройте завершённую неделю перед изменением плана.');
-        foreach(staff() as $u){if($u['weekly'][$week-1]['chapters']>$goal)fail('План меньше уже внесённого результата участника '.$u['name'].'.');}
+        foreach(staff() as $u){if($u['round']===1&&$u['weekly'][$week-1]['chapters']>$goal)fail('План меньше уже внесённого результата участника '.$u['name'].'.');}
         if($books!==null){sql('DELETE FROM week_plan_books WHERE week=?',[$week]);foreach($books as $position=>$book)sql('INSERT INTO week_plan_books VALUES (?,?,?,?,?,?)',[bin2hex(random_bytes(12)),$week,$position,$book['title'],$book['chapter_from'],$book['chapter_to']]);}
-        sql('UPDATE week_plans SET chapters=? WHERE week=?',[$goal,$week]);foreach(sql('SELECT id FROM users WHERE deleted_at IS NULL')->fetchAll() as $participant)syncCompletion($participant['id'],$week);audit($me['id'],'week_plan',null,'План недели '.$week.': '.$goal.' глав'.($books?' · '.planBookText($books):''));db()->exec('COMMIT');send(['ok'=>true]);
+        sql('UPDATE week_plans SET chapters=? WHERE week=?',[$goal,$week]);foreach(sql('SELECT id FROM users WHERE deleted_at IS NULL')->fetchAll() as $participant)if((int)(activeRound($participant['id'])['number']??1)===1)syncCompletion($participant['id'],$week);audit($me['id'],'week_plan',null,'План недели '.$week.': '.$goal.' глав'.($books?' · '.planBookText($books):''));db()->exec('COMMIT');send(['ok'=>true]);
     }
     if($action==='week_lock') {
         guard(true);$week=number($input['week']??0,1,22);$open=number($input['open']??0,0,1);
+        if(isset($input['user'])&&(int)(activeRound($input['user'])['number']??1)>1){$id=text($input['user'],80);$r=activeRound($id);if((int)($input['round']??0)!==(int)$r['number'])fail('Круг изменился. Обновите страницу.',409);$c=calendar($id);if($week>=$c['current'])fail('Открытие нужно только для завершённых недель.');$opened=json_decode($r['opened'],true);$opened=array_values(array_diff($opened,[$week]));if($open)$opened[]=$week;sql('UPDATE reading_rounds SET opened=? WHERE user_id=? AND number=?',[json_encode($opened),$id,$r['number']]);audit($me['id'],'week_lock',$id,'Круг '.$r['number'].', неделя '.$week.($open?' открыта':' закрыта'));send(['ok'=>true]);}
         if($week>=calendar()['current'])fail('Открытие нужно только для завершённых недель.');
         sql('UPDATE week_plans SET reopened=? WHERE week=?',[$open,$week]);audit($me['id'],'week_lock',null,'Неделя '.$week.($open?' открыта для исправлений':' закрыта'));send(['ok'=>true]);
     }
@@ -149,10 +159,11 @@ try {
     }
     if($action==='save_report') {
         guard();$id=$input['user']??'';$u=user($id);if(!$u||$u['deleted_at']!==null)fail('Участник не найден.',404);
-        $week=number($input['week']??0,1,22);assertWeekEditable($week);
+        $week=number($input['week']??0,1,22);assertWeekEditable($week,$id);
         $pages=number($input['pages']??0,0,100000);$minutes=number($input['minutes']??0,0,10080);$books=number($input['books']??0,0,100);
         $title=text($input['title']??'',200,false);$note=text($input['note']??'',1000,false);
         db()->exec('BEGIN IMMEDIATE');
+        assertInputRound($id,$input);assertWeekEditable($week,$id);
         sql('INSERT INTO reports(user_id,week,pages,minutes,books,title,note,editor_id,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id,week) DO UPDATE SET pages=excluded.pages,minutes=excluded.minutes,books=excluded.books,title=excluded.title,note=excluded.note,editor_id=excluded.editor_id,updated_at=excluded.updated_at',[$id,$week,$pages,$minutes,$books,$title,$note,$me['id'],time()]);
         audit($me['id'],'save_report',$id,'Неделя '.$week.': '.$pages.' страниц, '.$minutes.' минут, '.$books.' книг');db()->exec('COMMIT');send(['ok'=>true]);
     }

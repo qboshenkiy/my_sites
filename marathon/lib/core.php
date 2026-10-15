@@ -33,6 +33,8 @@ function db(): PDO {
         $db->exec('CREATE TABLE IF NOT EXISTS week_plan_books(id TEXT PRIMARY KEY,week INTEGER NOT NULL REFERENCES week_plans(week),position INTEGER NOT NULL,title TEXT NOT NULL,chapter_from INTEGER NOT NULL,chapter_to INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS week_completions(user_id TEXT NOT NULL REFERENCES users(id),week INTEGER NOT NULL,completed_on TEXT NOT NULL,plan_snapshot TEXT NOT NULL DEFAULT \'[]\',PRIMARY KEY(user_id,week));');
         $db->exec('CREATE TABLE IF NOT EXISTS telegram_reading_requests(token_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),telegram_id TEXT NOT NULL,session_epoch INTEGER NOT NULL,chapters INTEGER NOT NULL,snapshot TEXT NOT NULL,expires_at INTEGER NOT NULL,consumed INTEGER NOT NULL DEFAULT 0)');
+        $db->exec('CREATE TABLE IF NOT EXISTS reading_rounds(user_id TEXT NOT NULL REFERENCES users(id),number INTEGER NOT NULL,start TEXT NOT NULL,plans TEXT NOT NULL,snapshot TEXT,opened TEXT NOT NULL DEFAULT \'[]\',created_at INTEGER NOT NULL,PRIMARY KEY(user_id,number));
+        CREATE TABLE IF NOT EXISTS telegram_menu_states(user_id TEXT PRIMARY KEY REFERENCES users(id),telegram_id TEXT NOT NULL,session_epoch INTEGER NOT NULL,round_number INTEGER NOT NULL,expires_at INTEGER NOT NULL);');
         for($week=1;$week<=22;$week++)sql('INSERT OR IGNORE INTO week_plans(week) VALUES (?)',[$week]);
         sql('INSERT OR IGNORE INTO migrations VALUES (2,?)',[time()]);
         sql('INSERT OR IGNORE INTO migrations VALUES (3,?)',[time()]);
@@ -48,16 +50,18 @@ function db(): PDO {
 }
 function sql(string $query,array $params=[]): PDOStatement { $s=db()->prepare($query);$s->execute($params);return $s; }
 function setting(string $key): string { return (string)sql('SELECT value FROM settings WHERE key=?',[$key])->fetchColumn(); }
-function calendar(): array {
-    $start=new DateTimeImmutable(setting('start'));$weeks=(int)setting('weeks');$end=$start->modify('+'.($weeks*7-1).' days');
+function calendar(?string $id=null): array {
+    $round=$id?activeRound($id):null;
+    $start=new DateTimeImmutable($round['start']??setting('start'));$weeks=(int)setting('weeks');$end=$start->modify('+'.($weeks*7-1).' days');
     $today=new DateTimeImmutable(getenv('MARATHON_TEST_TODAY') ?: 'today');$offset=(int)$start->diff($today)->format('%r%a');
     $current=$offset<0?0:($offset>=$weeks*7?$weeks+1:intdiv($offset,7)+1);
     $plans=sql('SELECT * FROM week_plans ORDER BY week')->fetchAll();
     $books=[];foreach(sql('SELECT * FROM week_plan_books ORDER BY week,position')->fetchAll() as $book){$book['chapter_from']=(int)$book['chapter_from'];$book['chapter_to']=(int)$book['chapter_to'];$book['chapters']=$book['chapter_to']-$book['chapter_from']+1;$books[(int)$book['week']][]=$book;}
+    if($round&&(int)$round['number']>1){$frozen=json_decode($round['plans'],true,512,JSON_THROW_ON_ERROR);$opened=json_decode($round['opened'],true);$books=[];$plans=[];foreach($frozen as $p){$plans[]=['chapters'=>$p['goal'],'reopened'=>in_array($p['number'],$opened,true)?1:0];$books[$p['number']]=$p['books'];}}
     $items=[];for($i=1;$i<=$weeks;$i++) { $s=$start->modify('+'.(($i-1)*7).' days');$plan=$plans[$i-1];$items[]=['number'=>$i,'start'=>$s->format('Y-m-d'),'end'=>$s->modify('+6 days')->format('Y-m-d'),'goal'=>(int)$plan['chapters'],'books'=>$books[$i]??[],'canComplete'=>$i<=$current,'reopened'=>(bool)$plan['reopened'],'editable'=>$i<=$current&&($i===$current||(bool)$plan['reopened'])]; }
-    return ['title'=>setting('title'),'start'=>$start->format('Y-m-d'),'end'=>$end->format('Y-m-d'),'today'=>$today->format('Y-m-d'),'current'=>$current,'weeks'=>$weeks,'goal'=>$items[max(0,min(21,$current-1))]['goal'],'legacyGoal'=>(int)setting('weekly_goal'),'calendar'=>$items];
+    return ['round'=>(int)($round['number']??1),'title'=>setting('title'),'start'=>$start->format('Y-m-d'),'end'=>$end->format('Y-m-d'),'today'=>$today->format('Y-m-d'),'current'=>$current,'weeks'=>$weeks,'goal'=>$items[max(0,min(21,$current-1))]['goal'],'legacyGoal'=>(int)setting('weekly_goal'),'calendar'=>$items];
 }
-function publicUser(array $u): array { unset($u['password'],$u['session_epoch']);return $u; }
+function publicUser(array $u): array { unset($u['password'],$u['session_epoch']);$u['round']=(int)(activeRound($u['id'])['number']??1);return $u; }
 function user(string $id): ?array { return sql('SELECT * FROM users WHERE id=? AND deleted_at IS NULL',[$id])->fetch() ?: null; }
 function audit(string $actor,string $event,?string $target,string $details): void { sql('INSERT INTO audit(actor_id,event,target_id,details,created_at) VALUES (?,?,?,?,?)',[$actor,$event,$target,$details,time()]); }
 function legacyStats(string $id): array {
@@ -70,7 +74,7 @@ function legacyStaff(): array {
     return sql("SELECT u.id,u.name,u.role,u.active,u.telegram_id,u.telegram_name,u.login,u.created_at,COALESCE(SUM(r.pages),0) AS pages,COALESCE(SUM(r.minutes),0) AS minutes,COALESCE(SUM(r.books),0) AS books,COUNT(r.week) AS recorded FROM users u LEFT JOIN reports r ON r.user_id=u.id WHERE u.deleted_at IS NULL GROUP BY u.id ORDER BY pages DESC,u.name")->fetchAll();
 }
 function weekResults(string $id): array {
-    $c=calendar();$reports=sql('SELECT r.*,u.name AS editor FROM reports r JOIN users u ON u.id=r.editor_id WHERE r.user_id=?',[$id])->fetchAll();
+    $c=calendar($id);$reports=sql('SELECT r.*,u.name AS editor FROM reports r JOIN users u ON u.id=r.editor_id WHERE r.user_id=?',[$id])->fetchAll();
     $daily=sql('SELECT week,SUM(chapters) AS chapters,COUNT(DISTINCT date) AS days FROM reading_entries WHERE user_id=? GROUP BY week',[$id])->fetchAll();
     $rmap=[];$dmap=[];foreach($reports as $r)$rmap[(int)$r['week']]=$r;foreach($daily as $d)$dmap[(int)$d['week']]=$d;
     $completions=[];foreach(sql('SELECT * FROM week_completions WHERE user_id=?',[$id])->fetchAll() as $row)$completions[(int)$row['week']]=$row;
@@ -92,37 +96,37 @@ function weekResults(string $id): array {
 }
 function stats(string $id): array {
     $weeks=weekResults($id);$legacy=legacyStats($id);$entries=sql('SELECT e.*,u.name AS actor FROM reading_entries e JOIN users u ON u.id=e.actor_id WHERE e.user_id=? ORDER BY date DESC,created_at DESC',[$id])->fetchAll();
-    $current=calendar()['current'];$goalTotal=array_sum(array_column($weeks,'goal'));$chapters=array_sum(array_column($weeks,'chapters'));
+    $current=calendar($id)['current'];$goalTotal=array_sum(array_column($weeks,'goal'));$chapters=array_sum(array_column($weeks,'chapters'));
     return ['reports'=>$weeks,'entries'=>$entries,'chapters'=>$chapters,'days'=>array_sum(array_column($weeks,'days')),'recorded'=>count(array_filter($weeks,fn($w)=>$w['recorded'])),'goalWeeks'=>count(array_filter($weeks,fn($w)=>$w['completed'])),'overdueWeeks'=>count(array_filter($weeks,fn($w)=>$w['status']==='overdue')),'lateWeeks'=>count(array_filter($weeks,fn($w)=>$w['late'])),'progress'=>(int)round($chapters/max(1,$goalTotal)*100),'goalTotal'=>$goalTotal,'pace'=>$current>=1&&$current<=22?$weeks[$current-1]:null,'legacy'=>$legacy];
 }
 function staff(): array {
-    $users=legacyStaff();foreach($users as &$u){$w=weekResults($u['id']);$u['chapters']=array_sum(array_column($w,'chapters'));$u['days']=array_sum(array_column($w,'days'));$u['completed']=count(array_filter($w,fn($w)=>$w['completed']));$u['weekly']=$w;}unset($u);
+    $users=legacyStaff();foreach($users as &$u){$u['round']=(int)(activeRound($u['id'])['number']??1);$w=weekResults($u['id']);$u['chapters']=array_sum(array_column($w,'chapters'));$u['days']=array_sum(array_column($w,'days'));$u['completed']=count(array_filter($w,fn($w)=>$w['completed']));$u['weekly']=$w;}unset($u);
     usort($users,fn($a,$b)=>$b['chapters']<=>$a['chapters']?:strcmp($a['name'],$b['name']));return $users;
 }
-function assertWeekEditable(int $week): array {
-    if($week<1||$week>22)throw new DomainException('Неделя должна быть от 1 до 22.');$w=calendar()['calendar'][$week-1];
+function assertWeekEditable(int $week,?string $id=null): array {
+    if($week<1||$week>22)throw new DomainException('Неделя должна быть от 1 до 22.');$w=calendar($id)['calendar'][$week-1];
     if(!$w['editable'])throw new DomainException('Эта неделя закрыта. Администратор может открыть её для исправления.');return $w;
 }
 function addReading(string $id,string $actor,int $chapters,string $date,string $title,string $note,string $source,string $entryId): array {
-    $c=calendar();$d=DateTimeImmutable::createFromFormat('!Y-m-d',$date);if(!$d||$d->format('Y-m-d')!==$date||$date<$c['start']||$date>$c['end']||$date>$c['today'])throw new DomainException('Выберите дату марафона не позже сегодняшней.');
-    $week=intdiv((int)(new DateTimeImmutable($c['start']))->diff($d)->format('%a'),7)+1;$w=assertWeekEditable($week);
+    $c=calendar($id);$d=DateTimeImmutable::createFromFormat('!Y-m-d',$date);if(!$d||$d->format('Y-m-d')!==$date||$date<$c['start']||$date>$c['end']||$date>$c['today'])throw new DomainException('Выберите дату марафона не позже сегодняшней.');
+    $week=intdiv((int)(new DateTimeImmutable($c['start']))->diff($d)->format('%a'),7)+1;$w=assertWeekEditable($week,$id);
     if($chapters<1||$chapters>100000)throw new DomainException('Укажите положительное число глав.');
     $existing=sql('SELECT * FROM reading_entries WHERE id=?',[$entryId])->fetch();if($existing){if($existing['user_id']!==$id)throw new DomainException('Запись недоступна.');return weekResults($id)[$week-1];}
     $total=weekResults($id)[$week-1]['chapters'];$left=max(0,$w['goal']-$total);if($chapters>$left)throw new DomainException('Можно зачесть не больше '.$left.' глав: недельный план — '.$w['goal'].'.');
-    if($total+$chapters===$w['goal'])assertCompletionAllowed($actor,$week);
+    if($total+$chapters===$w['goal'])assertCompletionAllowed($actor,$week,$id);
     sql('INSERT INTO reading_entries VALUES (?,?,?,?,?,?,?,?,?,?)',[$entryId,$id,$week,$date,$chapters,$title,$note,$actor,$source,time()]);sql('UPDATE reports SET chapters_override=chapters_override+? WHERE user_id=? AND week=? AND chapters_override IS NOT NULL',[$chapters,$id,$week]);syncCompletion($id,$week);audit($actor,'reading',$id,$date.': +'.$chapters.' глав ('.$source.')');return weekResults($id)[$week-1];
 }
 
 // Called inside the Telegram update transaction. Validate the complete allocation before writing.
 function telegramReadingPlan(string $id,int $chapters): array {
-    $c=calendar();$current=$c['current'];if($current<1||$current>23)throw new DomainException('Сейчас нет текущего или предыдущего плана для отметки.');
+    $c=calendar($id);$current=$c['current'];if($current<1||$current>23)throw new DomainException('Сейчас нет текущего или предыдущего плана для отметки.');
     if($chapters<1||$chapters>200000)throw new DomainException('Укажите положительное число глав, не больше 200000.');
     $weeks=weekResults($id);$eligible=array_values(array_filter($weeks,fn($w)=>$w['week']>=max(1,$current-1)&&$w['week']<=min(22,$current)&&$w['remaining']>0));
     $capacity=array_sum(array_column($eligible,'remaining'));if($chapters>$capacity)throw new DomainException('Можно зачесть не больше '.$capacity.' глав: это остаток предыдущей и текущей недель. Ничего не добавлено.');
     $left=$chapters;$result=[];foreach($eligible as $w){if(!$left)break;$w['added']=min($left,$w['remaining']);$result[]=$w;$left-=$w['added'];}return $result;
 }
 function addTelegramReading(string $id,int $chapters,int $updateId): array {
-    $allocation=telegramReadingPlan($id,$chapters);$c=calendar();$result=[];
+    $allocation=telegramReadingPlan($id,$chapters);$c=calendar($id);$result=[];
     foreach($allocation as $w){$amount=$w['added'];$week=$w['week'];
         sql('INSERT INTO reading_entries VALUES (?,?,?,?,?,?,?,?,?,?)',['tg_'.$updateId.'_w'.$week,$id,$week,$c['today'],$amount,'','Отметка из Telegram: распределение по планам',$id,'telegram',time()]);
         sql('UPDATE reports SET chapters_override=chapters_override+? WHERE user_id=? AND week=? AND chapters_override IS NOT NULL',[$amount,$id,$week]);
@@ -134,16 +138,16 @@ function addTelegramReading(string $id,int $chapters,int $updateId): array {
 function syncCompletion(string $id,int $week): void {
     $w=weekResults($id)[$week-1];
     if(!$w['completed']){sql('DELETE FROM week_completions WHERE user_id=? AND week=?',[$id,$week]);return;}
-    sql('INSERT OR IGNORE INTO week_completions(user_id,week,completed_on,plan_snapshot) VALUES (?,?,?,?)',[$id,$week,calendar()['today'],json_encode($w['books'],JSON_UNESCAPED_UNICODE)]);
+    sql('INSERT OR IGNORE INTO week_completions(user_id,week,completed_on,plan_snapshot) VALUES (?,?,?,?)',[$id,$week,calendar($id)['today'],json_encode($w['books'],JSON_UNESCAPED_UNICODE)]);
 
 }
-function assertCompletionAllowed(string $actor,int $week): void {
-    $c=calendar();if(user($actor)['role']==='participant'&&($week<$c['current']-1||$week>$c['current']))throw new DomainException('Участник может завершить только текущую или предыдущую неделю.');
+function assertCompletionAllowed(string $actor,int $week,?string $id=null): void {
+    $c=calendar($id??$actor);if(user($actor)['role']==='participant'&&($week<$c['current']-1||$week>$c['current']))throw new DomainException('Участник может завершить только текущую или предыдущую неделю.');
 }
 function planBookText(array $books): string {return implode('; ',array_map(fn($b)=>$b['title'].' '.$b['chapter_from'].'–'.$b['chapter_to'],$books));}
 function completeWeek(string $id,string $actor,int $week,?int $days): array {
-    $c=calendar();if($week<1||$week>22||!$c['calendar'][$week-1]['canComplete'])throw new DomainException('Эта неделя ещё не началась.');
-    assertCompletionAllowed($actor,$week);
+    $c=calendar($id);if($week<1||$week>22||!$c['calendar'][$week-1]['canComplete'])throw new DomainException('Эта неделя ещё не началась.');
+    assertCompletionAllowed($actor,$week,$id);
     $w=weekResults($id)[$week-1];if($w['completed'])return $w;
     $effectiveDays=$days??$w['daysAuto'];if($effectiveDays<1||$effectiveDays>3660)throw new DomainException('Количество дней должно быть от 1 до 3660.');
     $daily=(int)(sql('SELECT SUM(chapters) FROM reading_entries WHERE user_id=? AND week=?',[$id,$week])->fetchColumn()?:0);
@@ -166,3 +170,5 @@ function sessionStart(): void {
     // Browsers cap persistent cookies; renew the deadline on every visit.
     setcookie(session_name(),session_id(),['expires'=>time()+$lifetime]+$options);
 }
+
+require_once __DIR__.'/rounds.php';

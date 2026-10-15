@@ -14,7 +14,7 @@ COPY assets/ ./assets/
 COPY tools/bot.php /opt/marathon/bot.php
 COPY tools/backup.php /opt/marathon/backup.php
 RUN mkdir -p /var/lib/marathon /opt/lib \
-    && cp lib/core.php lib/telegram.php /opt/lib/ \
+    && cp lib/*.php /opt/lib/ \
     && chown www-data:www-data /var/lib/marathon
 ENV MARATHON_DATA_DIR=/var/lib/marathon
 VOLUME ["/var/lib/marathon"]

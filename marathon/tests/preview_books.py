@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import time
+import sys
 
 ROOT=Path(__file__).resolve().parents[1]
 PHP='C:/laragon/bin/php/php-8.3.33-Win32-vs16-x64/php.exe'
@@ -19,6 +20,10 @@ with tempfile.TemporaryDirectory(prefix='reading-books-preview-') as folder:
     sql("INSERT INTO week_plan_books VALUES (?,?,?,?,?,?)",['book3',2,1,'Лука',1,7]);
     db()->exec('BEGIN IMMEDIATE');addReading('qareader','qareader',3,'2026-10-22','Марк, главы 1–3','','site','preview_entry');db()->exec('COMMIT');'''
     subprocess.run([PHP,'-r',seed,str(ROOT/'lib/core.php')],env=env,check=True)
+    if '--completed' in sys.argv:
+        complete='''require $argv[1];sql("DELETE FROM reading_entries WHERE user_id='qareader'");foreach(calendar('qareader')['calendar'] as $w){sql('INSERT INTO reports(user_id,week,chapters_override,days_manual,editor_id,updated_at) VALUES (?,?,?,?,?,?)',['qareader',$w['number'],$w['goal'],7,'qaadmin',time()]);sql('INSERT INTO week_completions(user_id,week,completed_on) VALUES (?,?,?)',['qareader',$w['number'],$w['end']]);}'''
+        subprocess.run([PHP,'-r',complete,str(ROOT/'lib/core.php')],env=env,check=True)
+        env['MARATHON_TEST_TODAY']='2027-03-16'
     process=subprocess.Popen([PHP,'-S','127.0.0.1:8112','-t',str(ROOT),str(ROOT/'router.php')],env=env,
                              stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     print('Reading preview: http://127.0.0.1:8112/\nAdmin: admin / preview-password-2026\nData: '+folder,flush=True)
