@@ -108,6 +108,37 @@ with tempfile.TemporaryDirectory(prefix='marathon-menu-') as folder:
         moderator.call('export_xlsx',suffix='&week=3',status=400)
         workbook=moderator.call('export_xlsx',suffix='&week=2')
         with zipfile.ZipFile(io.BytesIO(workbook)) as z:assert 'Лука' not in z.read('xl/worksheets/sheet3.xml').decode()
+        # Own deletion, administrator access, durable history and stable pass numbers.
+        reader.call('delete_week_cycle',{'week':3,'cycle':1,'active_cycle':1},400)
+        action={'user':uid,'week':2,'cycle':1,'active_cycle':4}
+        moderator.call('delete_week_cycle',action,403)
+        reader.call('delete_week_cycle',{**action,'user':other},403)
+        reader.call('delete_week_cycle',action)
+        w=profile()['stats']['pace'];assert w['cycle']==4 and w['totalChapters']==14 and len(w['deletedRepeats'])==1
+        reader.call('delete_week_cycle',action,400)
+        reader.call('restore_week_cycle',action)
+        assert profile()['stats']['pace']['totalChapters']==21
+        reader.call('week_result',{'week':2,'cycle':4,'chapters':2})
+        pending=button(bot('прочитал 1'),'Подтвердить')
+        reader.call('delete_week_cycle',{'week':2,'cycle':4,'active_cycle':4})
+        w=profile()['stats']['pace'];assert w['cycle']==3 and w['chapters']==7 and w['days']==2
+        assert w['totalChapters']==21 and len(w['deletedRepeats'])==1
+        assert profile()['stats']['reports'][0]['chapters']==7
+        reader.call('week_result',{'week':2,'cycle':4,'chapters':1},409)
+        bot(pending,True);assert profile()['stats']['pace']['chapters']==7
+        reader.call('restore_week_cycle',{'week':2,'cycle':4,'active_cycle':3})
+        w=profile()['stats']['pace'];assert w['cycle']==3 and w['totalChapters']==23 and w['completedCycles']==3
+        admin.call('delete_week_cycle',{'user':uid,'week':2,'cycle':2,'active_cycle':3})
+        assert profile()['stats']['pace']['totalChapters']==16
+        reader.call('restore_week_cycle',{'week':2,'cycle':2,'active_cycle':3})
+        reader.call('start_week_repeat',{'week':2,'cycle':3})
+        assert profile()['stats']['pace']['cycle']==5, 'Deleted/restored pass identifiers must never collide'
+        admin.call('delete_week_cycle',{'user':other,'week':2,'cycle':1,'active_cycle':1})
+        w=admin.call('profile',suffix='&user='+other)['stats']['pace'];assert w['cycle']==2 and w['chapters']==0 and w['completedCycles']==0
+        workbook=admin.call('export_xlsx',suffix='&week=2')
+        with zipfile.ZipFile(io.BytesIO(workbook)) as z:
+            xml=z.read('xl/worksheets/sheet1.xml').decode();assert 'Круг недели' in xml and '<v>5</v>' in xml
+        print('PASS: owner/admin cycle deletion, moderator denial, restoration, active pass recovery, partial passes, stable numbering, stale Telegram cancellation and XLSX cycle column.')
         # Next calendar week starts at pass one; unfinished optional repeats do not steal chapters.
         env['MARATHON_TEST_TODAY']='2026-10-26'
         plan=bot('прочитал 2');assert 'Неделя 3' in messages(plan) and 'Неделя 2 ·' not in messages(plan)

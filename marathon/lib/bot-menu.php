@@ -25,7 +25,7 @@ function telegramMenu(string $text,bool $callback,?array $reader,string $telegra
             if(!$w['completed']){$reply('Сначала завершите текущий круг: осталось '.$w['remaining'].' глав.');return true;}
             $token=bin2hex(random_bytes(16));sql("DELETE FROM requests WHERE user_id=? AND kind='weekly_repeat'",[$id]);
             sql('INSERT INTO requests(token_hash,kind,user_id,session_hash,expires_at) VALUES (?,?,?,?,?)',[hash('sha256',$token),'weekly_repeat',$id,$binding,time()+900]);
-            $reply('Начать круг '.($w['cycle']+1).' недели '.$w['week'].'?'."\n".'Тот же план: '.$w['goal'].' глав, срок до '.$w['end'].'. Предыдущие '.$w['chapters'].' глав сохранятся в истории. Прогресс нового круга начнётся с нуля.',[[['text'=>'✓ Начать повтор','callback_data'=>'w_y_'.$token],['text'=>'Отмена','callback_data'=>'w_n_'.$token]]]);return true;
+            $reply('Начать круг '.$w['nextCycle'].' недели '.$w['week'].'?'."\n".'Тот же план: '.$w['goal'].' глав, срок до '.$w['end'].'. Предыдущие '.$w['chapters'].' глав сохранятся в истории. Прогресс нового круга начнётся с нуля.',[[['text'=>'✓ Начать повтор','callback_data'=>'w_y_'.$token],['text'=>'Отмена','callback_data'=>'w_n_'.$token]]]);return true;
         }
         $r=sql("SELECT * FROM requests WHERE token_hash=? AND kind='weekly_repeat'",[hash('sha256',$match[2])])->fetch();
         if(!$r||$r['consumed']||$r['expires_at']<time()||$r['user_id']!==$id||$r['session_hash']!==$binding){$reply('Подтверждение истекло или круг изменился. Откройте круги заново.');return true;}
@@ -46,7 +46,7 @@ function telegramMenu(string $text,bool $callback,?array $reader,string $telegra
         $lines=['🔁 '.$header,'План: '.$w['goal'].' глав. Текущий круг: '.$w['cycle'].'.','Завершено кругов: '.$w['completedCycles'].'. Всего за неделю: '.$w['totalChapters'].' глав.'];
         foreach($w['repeats'] as $r)$lines[]='✓ Круг '.$r['cycle'].': '.$r['chapters'].' глав за '.$r['days'].' дн. · '.$r['completedOn'];
         $lines[]='Сейчас: '.$w['chapters'].'/'.$w['goal'].' глав. Срок: '.$w['end'].'.';
-        $reply(implode("\n",$lines),$w['completed']?[[['text'=>'Начать круг '.($w['cycle']+1),'callback_data'=>'repeat:new']]]:[[['text'=>'📖 Продолжить чтение','callback_data'=>'menu:read']]]);return true;
+        $reply(implode("\n",$lines),$w['completed']?[[['text'=>'Начать круг '.$w['nextCycle'],'callback_data'=>'repeat:new']]]:[[['text'=>'📖 Продолжить чтение','callback_data'=>'menu:read']]]);return true;
     }
     if($action==='weeks'){$names=['upcoming'=>'⏳','in_progress'=>'📖','overdue'=>'⚠️','completed'=>'✅','completed_late'=>'✅ С опозданием'];$weeks=array_filter($s['reports'],fn($v)=>$reader['role']==='admin'||$v['week']<=$c['current']);$reply('🗓 '.$header."\n".($weeks?implode("\n",array_map(fn($v)=>$names[$v['status']].' Неделя '.$v['week'].': '.$v['chapters'].'/'.$v['goal'].' глав · круг '.$v['cycle'].' · завершено кругов '.$v['completedCycles'],$weeks)):'Недели откроются после старта марафона.'),[[['text'=>'📚 План недели','callback_data'=>'menu:plan']]]);return true;}
     if($action==='plan'){

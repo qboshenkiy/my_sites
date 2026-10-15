@@ -14,7 +14,9 @@ api=async function(action,data,params=''){
 const cardBeforeRepeats=weeklyCard;
 weeklyCard=function(w,u,featured=false){
  const canRepeat=w.week===profileData.marathon.current&&w.completed&&(u.id===boot.user.id||boot.user.role==='admin');
- const extra=`<div class="weekly-repeat-summary"><strong>Круг ${w.cycle} · завершено кругов: ${w.completedCycles}</strong><p>Всего за эту неделю с повторами: ${w.totalChapters} глав.</p>${w.repeats.length?`<details><summary>История повторов · ${w.repeats.length}</summary>${w.repeats.map(r=>`<p>✓ Круг ${r.cycle}: ${r.chapters} глав за ${r.days} ${readingDayWord(r.days)} · ${date(r.completedOn)}</p>`).join('')}</details>`:''}${canRepeat?`<button class="outline" data-week-repeat="${w.week}" data-cycle="${w.cycle}">🔁 Прочитать этот план ещё раз</button>`:''}</div>`;
+ const manage=u.id===boot.user.id||boot.user.role==='admin';
+ const removeButton=r=>manage?`<button class="text-button danger-button" data-cycle-delete="${r.cycle}" data-cycle-week="${w.week}">Удалить круг ${r.cycle}</button>`:'';
+ const extra=`<div class="weekly-repeat-summary"><strong>Круг ${w.cycle} · завершено кругов: ${w.completedCycles}</strong><p>Всего за эту неделю с повторами: ${w.totalChapters} глав.</p>${w.repeats.length?`<details><summary>История повторов · ${w.repeats.length}</summary>${w.repeats.map(r=>`<p>${r.completed?'✓':'◷'} Круг ${r.cycle}: ${r.chapters} глав за ${r.days} ${readingDayWord(r.days)}${r.completedOn?' · '+date(r.completedOn):' · не завершён'} ${removeButton(r)}</p>`).join('')}</details>`:''}${manage&&w.deletedRepeats?.length?`<details><summary>Удалённые круги · ${w.deletedRepeats.length}</summary>${w.deletedRepeats.map(r=>`<p>Круг ${r.cycle} · ${r.chapters} глав <button class="text-button" data-cycle-restore="${r.cycle}" data-cycle-week="${w.week}">Восстановить в историю</button></p>`).join('')}</details>`:''}${manage?removeButton(w):''}${canRepeat?`<button class="outline" data-week-repeat="${w.week}" data-cycle="${w.cycle}">🔁 Прочитать этот план ещё раз</button>`:''}</div>`;
  return cardBeforeRepeats(w,u,featured).replace('</article>',extra+'</article>');
 };
 const profileBeforeRepeats=drawProfile;
@@ -30,9 +32,21 @@ drawProfile=function(){
 document.addEventListener('click',e=>{
  const b=e.target.closest('[data-week-repeat]');if(!b||busy)return;
  const w=profileData.stats.reports.find(w=>w.week===Number(b.dataset.weekRepeat));if(!w)return;
- dialog(`<h2>Начать круг ${w.cycle+1} недели ${w.week}?</h2><p>Ещё раз прочитать тот же план: ${w.goal} глав. Срок прежний — ${date(w.end)}. Результат завершённого круга сохранится в истории, прогресс нового начнётся с нуля.</p>${bookList(w.books,true)}<form id="weekly-repeat-form"><input type="hidden" name="user" value="${profileData.user.id}"><input type="hidden" name="week" value="${w.week}"><input type="hidden" name="cycle" value="${w.cycle}"><p class="form-feedback" role="alert"></p><button class="primary" type="submit">Подтвердить повтор</button></form>`);
+ dialog(`<h2>Начать круг ${w.nextCycle} недели ${w.week}?</h2><p>Ещё раз прочитать тот же план: ${w.goal} глав. Срок прежний — ${date(w.end)}. Результат завершённого круга сохранится в истории, прогресс нового начнётся с нуля.</p>${bookList(w.books,true)}<form id="weekly-repeat-form"><input type="hidden" name="user" value="${profileData.user.id}"><input type="hidden" name="week" value="${w.week}"><input type="hidden" name="cycle" value="${w.cycle}"><p class="form-feedback" role="alert"></p><button class="primary" type="submit">Подтвердить повтор</button></form>`);
 });
 document.addEventListener('submit',async e=>{
  if(e.target.id!=='weekly-repeat-form')return;e.preventDefault();if(busy)return;busy=true;const f=e.target,b=f.querySelector('[type=submit]');b.disabled=true;
  try{const data=Object.fromEntries(new FormData(f));await api('start_week_repeat',data);document.querySelector('dialog')?.close();await profile(data.user);toast('Новый круг недели начат. Прежний результат сохранён.')}catch(err){f.querySelector('.form-feedback').textContent=err.message}finally{busy=false;b.disabled=false}
+});
+
+// Deletion is reversible; mutations carry the active pass seen by the user.
+document.addEventListener('click',e=>{
+ const b=e.target.closest('[data-cycle-delete],[data-cycle-restore]');if(!b||busy)return;
+ const w=profileData.stats.reports.find(w=>w.week===Number(b.dataset.cycleWeek));if(!w)return;
+ const restore=b.dataset.cycleRestore!==undefined,cycle=Number(restore?b.dataset.cycleRestore:b.dataset.cycleDelete);
+ dialog(`<h2>${restore?'Восстановить':'Удалить'} круг ${cycle} недели ${w.week}?</h2><p>${restore?'Результат вернётся в историю и общий итог. Текущий проход останется прежним.':cycle===w.cycle?'Текущий проход будет удалён. Последний сохранённый проход вернётся в текущий; если его нет, откроется пустой проход. Результат можно восстановить из удалённых кругов.':'Этот проход исчезнет из истории и общих итогов. Его можно будет восстановить.'}</p><form id="cycle-change-form"><input type="hidden" name="user" value="${profileData.user.id}"><input type="hidden" name="week" value="${w.week}"><input type="hidden" name="cycle" value="${cycle}"><input type="hidden" name="active_cycle" value="${w.cycle}"><input type="hidden" name="restore" value="${restore?1:0}"><p class="form-feedback" role="alert"></p><button class="primary" type="submit">${restore?'Восстановить':'Подтвердить удаление'}</button></form>`);
+});
+document.addEventListener('submit',async e=>{
+ if(e.target.id!=='cycle-change-form')return;e.preventDefault();if(busy)return;busy=true;const f=e.target,b=f.querySelector('[type=submit]');b.disabled=true;
+ try{const data=Object.fromEntries(new FormData(f));await api(data.restore==='1'?'restore_week_cycle':'delete_week_cycle',data);document.querySelector('dialog')?.close();await profile(data.user);toast(data.restore==='1'?'Круг восстановлен в истории.':'Круг удалён. Итоги пересчитаны.')}catch(err){f.querySelector('.form-feedback').textContent=err.message}finally{busy=false;b.disabled=false}
 });

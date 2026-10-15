@@ -80,6 +80,7 @@ try {
     if(!$me)fail('Войдите в систему.',401);
     if($action==='round_history'){$id=$_GET['user']??$me['id'];if($id!==$me['id'])guard();if(!user($id))fail('Участник не найден.',404);$history=archivedReadingRound($id,number($_GET['round']??0,1,100000));unset($history['raw']);send($history);}
     if($action==='start_round')fail('Повторное чтение относится к отдельной неделе. Обновите сайт или откройте меню бота.');
+    if(in_array($action,['delete_week_cycle','restore_week_cycle'],true)){$id=$input['user']??$me['id'];if($id!==$me['id'])guard(true);db()->exec('BEGIN IMMEDIATE');$w=changeWeeklyCycle($id,$me['id'],number($input['week']??0,1,22),number($input['cycle']??0,1,1000000),number($input['active_cycle']??0,1,1000000),$action==='restore_week_cycle');db()->exec('COMMIT');send(['ok'=>true,'week'=>$w]);}
     if($action==='start_week_repeat'){$id=$input['user']??$me['id'];if($id!==$me['id'])guard(true);db()->exec('BEGIN IMMEDIATE');$w=startWeeklyRepeat($id,$me['id'],number($input['week']??0,1,22),number($input['cycle']??0,1,100000));db()->exec('COMMIT');send(['ok'=>true,'week'=>$w]);}
     if(in_array($action,['week_result','complete_week','clear_week_result','add_reading','save_report'],true)){
         assertInputRound($input['user']??$me['id'],$input);
