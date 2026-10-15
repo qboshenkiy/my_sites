@@ -15,7 +15,7 @@ for kind, image, env_name, directory, filename in [
         root = Path(folder)
         project = 'gitdeck-check-' + uuid.uuid4().hex[:10]
         config = {'name': project, 'services': {'web': {'image': image,
-                  'environment': {env_name: directory}, 'volumes': ['test_data:' + directory],
+                  'environment': {env_name: directory, 'DEMO_SETTING': '${DEMO_SETTING:-}'}, 'volumes': ['test_data:' + directory],
                   'healthcheck': {'interval': '1s', 'start_period': '1s', 'timeout': '5s', 'retries': 20}}},
                   'volumes': {'test_data': {}}}
         if kind == 'marathon':
@@ -29,7 +29,11 @@ for kind, image, env_name, directory, filename in [
         log = io.StringIO()
         dbpath = directory + '/' + filename
         try:
+            literal = "quotes ' $DOLLAR \\path"
+            app.write_env(p, app.patch_env('', {'DEMO_SETTING': literal}))
             app.start_services(p, log, build=False)
+            actual = app.compose(p, ['exec', '-T', 'web', 'php', '-r', 'echo getenv("DEMO_SETTING");'], log)
+            assert actual.decode() == literal, actual.decode()
             php = '$d=new PDO("sqlite:".$argv[1]);$d->exec("CREATE TABLE gitdeck_test(value TEXT)");$d->exec("INSERT INTO gitdeck_test VALUES (\'before\')");'
             app.compose(p, ['exec', '-T', 'web', 'php', '-r', php, dbpath], log)
             app.compose(p, ['stop', 'web'], log)
@@ -41,6 +45,7 @@ for kind, image, env_name, directory, filename in [
             result = app.compose(p, ['run', '--rm', '--no-deps', '--entrypoint', 'php', 'web', '-r', php, dbpath], log)
             assert result.decode().strip().endswith('before'), result.decode()
             print('PASS real Docker SQLite backup/restore: ' + kind)
+            print('PASS Compose .env literal quotes/dollars/backslashes: ' + kind)
             if kind == 'marathon':
                 print('PASS real Docker startup: healthy web + running bot with healthcheck disabled')
         except Exception:

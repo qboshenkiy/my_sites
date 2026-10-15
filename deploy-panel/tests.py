@@ -153,6 +153,111 @@ class GitDeckTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 app.validate_project(dict(good, **{field: value}))
 
+    def test_branches_and_historical_commit_checkout(self):
+        original = self.sha
+        (self.source / 'api.php').write_text('latest api')
+        subprocess.run(['git', 'add', '.'], cwd=self.source, check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'second version'], cwd=self.source, check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(['git', 'branch', 'stable', original], cwd=self.source, check=True)
+        info = app.revisions(self.config, self.project, 'main')
+        self.assertIn('stable', info['branches'])
+        self.assertEqual(len(info['commits']), 2)
+        self.assertEqual(info['commits'][1]['sha'], original)
+        folder = self.root / 'historic'
+        sha = app.checkout(self.project, self.config, folder, io.StringIO(), original[:8])
+        self.assertEqual(sha, original)
+        self.assertEqual((folder / 'api.php').read_text(), 'new api')
+        stable = self.root / 'stable'
+        self.assertEqual(app.checkout(self.project, self.config, stable, io.StringIO(), 'stable'), original)
+
+    def test_generic_module_paths_protect_runtime_and_settings(self):
+        for paths in [['.'], ['../app'], ['.env'], ['storage'], ['src/.env'], ['compose.yaml'], ['Dockerfile'], ['src', 'src/app']]:
+            with self.assertRaises(ValueError):
+                app.validate_paths(paths)
+        p = dict(self.project, kind='docker', paths=['assets'], main_service='web')
+        app.validate_paths(p['paths'])
+        (self.dest / 'assets/.env').write_text('keep this secret')
+        with self.assertRaisesRegex(ValueError, 'данные'):
+            app.copy_code(self.source, self.dest, p)
+        self.assertEqual((self.dest / 'assets/.env').read_text(), 'keep this secret')
+
+    def test_settings_atomic_persistence_and_overlap_rejection(self):
+        config = dict(self.config, projects_root=str(self.root))
+        config['projects'] = [dict(self.project, repo='https://github.com/user/sites.git')]
+        path = self.root / 'config.json'
+        path.write_text(json.dumps(config), encoding='utf-8')
+        class Server:
+            pass
+        server = Server()
+        server.config, server.config_path = config, str(path)
+        old = config['projects'][0]
+        form = dict(old, name='Renamed Pulse')
+        prepared = app.project_from_form(form, old, config)
+        app.save_config(server, [prepared], app.config_revision(config))
+        self.assertEqual(app.load_config(path)['projects'][0]['name'], 'Renamed Pulse')
+        with self.assertRaisesRegex(ValueError, 'изменились'):
+            app.save_config(server, [prepared], app.config_revision(config))
+        with self.assertRaises(ValueError):
+            app.project_from_form(dict(form, directory=str(self.root.parent)), old, config)
+        with self.assertRaises(ValueError):
+            app.validate_config(dict(config, projects=[old, dict(old, id='other', directory=str(self.dest / 'assets'))]))
+
+    def test_env_form_hides_secrets_and_preserves_unchanged_lines(self):
+        text = "# keep comment\nDOMAIN=old.example.com\nTELEGRAM_BOT_TOKEN='private-token-123'\nEMPTY=\nOTHER=value # keep too\n"
+        (self.dest / '.env').write_text(text, encoding='utf-8')
+        info = app.env_settings(self.project)
+        token = next(f for f in info['fields'] if f['key'] == 'TELEGRAM_BOT_TOKEN')
+        self.assertTrue(token['configured'])
+        self.assertEqual(token['value'], '')
+        self.assertNotIn('private-token-123', json.dumps(info))
+        values = {key: value for key, value, *_ in app.env_records(text)}
+        self.assertEqual(values['EMPTY'], '')
+        changed = app.patch_env(text, {'DOMAIN': 'new.example.com', 'NEW_SECRET': "some'$value"})
+        self.assertIn("TELEGRAM_BOT_TOKEN='private-token-123'", changed)
+        self.assertIn('OTHER=value # keep too', changed)
+        self.assertEqual({k: v for k, v, *_ in app.env_records(changed)}['NEW_SECRET'], "some'$value")
+        for changes in [{'DOMAIN': 'https://bad.com'}, {'APP_PORT': '70000'}, {'COMPOSE_FILE': '../bad.yaml'}, {'KEY': 'a\nb'}]:
+            with self.assertRaises(ValueError):
+                app.validate_env_changes(changes)
+
+    def test_environment_failure_restores_env_and_redacts_logs(self):
+        old = 'DOMAIN=old.example.com\nTELEGRAM_BOT_TOKEN=old-private-token\n'
+        (self.dest / '.env').write_text(old, encoding='utf-8')
+        folder = self.root / 'state/jobs' / self.job
+        payload = {'env_revision': app.env_revision(old), 'changes': {'DOMAIN': 'new.example.com', 'TELEGRAM_BOT_TOKEN': 'new-private-token'}}
+        (folder / 'environment.json').write_text(json.dumps(payload), encoding='utf-8')
+        log = io.StringIO()
+        calls = []
+        def start(p, protected_log, build):
+            calls.append(1)
+            protected_log.write('old-private-token new-private-token')
+            if len(calls) == 1:
+                raise RuntimeError('failed startup')
+        with patch.object(app, 'start_services', side_effect=start), patch.object(app, 'compose', return_value=b'web\n'):
+            with self.assertRaisesRegex(RuntimeError, 'настроек'):
+                app.apply_environment(self.config, self.project, self.job, log)
+        self.assertEqual((self.dest / '.env').read_text(encoding='utf-8'), old)
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn('private-token', log.getvalue())
+        self.assertTrue((folder / 'previous.env').exists())
+
+    def test_environment_success_updates_file_without_touching_code(self):
+        old = 'DOMAIN=old.example.com\nTELEGRAM_BOT_TOKEN=keep-me-private\n'
+        (self.dest / '.env').write_text(old, encoding='utf-8')
+        folder = self.root / 'state/jobs' / self.job
+        payload = {'env_revision': app.env_revision(old), 'changes': {'DOMAIN': 'new.example.com'}}
+        (folder / 'environment.json').write_text(json.dumps(payload), encoding='utf-8')
+        with patch.object(app, 'start_services') as start, patch.object(app, 'compose', return_value=b'web\nproxy\n') as docker:
+            app.apply_environment(self.config, self.project, self.job, io.StringIO())
+        values = {key: value for key, value, *_ in app.env_records(app.env_text(self.project))}
+        self.assertEqual(values['DOMAIN'], 'new.example.com')
+        self.assertEqual(values['TELEGRAM_BOT_TOKEN'], 'keep-me-private')
+        self.assertEqual((self.dest / 'api.php').read_text(), 'old api')
+        self.assertEqual(start.call_args.kwargs['build'], False)
+        self.assertTrue(any(call.args[1] == ['up', '-d', '--no-deps', 'proxy'] for call in docker.call_args_list))
+        with app.db_open(self.config) as db:
+            self.assertEqual(db.execute('SELECT status FROM jobs').fetchone()[0], 'success')
+
     def test_self_update_failure_restores_previous_panel(self):
         p = dict(self.project, kind='self')
         (self.dest / 'app.py').write_text('old panel')
@@ -178,12 +283,14 @@ class GitDeckTests(unittest.TestCase):
         self.assertEqual(len(restarts), 2)
 
     def test_http_auth_csrf_demo_and_host_protection(self):
+        self.project['repo'] = 'https://github.com/user/sites.git'
+        self.config['projects_root'] = str(self.root)
         salt = 'a' * 32
         with app.db_open(self.config) as db:
             db.execute('INSERT INTO credentials VALUES(1,?,?)', (salt, app.password_digest('test-password-2026', salt)))
         app.Panel.sessions, app.Panel.attempts = {}, []
         server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), app.Panel)
-        server.config, server.demo, server.config_path = self.config, True, '/not-used'
+        server.config, server.demo, server.config_path = self.config, True, str(self.root / 'config.json')
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         self.addCleanup(server.server_close)
@@ -214,13 +321,35 @@ class GitDeckTests(unittest.TestCase):
         server.demo = False
         with app.db_open(self.config) as db:
             db.execute('DELETE FROM jobs')
+        new_module = dict(self.project, id='another', name='Another', directory=str(self.root / 'another'))
+        code, result = request('/api/project/save', {'project': new_module, 'config_revision': state['config_revision'], 'csrf': state['csrf']})
+        self.assertEqual(code, 200, result)
+        _, state = request('/api/state')
+        self.assertEqual(len(state['projects']), 2)
+        self.assertTrue(Path(server.config_path).is_file())
+        self.assertEqual(request('/api/project/remove', {'project': 'another', 'config_revision': state['config_revision'], 'csrf': state['csrf']})[0], 200)
+        _, state = request('/api/state')
+        (self.dest / '.env').write_text('DOMAIN=old.example.com\nTELEGRAM_BOT_TOKEN=private-test-token\n', encoding='utf-8')
+        code, environment = request('/api/environment?project=pulse')
+        self.assertEqual(code, 200)
+        self.assertNotIn('private-test-token', json.dumps(environment))
+        with patch.object(app, 'run', return_value=b''):
+            code, envjob = request('/api/environment/save', {'project': 'pulse', 'changes': {'DOMAIN': 'new.example.com'},
+                                    'env_revision': environment['env_revision'], 'config_revision': state['config_revision'], 'csrf': state['csrf']})
+        self.assertEqual(code, 202, envjob)
+        with app.db_open(server.config) as db:
+            self.assertEqual(db.execute('SELECT action FROM jobs').fetchone()[0], 'configure')
+            db.execute('DELETE FROM jobs')
         with patch.object(app, 'run', return_value=b'') as launch:
-            code, queued = request('/api/update', {'project': 'pulse', 'csrf': state['csrf']})
+            code, queued = request('/api/update', {'project': 'pulse', 'ref': 'stable', 'csrf': state['csrf']})
             self.assertEqual(code, 202)
             self.assertTrue((Path(self.config['state_dir']) / 'jobs' / queued['job'] / 'worker.py').is_file())
             self.assertEqual(launch.call_args.args[0][0], 'systemd-run')
             self.assertEqual(request('/api/update', {'project': 'pulse', 'csrf': state['csrf']})[0], 409)
             self.assertEqual(launch.call_count, 1)
+            with app.db_open(server.config) as db:
+                self.assertEqual(db.execute('SELECT target_ref FROM jobs').fetchone()[0], 'stable')
+            self.assertEqual(request('/api/project/save', {'project': new_module, 'config_revision': state['config_revision'], 'csrf': state['csrf']})[0], 409)
         self.assertEqual(request('/api/logout', {'csrf': state['csrf']})[0], 200)
         self.assertEqual(request('/api/state')[0], 401)
 
