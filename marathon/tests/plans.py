@@ -175,7 +175,15 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         assert restored['user']['role']=='admin' and restored['stats']['pace']['chapters']==6
         assert restored['stats']['reports'][0]['chapters']==10
         assert not admin.call('archived_users')['users']
-        # A fresh Telegram login succeeds, preserving the original binding.
+        # Deletion releases Telegram; restoration must not reinstate the old binding.
+        assert restored['user']['telegram_id'] is None
+        with sqlite3.connect(Path(folder)/'marathon.sqlite') as db:
+            assert db.execute('SELECT COUNT(*) FROM users WHERE telegram_id=?',('123456',)).fetchone()[0]==0
+        db.close()
+        invitation=admin.call('telegram_request',{'kind':'invite','user':uid})
+        update['update_id']=1006;update['callback_query']['data']='i_'+invitation['token']
+        subprocess.run([PHP,'-r',code,str(ROOT/'lib/telegram.php')],env=env,input=json.dumps(update),text=True,check=True,stdout=subprocess.DEVNULL)
+        # A fresh login succeeds only after this new binding.
         request=reader.call('telegram_request',{'kind':'login'})
         update['update_id']=1002;update['callback_query']['data']='a_'+request['token']
         subprocess.run([PHP,'-r',code,str(ROOT/'lib/telegram.php')],env=env,input=json.dumps(update),text=True,check=True,stdout=subprocess.DEVNULL)
@@ -187,6 +195,32 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         db.close()
         reader.call('complete_week',{'week':1},400)
         assert reader.call('profile')['stats']['reports'][0]['canComplete'] is False
+        reader.call('unlink_telegram',{'user':other},403)
+        admin.call('update_user',{'user':uid,'role':'moderator'})
+        admin.call('unlink_telegram',{'user':uid},400)  # Telegram-only staff must retain a login route.
+        assert admin.call('profile',suffix='&user='+uid)['user']['telegram_id']=='123456'
+        admin.call('update_user',{'user':uid,'role':'participant'})
+        chapters_before=admin.call('profile',suffix='&user='+uid)['stats']['chapters']
+        pending=reader.call('telegram_request',{'kind':'login'})
+        update['update_id']=1003;update['callback_query']['data']='a_'+pending['token']
+        subprocess.run([PHP,'-r',code,str(ROOT/'lib/telegram.php')],env=env,input=json.dumps(update),text=True,check=True,stdout=subprocess.DEVNULL)
+        admin.call('unlink_telegram',{'user':uid})
+        assert reader.boot()['user'] is None
+        reader.call('telegram_status',{'token':pending['token']},400)
+        unlinked=admin.call('profile',suffix='&user='+uid)
+        assert unlinked['user']['telegram_id'] is None and unlinked['user']['telegram_name'] is None
+        assert unlinked['stats']['chapters']==chapters_before
+        admin.call('unlink_telegram',{'user':uid})  # Idempotent, without changing reading data.
+        invitation=admin.call('telegram_request',{'kind':'invite','user':other})
+        update['update_id']=1004;update['callback_query']['data']='i_'+invitation['token']
+        subprocess.run([PHP,'-r',code,str(ROOT/'lib/telegram.php')],env=env,input=json.dumps(update),text=True,check=True,stdout=subprocess.DEVNULL)
+        assert admin.call('profile',suffix='&user='+other)['user']['telegram_id']=='123456'
+        with sqlite3.connect(Path(folder)/'marathon.sqlite') as db:
+            db.execute("UPDATE users SET telegram_id='999999' WHERE id=?",(aid,))
+        db.close()
+        admin.call('unlink_telegram',{'user':aid})
+        assert admin.boot()['user']['id']==aid and admin.boot()['user']['telegram_id'] is None
+        print('PASS: admin-only Telegram unlink, preserved reading, session/request revocation, rebinding and staff login protection.')
         print('PASS: participant days cannot be forged, daily and manual days, participant chapter corrections, zero-day legacy completion recovery, automatic completion and current/previous week restriction.')
         print('PASS: role-independent reading, staff weekly editing, staff XLSX, account editing, archive/restore, permissions and session revocation.')
         print('PASS: weekly CRUD/corrections below daily totals, retained history, new readings after correction, reset, ownership/locks, books, manual days, late marks and XLSX.')

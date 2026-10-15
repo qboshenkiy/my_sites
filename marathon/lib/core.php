@@ -22,6 +22,7 @@ function db(): PDO {
         $userColumns=array_column(sql('PRAGMA table_info(users)')->fetchAll(),'name');
         if(!in_array('deleted_at',$userColumns,true))$db->exec('ALTER TABLE users ADD COLUMN deleted_at INTEGER');
         if(!in_array('session_epoch',$userColumns,true))$db->exec('ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0');
+        $db->exec('UPDATE users SET telegram_id=NULL,telegram_name=NULL WHERE deleted_at IS NOT NULL AND (telegram_id IS NOT NULL OR telegram_name IS NOT NULL)');
         $columns=array_column(sql('PRAGMA table_info(reports)')->fetchAll(),'name');
         if(!in_array('chapters_manual',$columns,true))$db->exec('ALTER TABLE reports ADD COLUMN chapters_manual INTEGER NOT NULL DEFAULT 0');
         if(!in_array('days_manual',$columns,true))$db->exec('ALTER TABLE reports ADD COLUMN days_manual INTEGER');
