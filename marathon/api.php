@@ -82,22 +82,37 @@ try {
     }
     if($action==='delete_reading') {
         $r=sql('SELECT * FROM reading_entries WHERE id=?',[$input['id']??''])->fetch();if(!$r)fail('Запись не найдена.',404);
-        if($r['user_id']!==$me['id'])guard();db()->exec('BEGIN IMMEDIATE');assertWeekEditable((int)$r['week']);sql('DELETE FROM reading_entries WHERE id=?',[$r['id']]);audit($me['id'],'delete_reading',$r['user_id'],'Удалена отметка '.$r['date']);db()->exec('COMMIT');send(['ok'=>true]);
+        if($r['user_id']!==$me['id'])guard();db()->exec('BEGIN IMMEDIATE');assertWeekEditable((int)$r['week']);sql('DELETE FROM reading_entries WHERE id=?',[$r['id']]);syncCompletion($r['user_id'],(int)$r['week']);audit($me['id'],'delete_reading',$r['user_id'],'Удалена отметка '.$r['date']);db()->exec('COMMIT');send(['ok'=>true]);
+    }
+    if($action==='complete_week') {
+        $id=$input['user']??$me['id'];if($id!==$me['id'])guard();$u=user($id);if(!$u||!(int)$u['active']||$u['role']!=='participant')fail('Участник недоступен.',404);
+        $week=number($input['week']??0,1,22);$days=($input['days']??'')===''?null:number($input['days'],1,3660);
+        db()->exec('BEGIN IMMEDIATE');$result=completeWeek($id,$me['id'],$week,$days);db()->exec('COMMIT');send(['ok'=>true,'week'=>$result]);
     }
     if($action==='week_result') {
         guard();$id=$input['user']??'';if(!user($id))fail('Участник не найден.',404);$week=number($input['week']??0,1,22);
         db()->exec('BEGIN IMMEDIATE');$w=assertWeekEditable($week);$total=number($input['chapters']??0,0,$w['goal']);
         $daily=(int)(sql('SELECT SUM(chapters) FROM reading_entries WHERE user_id=? AND week=?',[$id,$week])->fetchColumn()?:0);
         if($total<$daily)fail('Уже есть '.$daily.' глав в ежедневных отметках. Исправьте их перед уменьшением итога.');
-        $days=($input['days']??'')===''?null:number($input['days'],0,7);$title=text($input['title']??'',200,false);$note=text($input['note']??'',1000,false);
+        $days=($input['days']??'')===''?null:number($input['days'],0,3660);$title=text($input['title']??'',200,false);$note=text($input['note']??'',1000,false);
         sql('INSERT INTO reports(user_id,week,editor_id,updated_at,chapters_manual,days_manual,title,note) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(user_id,week) DO UPDATE SET chapters_manual=excluded.chapters_manual,days_manual=excluded.days_manual,title=excluded.title,note=excluded.note,editor_id=excluded.editor_id,updated_at=excluded.updated_at',[$id,$week,$me['id'],time(),$total-$daily,$days,$title,$note]);
-        audit($me['id'],'week_result',$id,'Неделя '.$week.': итог '.$total.' глав');db()->exec('COMMIT');send(['ok'=>true]);
+        syncCompletion($id,$week);audit($me['id'],'week_result',$id,'Неделя '.$week.': итог '.$total.' глав');db()->exec('COMMIT');send(['ok'=>true]);
     }
     if($action==='week_plan') {
-        guard(true);$week=number($input['week']??0,1,22);$goal=number($input['goal']??0,1,100000);db()->exec('BEGIN IMMEDIATE');
+        guard(true);$week=number($input['week']??0,1,22);$books=null;
+        if(array_key_exists('books',$input)){
+            if(!is_array($input['books'])||count($input['books'])>100)fail('Можно добавить до 100 книг в неделю.');$books=[];$goal=0;
+            foreach($input['books'] as $position=>$book){if(!is_array($book))fail('Некорректная книга.');$title=text($book['title']??'',200);$from=number($book['chapter_from']??0,1,100000);$to=number($book['chapter_to']??0,$from,100000);
+                foreach($books as $prior){if(mb_strtolower($prior['title'])===mb_strtolower($title)&&$from<=$prior['chapter_to']&&$to>=$prior['chapter_from'])fail('Главы одной книги не должны повторяться в плане недели.');}
+                $books[]=['title'=>$title,'chapter_from'=>$from,'chapter_to'=>$to];$goal+=$to-$from+1;
+            }
+            if(!$books)$goal=number($input['goal']??0,1,100000);if($goal>100000)fail('Недельный план не должен превышать 100000 глав.');
+        }else{$goal=number($input['goal']??0,1,100000);$bookGoal=(int)(sql('SELECT SUM(chapter_to-chapter_from+1) FROM week_plan_books WHERE week=?',[$week])->fetchColumn()?:0);if($bookGoal&&$bookGoal!==$goal)fail('План рассчитан по книгам. Измените книги и главы в плане чтения.');}
+        db()->exec('BEGIN IMMEDIATE');
         $w=calendar()['calendar'][$week-1];if($week<calendar()['current']&&!$w['reopened'])fail('Откройте завершённую неделю перед изменением плана.');
         foreach(staff() as $u){if($u['weekly'][$week-1]['chapters']>$goal)fail('План меньше уже внесённого результата участника '.$u['name'].'.');}
-        sql('UPDATE week_plans SET chapters=? WHERE week=?',[$goal,$week]);audit($me['id'],'week_plan',null,'План недели '.$week.': '.$goal.' глав');db()->exec('COMMIT');send(['ok'=>true]);
+        if($books!==null){sql('DELETE FROM week_plan_books WHERE week=?',[$week]);foreach($books as $position=>$book)sql('INSERT INTO week_plan_books VALUES (?,?,?,?,?,?)',[bin2hex(random_bytes(12)),$week,$position,$book['title'],$book['chapter_from'],$book['chapter_to']]);}
+        sql('UPDATE week_plans SET chapters=? WHERE week=?',[$goal,$week]);foreach(sql('SELECT id FROM users WHERE role=\'participant\'')->fetchAll() as $participant)syncCompletion($participant['id'],$week);audit($me['id'],'week_plan',null,'План недели '.$week.': '.$goal.' глав'.($books?' · '.planBookText($books):''));db()->exec('COMMIT');send(['ok'=>true]);
     }
     if($action==='week_lock') {
         guard(true);$week=number($input['week']??0,1,22);$open=number($input['open']??0,0,1);
