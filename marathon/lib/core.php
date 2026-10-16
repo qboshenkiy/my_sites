@@ -35,6 +35,7 @@ function db(): PDO {
         $db->exec('CREATE TABLE IF NOT EXISTS telegram_reading_requests(token_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),telegram_id TEXT NOT NULL,session_epoch INTEGER NOT NULL,chapters INTEGER NOT NULL,snapshot TEXT NOT NULL,expires_at INTEGER NOT NULL,consumed INTEGER NOT NULL DEFAULT 0)');
         $db->exec('CREATE TABLE IF NOT EXISTS weekly_repeats(user_id TEXT NOT NULL REFERENCES users(id),week INTEGER NOT NULL,cycle INTEGER NOT NULL,snapshot TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(user_id,week,cycle));
         CREATE TABLE IF NOT EXISTS reading_rounds(user_id TEXT NOT NULL REFERENCES users(id),number INTEGER NOT NULL,start TEXT NOT NULL,plans TEXT NOT NULL,snapshot TEXT,opened TEXT NOT NULL DEFAULT \'[]\',created_at INTEGER NOT NULL,PRIMARY KEY(user_id,number));
+        CREATE TABLE IF NOT EXISTS telegram_admin_states(user_id TEXT PRIMARY KEY REFERENCES users(id),telegram_id TEXT NOT NULL,session_epoch INTEGER NOT NULL,payload TEXT NOT NULL,expires_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS telegram_menu_states(user_id TEXT PRIMARY KEY REFERENCES users(id),telegram_id TEXT NOT NULL,session_epoch INTEGER NOT NULL,round_number INTEGER NOT NULL,expires_at INTEGER NOT NULL);');
         $repeatColumns=array_column(sql('PRAGMA table_info(weekly_repeats)')->fetchAll(),'name');
         if(!in_array('deleted_at',$repeatColumns,true))$db->exec('ALTER TABLE weekly_repeats ADD COLUMN deleted_at INTEGER');
@@ -151,6 +152,16 @@ function assertCompletionAllowed(string $actor,int $week,?string $id=null): void
     $c=calendar($id??$actor);if(user($actor)['role']==='participant'&&($week<$c['current']-1||$week>$c['current']))throw new DomainException('Участник может завершить только текущую или предыдущую неделю.');
 }
 function planBookText(array $books): string {return implode('; ',array_map(fn($b)=>$b['title'].' '.$b['chapter_from'].'–'.$b['chapter_to'],$books));}
+function saveWeeklyResult(string $id,string $actor,int $week,int $total,?int $days,string $title,string $note): array {
+    $w=assertWeekEditable($week,$id);
+    if($total<0||$total>$w['goal'])throw new DomainException('Укажите от 0 до '.$w['goal'].' глав.');
+    if($days!==null&&($days<($total?1:0)||$days>3660))throw new DomainException('Неверное количество дней.');
+    if($total===$w['goal'])assertCompletionAllowed($actor,$week,$id);
+    $daily=(int)(sql('SELECT SUM(chapters) FROM reading_entries WHERE user_id=? AND week=?',[$id,$week])->fetchColumn()?:0);
+    sql('INSERT INTO reports(user_id,week,editor_id,updated_at,chapters_manual,days_manual,title,note) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(user_id,week) DO UPDATE SET chapters_manual=excluded.chapters_manual,days_manual=excluded.days_manual,title=excluded.title,note=excluded.note,editor_id=excluded.editor_id,updated_at=excluded.updated_at',[$id,$week,$actor,time(),max(0,$total-$daily),$days,$title,$note]);
+    sql('UPDATE reports SET chapters_override=? WHERE user_id=? AND week=?',[$total,$id,$week]);
+    syncCompletion($id,$week);audit($actor,'week_result',$id,'Неделя '.$week.': ручной итог '.$total.' глав'.($days!==null?', '.$days.' дн.':''));return weekResults($id)[$week-1];
+}
 function completeWeek(string $id,string $actor,int $week,?int $days): array {
     $c=calendar($id);if($week<1||$week>22||!$c['calendar'][$week-1]['canComplete'])throw new DomainException('Эта неделя ещё не началась.');
     assertCompletionAllowed($actor,$week,$id);

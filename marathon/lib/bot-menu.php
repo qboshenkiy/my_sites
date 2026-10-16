@@ -1,11 +1,11 @@
 <?php
 declare(strict_types=1);
-function telegramReplyKeyboard(): array {return ['keyboard'=>[
+function telegramReplyKeyboard(bool $admin=false): array {$rows=[
     [['text'=>'📖 Отметить чтение'],['text'=>'📊 Мой прогресс']],
     [['text'=>'📚 План недели'],['text'=>'🗓 Мои недели']],
     [['text'=>'🔁 Круги чтения'],['text'=>'🌐 Открыть сайт']],
     [['text'=>'❓ Помощь'],['text'=>'Отмена']]
-],'resize_keyboard'=>true,'is_persistent'=>true,'input_field_placeholder'=>'Выберите действие или напишите «прочитал 5»'];}
+];if($admin)array_unshift($rows,[['text'=>'👥 Участники'],['text'=>'📋 Общий отчёт']]);return ['keyboard'=>$rows,'resize_keyboard'=>true,'is_persistent'=>true,'input_field_placeholder'=>'Выберите действие или напишите «прочитал 5»'];}
 function telegramBookLines(array $books): array {return array_map(fn($b)=>'• '.$b['title'].': главы '.$b['chapter_from'].'–'.$b['chapter_to'],$books);}
 function telegramReaderHeader(array $reader,array $c): string {return $reader['name'].' · '.($c['current']<1?'до старта':($c['current']>22?'марафон завершён':'неделя '.$c['current'].'/22'));}
 function telegramMenu(string $text,bool $callback,?array $reader,string $telegramId,callable $reply): bool {

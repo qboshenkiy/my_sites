@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__.'/core.php';
 require_once __DIR__.'/bot-menu.php';
+require_once __DIR__.'/bot-admin.php';
 // Pure update handler: tests exercise Telegram binding without contacting Telegram.
 function telegramUpdate(array $update): array {
     $updateId=$update['update_id']??null;
@@ -18,7 +19,7 @@ function telegramUpdate(array $update): array {
             sql('INSERT INTO bot_updates VALUES (?,?)',[$updateId,time()]);db()->exec('COMMIT');return [];
         }
         $base=rtrim(getenv('APP_URL')?:'','/');
-        $reply=function(string $text,?array $keyboard=null)use(&$out,$chat){do{$chunk=mb_strcut($text,0,3500,'UTF-8');$text=substr($text,strlen($chunk));$args=['chat_id'=>$chat['id'],'text'=>$chunk,'reply_markup'=>$keyboard&&$text===''?['inline_keyboard'=>$keyboard]:telegramReplyKeyboard()];$out[]=['method'=>'sendMessage','args'=>$args];}while($text!=='');};
+        $reply=function(string $text,?array $keyboard=null)use(&$out,$chat,&$linked){do{$chunk=mb_strcut($text,0,3500,'UTF-8');$text=substr($text,strlen($chunk));$args=['chat_id'=>$chat['id'],'text'=>$chunk,'reply_markup'=>$keyboard&&$text===''?['inline_keyboard'=>$keyboard]:telegramReplyKeyboard(($linked['role']??null)==='admin')];$out[]=['method'=>'sendMessage','args'=>$args];}while($text!=='');};
         $text=$callback['data']??$message['text']??'';
         $linked=sql('SELECT * FROM users WHERE telegram_id=? AND active=1 AND deleted_at IS NULL',[$telegramId])->fetch()?:null;
         $readingText=$text;
@@ -28,7 +29,8 @@ function telegramUpdate(array $update): array {
         if($callback&&preg_match('/^([ai])_([a-f0-9]{48})$/',$text,$match)){$kind=$match[1]==='a'?'login':'invite';$token=$match[2];}
         elseif(!$callback&&preg_match('/^\/start(?:@\w+)? ([ai])_([a-f0-9]{48})$/',$text,$match)){$kind=$match[1]==='a'?'login':'invite';$token=$match[2];}
         if($callback)$out[]=['method'=>'answerCallbackQuery','args'=>['callback_query_id'=>$callback['id']]];
-        if(telegramMenu($text,(bool)$callback,$linked,$telegramId,$reply)){}
+        if(telegramAdminMenu($text,(bool)$callback,$linked,$telegramId,$reply)){}
+        elseif(telegramMenu($text,(bool)$callback,$linked,$telegramId,$reply)){}
         elseif($callback&&preg_match('/^r_([yn])_([a-f0-9]{32})$/',$text,$confirmation)){
             $request=sql('SELECT * FROM telegram_reading_requests WHERE token_hash=?',[hash('sha256',$confirmation[2])])->fetch();
             $reader=$request?user($request['user_id']):null;
