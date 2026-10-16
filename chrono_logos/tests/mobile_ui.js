@@ -26,6 +26,56 @@ const fs = require('node:fs');
   async function fits(page) {
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Page overflows horizontally');
   }
+  async function invitation(page, roomCode) {
+    await page.evaluate(()=>{
+      delete navigator.clipboard;delete navigator.share;delete navigator.canShare;
+      window.originalCopyCommand ||= document.execCommand;
+      document.execCommand = window.originalCopyCommand;
+      delete window.legacyCopied;delete window.sharedInvite;
+    });
+    const widget = page.locator('[data-room-share]');
+    const url = await widget.locator('[data-invite-url]').inputValue();
+    assert.ok(url.endsWith('/rooms/invite/'+roomCode));
+    const telegram = new URL(await widget.locator('[data-share-telegram]').getAttribute('href'));
+    const whatsapp = new URL(await widget.locator('[data-share-whatsapp]').getAttribute('href'));
+    assert.equal(telegram.searchParams.get('url'),url);
+    assert.ok(whatsapp.searchParams.get('text').includes(url));
+    await page.context().grantPermissions(['clipboard-read','clipboard-write']);
+    await widget.locator('[data-room-copy="link"]').tap();
+    await page.waitForFunction(()=>document.querySelector('[data-share-status]').textContent==='Ссылка скопирована.');
+    assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),url);
+    await widget.locator('[data-room-copy="code"]').tap();
+    await page.waitForFunction(()=>document.querySelector('[data-share-status]').textContent==='Код скопирован.');
+    assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),roomCode);
+    await page.evaluate(()=>{
+      Object.defineProperty(navigator,'clipboard',{configurable:true,value:undefined});
+      document.execCommand = () => {window.legacyCopied=document.activeElement.value;return true;};
+    });
+    await widget.locator('[data-room-copy="link"]').tap();
+    await page.waitForFunction(()=>!!window.legacyCopied);
+    assert.equal(await page.evaluate(()=>window.legacyCopied),url);
+    await page.evaluate(()=>{document.execCommand=()=>false;});
+    await widget.locator('[data-room-copy="link"]').tap();
+    await page.waitForFunction(()=>document.querySelector('[data-share-status]').textContent.startsWith('Ссылка выделена.'));
+    assert.equal(await widget.locator('[data-invite-url]').evaluate(el=>el.selectionEnd-el.selectionStart),url.length);
+    await page.evaluate(()=>{
+      Object.defineProperty(navigator,'canShare',{configurable:true,value:()=>true});
+      Object.defineProperty(navigator,'share',{configurable:true,value:async data=>{window.sharedInvite=data;}});
+    });
+    await widget.locator('[data-room-send]').tap();
+    await page.waitForFunction(()=>!!window.sharedInvite);
+    assert.equal(await page.evaluate(()=>window.sharedInvite.url),url);
+    await page.evaluate(()=>{Object.defineProperty(navigator,'share',{configurable:true,value:async()=>{throw new DOMException('Cancelled','AbortError');}});});
+    await widget.locator('[data-room-send]').tap();
+    await page.waitForFunction(()=>document.querySelector('[data-share-status]').textContent==='Отправка отменена.');
+    await page.evaluate(()=>{Object.defineProperty(navigator,'share',{configurable:true,value:undefined});});
+    await widget.locator('[data-room-send]').tap();
+    await page.waitForFunction(()=>document.querySelector('[data-share-status]').textContent.startsWith('Выберите Telegram'));
+    // The delegated handlers survive replacing lobby markup after a rematch.
+    await widget.evaluate(el=>el.replaceWith(el.cloneNode(true)));
+    await page.locator('[data-room-copy="link"]').tap();
+    await page.waitForFunction(()=>document.querySelector('[data-share-status]').textContent.startsWith('Ссылка выделена.'));
+  }
   try {
     const a = await login('reader_a',390), b = await login('reader_b',320);
     for (const page of [a,b]) {
@@ -63,6 +113,7 @@ const fs = require('node:fs');
     assert.equal(after.timeline.length,before.timeline.length+1);
     await player.locator('#menu-toggle').tap();
     await player.waitForSelector('#game-menu:not([hidden])');
+    await invitation(player,code);
     await player.locator('#menu-close').tap();
     await player.setViewportSize({width:844,height:390}); await fits(player);
     await a.setViewportSize({width:390,height:844});
@@ -80,6 +131,7 @@ const fs = require('node:fs');
       {x:qr.x+qr.width/2,y:qr.y+qr.height/2}),'Invitation QR is covered by controls');
     await a.screenshot({path:path.join(folder,'mobile-lobby.png'),fullPage:true});
     const lobbyCode = a.url().split('/').pop();
+    await invitation(a,lobbyCode);
     const guestContext = await browser.newContext({viewport:{width:320,height:740},isMobile:true,hasTouch:true});
     const guest = await guestContext.newPage(); guest.on('pageerror',error=>errors.push(error.message));
     await guest.goto(base+'/rooms/invite/'+lobbyCode);
@@ -102,6 +154,6 @@ const fs = require('node:fs');
     await blindPlayer.locator('#confirm-placement').tap();
     await blindPlayer.waitForFunction(()=>!document.getElementById('move-result').hidden);
     assert.deepEqual(errors,[]);
-    console.log('PASS: mobile 320/390px normal/blind gameplay, details, confirmation, real moves, landscape, QR lobby and guest join');
+    console.log('PASS: mobile gameplay and invitations: real clipboard, legacy/manual fallback, native share/cancel, messenger URLs and guest join');
   } finally {await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -49,6 +49,15 @@ input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=file])
 .auth-screen .login-card {width:100%;padding:28px;border-top-width:2px}
 .auth-screen .form-group input {min-height:48px;font-size:16px}
 .mobile-bottom-nav {display:none}
+.room-share {width:100%;min-width:0;text-align:left;margin-top:18px}
+.room-share>label {display:block;font-size:13px;color:var(--cl-muted);margin-bottom:8px}
+.room-share input {width:100%;min-width:0;background:var(--cl-bg);color:var(--cl-text);border:1px solid var(--cl-border);padding:12px;font-size:14px;min-height:46px}
+.room-share-actions,.room-share-messengers {display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.room-share-actions button,.room-share-messengers a {flex:1 1 130px;display:inline-flex;align-items:center;justify-content:center;min-height:46px;border:1px solid var(--cl-border);border-radius:10px;padding:10px 12px;background:var(--cl-raised);color:var(--cl-text);font:inherit;font-size:13px;text-decoration:none;cursor:pointer}
+.room-share-actions .share-invite {background:var(--cl-accent);color:var(--cl-bg);border-color:var(--cl-accent)}
+.room-share-messengers a {color:var(--cl-accent)}
+.room-share-status {font-size:13px;color:var(--cl-accent);margin:10px 0;overflow-wrap:anywhere}
+.room-share>small {font-size:11px;line-height:1.5;color:var(--cl-muted);display:block}
 
 /* A clear tap-to-select, tap-to-place game, using the same surfaces. */
 .play-root {height:100dvh;min-height:100dvh;background:radial-gradient(ellipse at 50% 0,rgba(214,183,122,.07),transparent 65%),var(--cl-bg)}

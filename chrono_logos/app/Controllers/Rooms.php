@@ -706,6 +706,7 @@ class Rooms extends BaseController
         }
 
         return view('Chronos/rooms/play', [
+            'joinUrl' => $this->buildInviteUrl($room['code']),
             'title' =>
                 $room['game_title'],
             'room' =>

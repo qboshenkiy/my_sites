@@ -55,23 +55,7 @@
                     <img src="<?= esc($qrDataUri, 'attr') ?>" alt="QR-код комнаты">
                 <?php endif; ?>
 
-                <div class="room-invite-actions">
-                    <button
-                        type="button"
-                        class="copy-code"
-                        data-code="<?= esc($room['code'], 'attr') ?>"
-                    >
-                        Копировать код
-                    </button>
-
-                    <button
-                        type="button"
-                        class="copy-invite-link"
-                        data-url="<?= esc($joinUrl ?? '', 'attr') ?>"
-                    >
-                        Копировать ссылку
-                    </button>
-                </div>
+                <?= view('partials/room-share', ['room'=>$room,'joinUrl'=>$joinUrl,'shareId'=>'lobby']) ?>
             </section>
         </div>
 
@@ -206,6 +190,7 @@
 <?= $this->endSection() ?>
 
 <?= $this->section('scripts') ?>
+<script src="/assets/chronos/js/room-share.js"></script>
 <script>
 (() => {
     const root = document.getElementById('room-lobby-root');
@@ -362,21 +347,6 @@
         submitAction(form);
     });
 
-    document.addEventListener('click', async event => {
-        const copyCode = event.target.closest('.copy-code');
-        const copyLink = event.target.closest('.copy-invite-link');
-        const button = copyCode || copyLink;
-        if (!button) return;
-        const value = copyCode ? button.dataset.code : button.dataset.url;
-        try {
-            await navigator.clipboard.writeText(value);
-            const old = button.textContent;
-            button.textContent = copyCode ? 'Код скопирован' : 'Ссылка скопирована';
-            setTimeout(() => button.textContent = old, 1500);
-        } catch (error) {
-            showAlert?.('warning', 'Не удалось скопировать автоматически.');
-        }
-    });
 
     refreshState();
     setInterval(refreshState, 1200);

@@ -80,6 +80,7 @@
         </div>
 
         <div class="game-menu-players" id="players-bar"></div>
+        <?= view('partials/room-share', ['room'=>$room,'joinUrl'=>$joinUrl,'shareId'=>'game']) ?>
 
         <div class="game-menu-actions">
             <?php if ($isHost): ?>
@@ -183,6 +184,7 @@
     </article>
 </div>
 
+<script src="/assets/chronos/js/room-share.js"></script>
 <script>
 (() => {
     const root = document.getElementById('play-root');
