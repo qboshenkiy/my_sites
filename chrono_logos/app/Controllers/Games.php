@@ -13,8 +13,8 @@ class Games extends BaseController
 
         $builder = db_connect()->table('game_templates g')
             ->select('g.id, g.title, g.description, g.language, g.updated_at, u.username AS author')
-            ->select('(SELECT COUNT(*) FROM cards c WHERE c.game_template_id = g.id) AS cards_count', false)
-            ->select('(SELECT c.image_url FROM cards c WHERE c.game_template_id = g.id AND c.image_url IS NOT NULL ORDER BY c.editor_position ASC, c.id ASC LIMIT 1) AS preview_url', false)
+            ->select('(SELECT COUNT(*) FROM cards c WHERE c.game_template_id = g.id AND c.is_enabled = TRUE) AS cards_count', false)
+            ->select('(SELECT c.image_url FROM cards c WHERE c.game_template_id = g.id AND c.is_enabled = TRUE AND c.image_url IS NOT NULL ORDER BY c.editor_position ASC, c.id ASC LIMIT 1) AS preview_url', false)
             ->join('users u', 'u.id = g.user_id')
             ->where('g.status', 'PRODUCTION');
 

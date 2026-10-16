@@ -8,6 +8,124 @@ use App\Models\Chronos\Card;
 
 class Creator extends BaseController
 {
+    public function getGenesisJson()
+    {
+        return $this->response->setContentType('application/json')
+            ->setHeader('Content-Disposition', 'attachment; filename="genesis-50.json"')
+            ->setBody(file_get_contents(APPPATH . 'Data/genesis-50.json'));
+    }
+
+    public function getImportJson()
+    {
+        $gameId = (int) $this->request->getGet('game_id');
+        $game = $gameId ? $this->getOwnedGame($gameId) : null;
+        if ($gameId && !$game) {
+            throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound();
+        }
+        return view('Chronos/creator/import', ['title' => 'Импорт хронологии', 'game' => $game,
+            'preset' => $this->request->getGet('preset') === 'genesis']);
+    }
+
+    public function postImportJson()
+    {
+        $db = db_connect();
+        $transaction = false;
+        try {
+            $data = \App\Libraries\TimelineImport::parse((string) $this->request->getPost('json'));
+            $gameId = (int) $this->request->getPost('game_id');
+            $game = $gameId ? $this->getOwnedGame($gameId) : null;
+            if ($gameId && !$game) {
+                return $this->json(['success' => false, 'message' => 'Игра не найдена.'], 404);
+            }
+            if ($this->request->getPost('preview') === '1') {
+                if ($gameId && $this->request->getPost('order_mode') === 'after') {
+                    $last = $db->query('SELECT COALESCE(CEIL(MAX(sort_order)), 0) AS last FROM cards WHERE game_template_id = ?', [$gameId])->getRowArray();
+                    $data['cards'] = \App\Libraries\TimelineImport::appendAfter($data['cards'], (int) $last['last']);
+                }
+                return $this->json(['success' => true, 'title' => $data['title'], 'description' => $data['description'], 'cards' => $data['cards']]);
+            }
+            $db->transBegin();
+            $transaction = true;
+            if (!$gameId) {
+                $gameId = (new GameTemplate())->insert(['user_id' => (int) session()->get('user_id'),
+                    'title' => $data['title'], 'description' => $data['description'], 'status' => 'DRAFT', 'language' => 'ru']);
+                if (!$gameId) {
+                    throw new \RuntimeException('Не удалось создать игру.');
+                }
+            }
+            // Serialize append operations, so imports cannot interleave positions.
+            $db->query('SELECT id FROM game_templates WHERE id = ? FOR UPDATE', [$gameId]);
+            if ($game && $this->request->getPost('order_mode') === 'after') {
+                $last = $db->query('SELECT COALESCE(CEIL(MAX(sort_order)), 0) AS last FROM cards WHERE game_template_id = ?', [$gameId])->getRowArray();
+                $data['cards'] = \App\Libraries\TimelineImport::appendAfter($data['cards'], (int) $last['last']);
+            }
+            $max = $db->table('cards')->selectMax('editor_position', 'position')->where('game_template_id', $gameId)->get()->getRowArray();
+            $position = $max['position'] === null ? 0 : (int) $max['position'] + 1;
+            foreach ($data['cards'] as $card) {
+                if (!(new Card())->insert($card + ['game_template_id' => $gameId, 'editor_position' => $position++])) {
+                    throw new \RuntimeException('Не удалось сохранить карточку.');
+                }
+            }
+            if (!$db->transStatus()) {
+                throw new \RuntimeException('Импорт не завершён.');
+            }
+            $db->transCommit();
+            $transaction = false;
+            return $this->json(['success' => true, 'message' => 'Добавлено карточек: ' . count($data['cards']),
+                'editor_url' => '/creator/edit/' . (int) $gameId]);
+        } catch (\InvalidArgumentException $e) {
+            if ($transaction) $db->transRollback();
+            return $this->json(['success' => false, 'message' => $e->getMessage()], 422);
+        } catch (\Throwable $e) {
+            if ($transaction) $db->transRollback();
+            log_message('error', 'Timeline import failed: {message}', ['message' => $e->getMessage()]);
+            return $this->json(['success' => false, 'message' => 'Не удалось импортировать. Изменения отменены.'], 500);
+        }
+    }
+
+    public function postSelectCards()
+    {
+        $gameId = (int) $this->request->getPost('game_id');
+        if (!$this->getOwnedGame($gameId)) {
+            return $this->json(['success' => false, 'message' => 'Игра не найдена.'], 404);
+        }
+        $ids = json_decode((string) $this->request->getPost('ids'), true);
+        $enabled = $this->request->getPost('enabled');
+        if (!is_array($ids) || !array_is_list($ids) || !$ids || count($ids) > 1000
+            || count(array_filter($ids, static fn($id) => is_int($id) && $id > 0)) !== count($ids)
+            || !in_array($enabled, ['0', '1'], true)) {
+            return $this->json(['success' => false, 'message' => 'Неверный список карточек.'], 422);
+        }
+        $db = db_connect();
+        $count = $db->table('cards')->where('game_template_id', $gameId)->whereIn('id', array_unique($ids))->countAllResults();
+        if ($count !== count(array_unique($ids))) {
+            return $this->json(['success' => false, 'message' => 'В списке есть карточки другой игры.'], 403);
+        }
+        if (!$db->table('cards')->where('game_template_id', $gameId)->whereIn('id', $ids)->update(['is_enabled' => $enabled === '1'])) {
+            return $this->json(['success' => false, 'message' => 'Не удалось сохранить состав.'], 500);
+        }
+        return $this->json(['success' => true]);
+    }
+
+    public function getExportJson(int $gameId)
+    {
+        $game = $this->getOwnedGame($gameId);
+        if (!$game) {
+            throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound();
+        }
+        $cards = (new Card())->select('title, short_description, sort_order, revealed_value, category, difficulty, is_enabled')
+            ->where('game_template_id', $gameId)->orderBy('editor_position', 'ASC')->orderBy('id', 'ASC')->findAll();
+        foreach ($cards as &$card) {
+            $card['is_enabled'] = in_array($card['is_enabled'], [true, 1, '1', 't'], true);
+            foreach (['short_description', 'revealed_value', 'category'] as $key) {
+                $card[$key] = $card[$key] ?? '';
+            }
+        }
+        unset($card);
+        return $this->response->setHeader('Content-Disposition', 'attachment; filename="chrono-game-' . $gameId . '.json"')
+            ->setJSON(['title' => $game['title'], 'description' => $game['description'] ?? '', 'cards' => $cards]);
+    }
+
     /*
      * GET больше ничего не создаёт.
      * Это важно: безопасные GET-запросы не должны менять БД.

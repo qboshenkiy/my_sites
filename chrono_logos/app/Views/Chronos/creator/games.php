@@ -26,7 +26,8 @@
         value="<?= csrf_hash() ?>">
 
 
-    <div class="games-header">
+    <div class="timeline-actions" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px"><a class="create-game-btn" href="/creator/import-json">Импорт JSON</a><a class="create-game-btn" href="/creator/import-json?preset=genesis">Бытие: 50 глав</a></div>
+<div class="games-header">
 
         <div>
 

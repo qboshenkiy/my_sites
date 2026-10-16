@@ -151,6 +151,7 @@
     return input ? input.value : "";
   }
   function renderBoard() {
+    refreshSelection();
     board.innerHTML = "";
 
     const rows = [...cardsBody.querySelectorAll(".card-row")];
@@ -159,7 +160,11 @@
       const card = document.createElement("article");
 
       card.className = "board-card";
+      const included = row.querySelector('.card-included')?.checked !== false;
+      card.classList.toggle('card-excluded', !included);
+      card.appendChild(createElement('small', 'card-membership', included ? 'В игре' : 'Выключена'));
 
+      card.hidden = row.hidden;
       card.draggable = true;
 
       card.dataset.cardId = row.dataset.cardId;
@@ -836,6 +841,9 @@
         </td>
     `;
 
+    const included = document.createElement('td');
+    included.innerHTML = '<input type="checkbox" class="card-included" aria-label="Включить карточку в игру" checked>';
+    row.querySelector('.row-number').after(included);
     return row;
   }
 
@@ -1331,6 +1339,57 @@
     }
   });
 
+
+  function selectionRows() { return [...cardsBody.querySelectorAll('.card-row')]; }
+  function refreshSelection() {
+    const category = document.getElementById('card-category');
+    if (!category) return;
+    const selected = category.value;
+    const categories = [...new Set(selectionRows().map(row => getRowField(row, 'category')).filter(Boolean))].sort();
+    category.replaceChildren(new Option('Все разделы', ''), ...categories.map(value => new Option(value, value)));
+    category.value = categories.includes(selected) ? selected : '';
+    const query = document.getElementById('card-search').value.trim().toLocaleLowerCase();
+    const state = document.getElementById('card-state').value;
+    const rows = selectionRows();
+    rows.forEach(row => {
+      const included = row.querySelector('.card-included')?.checked !== false;
+      row.classList.toggle('card-excluded', !included);
+      row.hidden = (category.value && getRowField(row, 'category') !== category.value)
+        || (state === 'on' && !included) || (state === 'off' && included)
+        || ![getRowField(row,'title'),getRowField(row,'short_description'),getRowField(row,'category')].join(' ').toLocaleLowerCase().includes(query);
+    });
+    document.getElementById('selection-summary').textContent = `В игре: ${rows.filter(r => r.querySelector('.card-included')?.checked !== false).length} из ${rows.length} · показано: ${rows.filter(r => !r.hidden).length}`;
+  }
+  async function changeSelection(rows, enabled) {
+    if (!rows.length) return;
+    try {
+      await post('/creator/select-cards', {game_id:gameId, ids:JSON.stringify(rows.map(r => Number(r.dataset.cardId))), enabled:enabled?'1':'0'});
+      rows.forEach(row => row.querySelector('.card-included').checked = enabled);
+      markSaved();
+      return true;
+    } catch (error) { showAlert('danger', error.message); return false; }
+    finally { renderBoard(); }
+  }
+  cardsBody.addEventListener('change', async event => {
+    const checkbox = event.target.closest('.card-included');
+    if (!checkbox) return;
+    const enabled = checkbox.checked;
+    checkbox.disabled = true;
+    const saved = await changeSelection([checkbox.closest('.card-row')], enabled);
+    if (!saved) { checkbox.checked = !enabled; renderBoard(); }
+    checkbox.disabled = false;
+  });
+  for (const id of ['card-search','card-category','card-state']) document.getElementById(id).addEventListener('input', renderBoard);
+  for (const [id, enabled] of [['include-visible',true],['exclude-visible',false]]) {
+    document.getElementById(id).onclick = async event => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      await changeSelection(selectionRows().filter(row => !row.hidden), enabled);
+      button.disabled = false;
+    };
+  }
+  refreshSelection();
+  cardsBody.addEventListener('input', event => { if (event.target.closest('[data-field]')) renderBoard(); });
   restorePending();
 })();
 
@@ -1406,4 +1465,5 @@
   }
 
   update();
+
 })();

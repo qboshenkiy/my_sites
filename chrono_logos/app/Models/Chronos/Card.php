@@ -22,6 +22,7 @@ class Card extends Model
         'category',
         'difficulty',
         'editor_position',
+        'is_enabled',
     ];
 
     protected $useTimestamps = true;

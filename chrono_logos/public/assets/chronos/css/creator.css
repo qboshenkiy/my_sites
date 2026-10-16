@@ -6,6 +6,17 @@
     margin-bottom: 20px;
 }
 
+.timeline-actions,.creator-selection-toolbar {display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:18px 0}
+.creator-selection-toolbar {padding:16px;border:1px solid #43516c;border-radius:10px;background:#151c29}
+.creator-selection-toolbar small {width:100%;line-height:1.5}
+.creator-selection-toolbar input,.creator-selection-toolbar select,.creator-selection-toolbar button {padding:10px;border:1px solid #43516c;border-radius:8px;background:#101622;color:#eef2ff;font:inherit}
+.creator-selection-toolbar button {cursor:pointer}
+.creator-selection-toolbar button:disabled {opacity:.5}
+.card-included {width:22px;height:22px;cursor:pointer;accent-color:#c3a667}
+.card-excluded {opacity:.55}
+#creator-editor [hidden] {display:none!important}
+@media(max-width:600px){.creator-selection-toolbar>*{width:100%;box-sizing:border-box}}
+
 .creator-toolbar h2 {
     margin: 5px 0 0;
 }

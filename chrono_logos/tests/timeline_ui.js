@@ -1,0 +1,71 @@
+// Run against deploy_smoke.py's isolated site with TIMELINE_UI=1.
+const { chromium } = require('playwright');
+const assert = require('node:assert/strict');
+const path = require('node:path');
+const fs = require('node:fs');
+
+(async () => {
+  const browser = await chromium.launch({ headless:true });
+  try {
+    const page = await browser.newPage({viewport:{width:1440,height:1000}});
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    const base = process.env.TIMELINE_TEST_URL;
+    await page.goto(base + '/auth/login-page');
+    const login = await page.evaluate(async password => {
+      const form = new FormData(document.querySelector('form'));
+      form.set('login', 'reader_a'); form.set('password', password);
+      return (await fetch('/auth/login-page', {method:'POST',body:form,headers:{'X-Requested-With':'XMLHttpRequest'}})).json();
+    }, process.env.ADMIN_PASSWORD);
+    assert.ok(login.success);
+    await page.goto(base + '/creator/import-json?preset=genesis');
+    await page.waitForFunction(() => document.querySelector('#json-source').value.includes('Сотворение мира'));
+    await page.click('#check-json');
+    await page.waitForFunction(() => document.querySelectorAll('[data-import-index]').length === 50);
+    await page.click('#select-import-none');
+    for (let i=0;i<5;i++) await page.locator('[data-import-index]').nth(i).check();
+    assert.match(await page.textContent('#import-count'), /5 из 50/);
+    await page.click('#confirm-import');
+    await page.waitForURL(/\/creator\/edit\/\d+/);
+    await page.waitForFunction(() => document.querySelector('#selection-summary').textContent.includes('5 из 5'));
+    await page.locator('.card-included').first().uncheck();
+    await page.waitForFunction(() => document.querySelector('#selection-summary').textContent.includes('4 из 5'));
+    await page.selectOption('#card-state', 'off');
+    assert.equal(await page.locator('.card-row:visible').count(), 1);
+    await page.click('#include-visible');
+    await page.waitForFunction(() => document.querySelector('#selection-summary').textContent.includes('5 из 5'));
+    await page.selectOption('#card-state','all');
+    await page.fill('#card-search', 'Сотворение');
+    assert.equal(await page.locator('.card-row:visible').count(), 1);
+    await page.click('#exclude-visible');
+    await page.waitForFunction(() => document.querySelector('#selection-summary').textContent.includes('4 из 5'));
+    await page.fill('#card-search', '');
+    await page.click('[data-view="board"]');
+    assert.equal(await page.locator('.board-card:visible').count(), 5);
+    assert.equal(await page.locator('.board-card.card-excluded').count(), 1);
+    const game = page.url().split('/').pop();
+    const exported = await (await page.request.get(base + '/creator/export-json/' + game)).json();
+    assert.equal(exported.cards.length, 5);
+    assert.equal(exported.cards.filter(c => !c.is_enabled).length, 1);
+    const folder = path.join(__dirname,'../build'); fs.mkdirSync(folder,{recursive:true});
+    await page.screenshot({path:path.join(folder,'timeline-editor.png'),fullPage:true});
+    await page.goto(base + '/creator/import-json?game_id=' + game);
+    await page.fill('#json-source', JSON.stringify({title:'Исход',book:'Исход',cards:[{title:'Призвание Моисея',sort_order:1,reference:'Исход 3:1–12'}]}));
+    await page.click('#check-json');
+    await page.waitForFunction(() => document.querySelectorAll('[data-import-index]').length === 1);
+    assert.match(await page.textContent('#import-cards'), /порядок 6/);
+    await page.click('#confirm-import');
+    await page.waitForURL(/\/creator\/edit\/\d+/);
+    await page.waitForFunction(() => document.querySelector('#selection-summary').textContent.includes('5 из 6'));
+    const combined = await (await page.request.get(base + '/creator/export-json/' + game)).json();
+    assert.equal(combined.cards.at(-1).sort_order, '6.000000');
+    await page.selectOption('#card-category', 'Исход');
+    assert.equal(await page.locator('.board-card:visible').count(), 1);
+    await page.setViewportSize({width:390,height:844});
+    await page.goto(base + '/creator/import-json?preset=genesis');
+    await page.waitForFunction(() => document.querySelector('#json-source').value.includes('Сотворение мира'));
+    await page.screenshot({path:path.join(folder,'timeline-import-mobile.png'),fullPage:true});
+    assert.deepEqual(errors, []);
+    console.log('PASS: browser JSON preview/selection/confirmation, editor filters, bulk selection, board and export');
+  } finally { await browser.close(); }
+})().catch(error => { console.error(error); process.exitCode=1; });

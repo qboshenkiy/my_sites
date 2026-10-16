@@ -1,0 +1,463 @@
+{
+  "title": "Бытие: от сотворения мира до Иосифа",
+  "book": "Бытие",
+  "translation": "Синодальный перевод",
+  "description": "50 карточек по 50 главам Бытия. Расположите их в порядке повествования книги. Это порядок изложения, а не абсолютная датировка: родословия и параллельные рассказы могут охватывать более ранние события. Ссылки на главы и стихи открываются после ответа.",
+  "chronology_basis": "narrative_order",
+  "sources": [
+    "https://bible.by/syn/1/1/",
+    "https://bible.by/syn/1/50/"
+  ],
+  "cards": [
+    {
+      "title": "Сотворение мира",
+      "short_description": "Бог создаёт небо, землю, живые существа и человека.",
+      "sort_order": 1,
+      "revealed_value": "Бытие 1:1–31",
+      "category": "Бытие · Начало мира",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Создание жены для Адама",
+      "short_description": "Бог создаёт жену и приводит её к человеку.",
+      "sort_order": 2,
+      "revealed_value": "Бытие 2:18–25",
+      "category": "Бытие · Начало мира",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Изгнание из Едемского сада",
+      "short_description": "После нарушения заповеди Адам и Ева покидают сад.",
+      "sort_order": 3,
+      "revealed_value": "Бытие 3:1–24",
+      "category": "Бытие · Начало мира",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Каин убивает Авеля",
+      "short_description": "Братья приносят дары Богу, затем Каин нападает на Авеля.",
+      "sort_order": 4,
+      "revealed_value": "Бытие 4:1–16",
+      "category": "Бытие · Начало мира",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Бог берёт Еноха",
+      "short_description": "В родословии Адама особо отмечена жизнь Еноха с Богом.",
+      "sort_order": 5,
+      "revealed_value": "Бытие 5:21–24",
+      "category": "Бытие · Начало мира",
+      "difficulty": "HARD",
+      "is_enabled": true
+    },
+    {
+      "title": "Ной получает повеление построить ковчег",
+      "short_description": "Бог объявляет Ною о грядущем потопе и даёт указания о ковчеге.",
+      "sort_order": 6,
+      "revealed_value": "Бытие 6:13–22",
+      "category": "Бытие · Начало мира",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Начало потопа",
+      "short_description": "Ной, его семья и животные входят в ковчег; воды покрывают землю.",
+      "sort_order": 7,
+      "revealed_value": "Бытие 7:1–24",
+      "category": "Бытие · Начало мира",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Ной выходит из ковчега",
+      "short_description": "После убывания вод Бог повелевает Ною выйти; Ной приносит жертву.",
+      "sort_order": 8,
+      "revealed_value": "Бытие 8:15–22",
+      "category": "Бытие · Начало мира",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Радуга как знамение завета",
+      "short_description": "Бог устанавливает завет с Ноем и живыми существами.",
+      "sort_order": 9,
+      "revealed_value": "Бытие 9:8–17",
+      "category": "Бытие · Начало мира",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Потомки сыновей Ноя расселяются по землям",
+      "short_description": "Повествование перечисляет народы, происходящие от Сима, Хама и Иафета.",
+      "sort_order": 10,
+      "revealed_value": "Бытие 10:1–32",
+      "category": "Бытие · Начало мира",
+      "difficulty": "HARD",
+      "is_enabled": true
+    },
+    {
+      "title": "Смешение языков у Вавилонской башни",
+      "short_description": "Строители перестают понимать друг друга и рассеиваются по земле.",
+      "sort_order": 11,
+      "revealed_value": "Бытие 11:1–9",
+      "category": "Бытие · Начало мира",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Призвание Аврама",
+      "short_description": "Аврам оставляет родную землю и отправляется в Ханаан.",
+      "sort_order": 12,
+      "revealed_value": "Бытие 12:1–9",
+      "category": "Бытие · Авраам",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Аврам и Лот разделяются",
+      "short_description": "Лот выбирает окрестность Иордана; Аврам остаётся в земле Ханаанской.",
+      "sort_order": 13,
+      "revealed_value": "Бытие 13:5–18",
+      "category": "Бытие · Авраам",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Встреча Аврама с Мелхиседеком",
+      "short_description": "После освобождения Лота Аврам встречает царя Салима.",
+      "sort_order": 14,
+      "revealed_value": "Бытие 14:14–20",
+      "category": "Бытие · Авраам",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Завет Бога с Аврамом",
+      "short_description": "Бог обещает Авраму потомство и землю.",
+      "sort_order": 15,
+      "revealed_value": "Бытие 15:1–21",
+      "category": "Бытие · Авраам",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Рождение Измаила",
+      "short_description": "Агарь рождает Авраму сына, которого называют Измаилом.",
+      "sort_order": 16,
+      "revealed_value": "Бытие 16:1–16",
+      "category": "Бытие · Авраам",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Аврам получает имя Авраам",
+      "short_description": "Бог подтверждает завет и устанавливает обрезание как его знамение.",
+      "sort_order": 17,
+      "revealed_value": "Бытие 17:1–14",
+      "category": "Бытие · Авраам",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Обещание рождения сына Сарре",
+      "short_description": "Гости возвещают Аврааму о будущем рождении сына у Сарры.",
+      "sort_order": 18,
+      "revealed_value": "Бытие 18:1–15",
+      "category": "Бытие · Авраам",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Лот выходит из Содома",
+      "short_description": "Посланники выводят Лота и его семью перед гибелью городов.",
+      "sort_order": 19,
+      "revealed_value": "Бытие 19:15–29",
+      "category": "Бытие · Авраам",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Авимелех возвращает Сарру Аврааму",
+      "short_description": "Бог предупреждает царя во сне; Сарра возвращается к мужу.",
+      "sort_order": 20,
+      "revealed_value": "Бытие 20:1–18",
+      "category": "Бытие · Авраам",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Рождение Исаака",
+      "short_description": "Сарра рождает Аврааму обещанного сына.",
+      "sort_order": 21,
+      "revealed_value": "Бытие 21:1–8",
+      "category": "Бытие · Авраам",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Испытание Авраама на горе",
+      "short_description": "Авраам готов принести Исаака, но ангел останавливает его.",
+      "sort_order": 22,
+      "revealed_value": "Бытие 22:1–19",
+      "category": "Бытие · Авраам",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Погребение Сарры в пещере Махпела",
+      "short_description": "Авраам приобретает поле с пещерой для погребения Сарры.",
+      "sort_order": 23,
+      "revealed_value": "Бытие 23:1–20",
+      "category": "Бытие · Авраам",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Ревекка становится женой Исаака",
+      "short_description": "Слуга Авраама находит невесту для Исаака и приводит её в Ханаан.",
+      "sort_order": 24,
+      "revealed_value": "Бытие 24:1–67",
+      "category": "Бытие · Исаак и Иаков",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Исав продаёт первородство",
+      "short_description": "Исав отдаёт Иакову первородство за пищу.",
+      "sort_order": 25,
+      "revealed_value": "Бытие 25:29–34",
+      "category": "Бытие · Исаак и Иаков",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Завет Исаака с Авимелехом",
+      "short_description": "Царь и его спутники приходят к Исааку заключить мир.",
+      "sort_order": 26,
+      "revealed_value": "Бытие 26:26–33",
+      "category": "Бытие · Исаак и Иаков",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Иаков получает благословение Исаака",
+      "short_description": "Иаков выдаёт себя за Исава перед престарелым отцом.",
+      "sort_order": 27,
+      "revealed_value": "Бытие 27:1–40",
+      "category": "Бытие · Исаак и Иаков",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Сон Иакова в Вефиле",
+      "short_description": "В пути Иаков видит лестницу и слышит обещание Бога.",
+      "sort_order": 28,
+      "revealed_value": "Бытие 28:10–22",
+      "category": "Бытие · Исаак и Иаков",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Иаков женится на Лии и Рахили",
+      "short_description": "После службы Лавану Иаков получает в жёны сначала Лию, затем Рахиль.",
+      "sort_order": 29,
+      "revealed_value": "Бытие 29:15–30",
+      "category": "Бытие · Исаак и Иаков",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Рождение Иосифа у Рахили",
+      "short_description": "Бог отвечает Рахили, и она рождает Иакову сына.",
+      "sort_order": 30,
+      "revealed_value": "Бытие 30:22–24",
+      "category": "Бытие · Исаак и Иаков",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Иаков покидает дом Лавана",
+      "short_description": "Иаков отправляется с семьёй и имуществом в землю отцов.",
+      "sort_order": 31,
+      "revealed_value": "Бытие 31:1–55",
+      "category": "Бытие · Исаак и Иаков",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Иаков получает имя Израиль",
+      "short_description": "Во время ночной борьбы Иаков получает новое имя.",
+      "sort_order": 32,
+      "revealed_value": "Бытие 32:24–32",
+      "category": "Бытие · Исаак и Иаков",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Примирение Иакова с Исавом",
+      "short_description": "Братья встречаются, обнимаются и беседуют.",
+      "sort_order": 33,
+      "revealed_value": "Бытие 33:1–17",
+      "category": "Бытие · Исаак и Иаков",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Симеон и Левий нападают на Сихем",
+      "short_description": "После случившегося с Диной братья мстят жителям города.",
+      "sort_order": 34,
+      "revealed_value": "Бытие 34:1–31",
+      "category": "Бытие · Исаак и Иаков",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Иаков возвращается в Вефиль",
+      "short_description": "Семья оставляет чужих богов, и Иаков воздвигает жертвенник.",
+      "sort_order": 35,
+      "revealed_value": "Бытие 35:1–15",
+      "category": "Бытие · Исаак и Иаков",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Исав поселяется на горе Сеир",
+      "short_description": "Раздел о потомках Исава рассказывает о его переселении.",
+      "sort_order": 36,
+      "revealed_value": "Бытие 36:6–9",
+      "category": "Бытие · Исаак и Иаков",
+      "difficulty": "HARD",
+      "is_enabled": true
+    },
+    {
+      "title": "Иосиф продан в Египет",
+      "short_description": "Братья продают Иосифа; купцы увозят его в Египет.",
+      "sort_order": 37,
+      "revealed_value": "Бытие 37:12–36",
+      "category": "Бытие · Иосиф",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Иуда признаёт свою неправоту перед Фамарью",
+      "short_description": "Узнав оставленные им вещи, Иуда признаёт правоту Фамари.",
+      "sort_order": 38,
+      "revealed_value": "Бытие 38:1–30",
+      "category": "Бытие · Иосиф",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Иосиф оказывается в темнице",
+      "short_description": "После ложного обвинения в доме Потифара Иосиф заключён под стражу.",
+      "sort_order": 39,
+      "revealed_value": "Бытие 39:1–23",
+      "category": "Бытие · Иосиф",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Иосиф истолковывает сны узников",
+      "short_description": "Виночерпий и хлебодар рассказывают Иосифу свои сны.",
+      "sort_order": 40,
+      "revealed_value": "Бытие 40:1–23",
+      "category": "Бытие · Иосиф",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Иосиф поставлен над землёй Египетской",
+      "short_description": "После истолкования снов фараон поручает Иосифу управление.",
+      "sort_order": 41,
+      "revealed_value": "Бытие 41:1–57",
+      "category": "Бытие · Иосиф",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Первая поездка братьев Иосифа за хлебом",
+      "short_description": "Сыновья Иакова приходят в Египет и не узнают Иосифа.",
+      "sort_order": 42,
+      "revealed_value": "Бытие 42:1–38",
+      "category": "Бытие · Иосиф",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Вениамин приходит в Египет",
+      "short_description": "Братья возвращаются к Иосифу, взяв младшего брата.",
+      "sort_order": 43,
+      "revealed_value": "Бытие 43:1–34",
+      "category": "Бытие · Иосиф",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Чаша найдена у Вениамина",
+      "short_description": "После обнаружения чаши Иуда просит оставить его вместо брата.",
+      "sort_order": 44,
+      "revealed_value": "Бытие 44:1–34",
+      "category": "Бытие · Иосиф",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Иосиф открывается братьям",
+      "short_description": "Иосиф называет себя и приглашает отца переселиться в Египет.",
+      "sort_order": 45,
+      "revealed_value": "Бытие 45:1–28",
+      "category": "Бытие · Иосиф",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Иаков приходит в Египет",
+      "short_description": "Иаков переселяется со своей семьёй и встречается с Иосифом.",
+      "sort_order": 46,
+      "revealed_value": "Бытие 46:1–34",
+      "category": "Бытие · Иосиф",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Семья Иакова поселяется в земле Гесем",
+      "short_description": "Фараон разрешает братьям Иосифа жить в лучшей части земли.",
+      "sort_order": 47,
+      "revealed_value": "Бытие 47:1–12",
+      "category": "Бытие · Иосиф",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Иаков благословляет Ефрема и Манассию",
+      "short_description": "Иаков возлагает руки на сыновей Иосифа, поставив младшего впереди старшего.",
+      "sort_order": 48,
+      "revealed_value": "Бытие 48:1–22",
+      "category": "Бытие · Иосиф",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Иаков благословляет своих сыновей",
+      "short_description": "Перед смертью Иаков произносит слова о будущем своих сыновей.",
+      "sort_order": 49,
+      "revealed_value": "Бытие 49:1–33",
+      "category": "Бытие · Иосиф",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    },
+    {
+      "title": "Смерть Иосифа в Египте",
+      "short_description": "Иосиф напоминает об обещанной земле и велит вынести оттуда его кости.",
+      "sort_order": 50,
+      "revealed_value": "Бытие 50:22–26",
+      "category": "Бытие · Иосиф",
+      "difficulty": "NORMAL",
+      "is_enabled": true
+    }
+  ]
+}

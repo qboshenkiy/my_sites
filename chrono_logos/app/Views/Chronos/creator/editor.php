@@ -89,6 +89,19 @@
 
     </div>
 
+    <div class="timeline-actions">
+        <a class="creator-add-btn" href="/creator/import-json?game_id=<?= (int) $game['id'] ?>">Добавить из JSON / другой книги</a>
+        <a class="creator-add-btn" href="/creator/export-json/<?= (int) $game['id'] ?>">Скачать JSON</a>
+    </div>
+    <div class="creator-selection-toolbar">
+        <input id="card-search" type="search" placeholder="Поиск: книга или событие" aria-label="Поиск по книге, событию или описанию">
+        <select id="card-category" aria-label="Раздел"><option value="">Все разделы</option></select>
+        <select id="card-state" aria-label="Состав игры"><option value="all">Все карточки</option><option value="on">Включённые</option><option value="off">Выключенные</option></select>
+        <button type="button" id="include-visible">Включить показанные</button>
+        <button type="button" id="exclude-visible">Выключить показанные</button>
+        <strong id="selection-summary" aria-live="polite"></strong>
+        <small>Выключенные карточки остаются в редакторе, но не попадают в новые партии. Уже начатые партии сохраняют свой состав. Разделы задаются полем «Категория».</small>
+    </div>
     <div class="creator-view-toolbar">
 
         <div class="creator-view-switch">
@@ -168,7 +181,7 @@
 
                     <tr>
                         <th></th>
-                        <th>#</th>
+                        <th>#</th><th>В игре</th>
                         <th>Название</th>
                         <th>Описание</th>
                         <th>Изображение</th>
@@ -215,7 +228,7 @@
 
                             <td class="row-number">
                                 <?= $index + 1 ?>
-                            </td>
+                            </td><td><input type="checkbox" class="card-included" aria-label="Включить карточку в игру" <?= in_array($card['is_enabled'] ?? true, [true, 1, '1', 't'], true) ? 'checked' : '' ?>></td>
 
 
                             <td>

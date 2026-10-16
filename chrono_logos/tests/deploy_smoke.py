@@ -104,6 +104,12 @@ with tempfile.TemporaryDirectory(prefix='chrono-deploy-test-') as tmp:
             assert data.get('success'), data
             assert client.open(base + '/admin/users').status == 200
             print('PASS: catalogue, CSRF-protected login and administrator page')
+            from timeline_http import run_timeline_checks
+            run_timeline_checks(base, client, data, env,
+                                lambda statement: run([PG / 'psql', '-d', 'chrono_test', '-Atc', statement], env=env))
+            if os.environ.get('TIMELINE_UI') == '1':
+                ui_env = dict(env, TIMELINE_TEST_URL=base)
+                print(run(['node', ROOT / 'tests/timeline_ui.js'], env=ui_env), end='')
     finally:
         if server:
             server.terminate()

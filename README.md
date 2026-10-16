@@ -4,6 +4,9 @@
 Пульс в корне, марафон чтения в `marathon/`, панель обновлений в `deploy-panel/`
 и Chrono Logos в `chrono_logos/`. Они запускаются отдельно и сохраняют собственные данные.
 Для Chrono Logos в GitDeck укажите этот репозиторий, ветку `main` и папку `chrono_logos`.
+В Chrono Logos доступны импорт/экспорт JSON, готовый набор Бытия по 50 главам и выбор
+состава игры без удаления карточек. Формат и работа с несколькими книгами описаны в
+[chrono_logos/TIMELINE_JSON.md](chrono_logos/TIMELINE_JSON.md).
 
 Проект для Laragon и Linux-сервера: PHP 8.1+ и SQLite (`pdo_sqlite`, `mbstring`). Composer, Node.js и MySQL не нужны.
 

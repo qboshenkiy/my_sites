@@ -15,7 +15,7 @@ class Admin extends BaseController
 
         $builder = db_connect()->table('game_templates g')
             ->select('g.*, u.username AS owner_username')
-            ->select('(SELECT COUNT(*) FROM cards c WHERE c.game_template_id = g.id) AS cards_count', false)
+            ->select('(SELECT COUNT(*) FROM cards c WHERE c.game_template_id = g.id AND c.is_enabled = TRUE) AS cards_count', false)
             ->join('users u', 'u.id = g.user_id');
 
         if ($q !== '') {
@@ -58,6 +58,7 @@ class Admin extends BaseController
             $cards = db_connect()->table('cards')
                 ->select('id, title, sort_order')
                 ->where('game_template_id', $gameId)
+                ->where('is_enabled', true)
                 ->get()
                 ->getResultArray();
 

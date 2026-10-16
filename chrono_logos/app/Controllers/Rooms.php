@@ -1704,6 +1704,7 @@ class Rooms extends BaseController
                     'game_template_id',
                     (int) $room['game_template_id']
                 )
+                ->where('is_enabled', true)
                 ->get()
                 ->getResultArray();
 

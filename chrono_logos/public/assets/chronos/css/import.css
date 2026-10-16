@@ -1,0 +1,13 @@
+#timeline-import {max-width:1000px;margin:auto;line-height:1.6}
+#timeline-import textarea {width:100%;box-sizing:border-box;min-height:240px;background:#101622;color:#eef2ff;border:1px solid #43516c;border-radius:10px;padding:16px;font-family:monospace;font-size:14px}
+#timeline-import button,.timeline-button {background:#c3a667;color:#141221;border:0;border-radius:8px;padding:12px 16px;cursor:pointer;font:inherit;display:inline-block}
+#timeline-import a {color:#e0c58d;text-underline-offset:3px}
+#timeline-import button:disabled {opacity:.5;cursor:wait}
+#timeline-import fieldset {display:grid;gap:10px;border:1px solid #43516c;border-radius:10px;padding:16px;margin:20px 0}
+.timeline-actions {display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:18px 0}
+.timeline-button input {display:block;max-width:230px;margin-top:8px}
+.timeline-preview-card {display:flex;gap:12px;padding:12px;border-bottom:1px solid #43516c}
+.timeline-preview-card input {flex-shrink:0;width:20px;height:20px}
+#import-cards {max-height:440px;overflow:auto;border:1px solid #43516c;border-radius:8px;margin:16px 0}
+.timeline-error {color:#ffacac}
+@media(max-width:600px){.timeline-actions>*{width:100%;box-sizing:border-box}#timeline-import textarea{font-size:16px}}
