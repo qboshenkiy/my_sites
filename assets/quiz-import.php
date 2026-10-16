@@ -18,8 +18,8 @@ function normalizeQuizImport(string $json,array $settings=[]): array {
     $hasCategories=array_key_exists('categories',$source);
     if($hasCategories&&array_key_exists('questions',$source))throw new DomainException('Укажите либо categories, либо questions, чтобы не потерять часть вопросов.');
     $mode=$settings['mode']??($source['mode']??($hasCategories?'board':'classic'));if($mode==='auto')$mode=$source['mode']??($hasCategories?'board':'classic');
-    $scoring=$mode==='board'?'fixed':($source['scoring']??'speed');
-    if(!in_array($mode,['board','classic'],true)||!in_array($scoring,['speed','fixed'],true))throw new DomainException('Неизвестный режим или способ начисления баллов.');
+    $scoring=in_array($mode,['board','bluff'],true)?'fixed':($source['scoring']??'speed');
+    if(!in_array($mode,['board','classic','bluff'],true)||!in_array($scoring,['speed','fixed'],true))throw new DomainException('Неизвестный режим или способ начисления баллов.');
     $seconds=importQuizNumber($settings['seconds']??($source['seconds']??20),5,120,'Время по умолчанию');
     $step=importQuizNumber($settings['pointStep']??10,1,10000,'Шаг баллов');
     $metadata=[];foreach(['translation','testament','book'] as $key)if(isset($source[$key]))$metadata[]=importQuizText($source[$key],100,'Поле '.$key);
@@ -34,6 +34,14 @@ function normalizeQuizImport(string $json,array $settings=[]): array {
         $summary[]=['title'=>$category,'count'=>count($questions),'points'=>[]];
         foreach($questions as $qi=>$q){$where=$category.', вопрос '.($qi+1);if(!is_array($q))throw new DomainException($where.': нужен объект.');if(count($valid)>=50)throw new DomainException('Максимум 50 вопросов в одной викторине.');
             $text=importQuizText($q['question']??$q['text']??'',250,$where);
+            if($mode==='bluff'&&array_key_exists('truth',$q)){
+                $truth=importQuizText($q['truth'],120,$where.', правильный ответ');$aliases=$q['aliases']??[];
+                if(!is_array($aliases)||!array_is_list($aliases)||count($aliases)>10)throw new DomainException($where.': aliases — массив до 10 написаний.');
+                $aliases=array_map(fn($v)=>importQuizText($v,120,$where.', написание ответа'),$aliases);
+                $cat=$hasCategories?$category:importQuizText($q['category']??'Вопросы',60,$where.', категория');
+                $valid[]=['text'=>$text,'type'=>'quiz','seconds'=>importQuizNumber($q['seconds']??$seconds,5,120,$where.', время'),'options'=>[],'correct'=>null,'category'=>$cat,'points'=>1000,'truth'=>$truth,'aliases'=>$aliases,'image'=>null,'reference'=>importQuizText($q['reference']??'',200,$where.', reference',false)];
+                $summary[$gi]['points'][]=1000;if(!empty($q['image']))$hasImages=true;continue;
+            }
             $type=$q['type']??'quiz';if(!in_array($type,['quiz','poll'],true))throw new DomainException($where.': тип quiz или poll.');
             $options=$q['options']??null;if(!is_array($options)||!array_is_list($options)||count($options)<2||count($options)>4)throw new DomainException($where.': нужно 2–4 варианта ответа.');
             $texts=[];$ids=[];$marked=[];$hasFlags=false;
@@ -56,7 +64,7 @@ function normalizeQuizImport(string $json,array $settings=[]): array {
                 if($hasFlags){if(count($marked)!==1)throw new DomainException($where.': нужен ровно один isCorrect: true.');if($correct!==null&&$correct!==$marked[0])throw new DomainException($where.': correctAnswer и isCorrect противоречат друг другу.');$correct=$marked[0];}
                 if($correct===null)throw new DomainException($where.': укажите correctAnswer или isCorrect: true.');
             }
-            $cat=$hasCategories?$category:importQuizText($q['category']??($mode==='board'?'Вопросы':''),60,$where.', категория',$mode==='board');
+            $cat=$hasCategories?$category:importQuizText($q['category']??(in_array($mode,['board','bluff'],true)?'Вопросы':''),60,$where.', категория',in_array($mode,['board','bluff'],true));
             $points=isset($q['points'])?importQuizNumber($q['points'],1,10000,$where.', баллы'):($mode==='board'?($qi+1)*$step:1000);
             if(!isset($q['points'])&&$mode==='board')$generatedPoints=true;
             if($points>10000)throw new DomainException($where.': автоматические баллы превышают 10000, уменьшите шаг.');
@@ -65,9 +73,11 @@ function normalizeQuizImport(string $json,array $settings=[]): array {
             $time=importQuizNumber($q['seconds']??$seconds,5,120,$where.', время');
             if(!empty($q['image']))$hasImages=true;
             $valid[]=['text'=>$text,'type'=>$type,'seconds'=>$time,'options'=>$texts,'correct'=>$correct,'category'=>$cat,'points'=>$points,'image'=>null,'reference'=>$reference];
-            $summary[$gi]['points'][]=$points;
+            if($mode==='bluff'){if($type!=='quiz')throw new DomainException($where.': Бредовухе нужен правильный ответ, тип poll не подходит.');$last=count($valid)-1;$valid[$last]['truth']=$texts[$correct];$valid[$last]['aliases']=[];$valid[$last]['options']=[];$valid[$last]['correct']=null;$valid[$last]['points']=1000;}
+            $summary[$gi]['points'][]=$mode==='bluff'?1000:$points;
         }
     }
+    if($mode==='bluff')$warnings[]='Бредовуха: игроки придумывают варианты сами. За правду — 1000, за обман — 500 баллов за голос. Категорию выбирают по очереди.';
     if(!$hasCategories){$byCategory=[];foreach($valid as $q){$cat=$q['category']?:'Вопросы';if(!isset($byCategory[$cat]))$byCategory[$cat]=['title'=>$cat,'count'=>0,'points'=>[]];$byCategory[$cat]['count']++;$byCategory[$cat]['points'][]=$q['points'];}$summary=array_values($byCategory);}
     if(isset($source['totalQuestions'])&&(string)$source['totalQuestions']!==(string)count($valid))$warnings[]='В totalQuestions указано '.(is_scalar($source['totalQuestions'])?(string)$source['totalQuestions']:'неверное значение').', в JSON найдено '.count($valid).' вопросов. Будут импортированы все найденные вопросы.';
     if($generatedPoints)$warnings[]='Для вопросов без points баллы назначены автоматически: '.$step.', '.($step*2).' и далее внутри каждой категории.';

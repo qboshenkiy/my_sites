@@ -36,7 +36,7 @@ try {
         if ((int)($_SERVER['CONTENT_LENGTH']??0)>(($action==='import_preview')?20000000:3000000)) fail('Слишком большой запрос.',413);
         $input=json_decode(file_get_contents('php://input'),true);
         if (!is_array($input)) fail('Некорректный запрос.');
-        if (!in_array($action,['join','answer'],true) && !hash_equals($csrf,$_SERVER['HTTP_X_CSRF_TOKEN']??'')) fail('Обновите страницу и повторите.',403);
+        if (!in_array($action,['join','answer','bluff_select','bluff_lie','bluff_vote'],true) && !hash_equals($csrf,$_SERVER['HTTP_X_CSRF_TOKEN']??'')) fail('Обновите страницу и повторите.',403);
     } elseif (!in_array($action,['bootstrap','quizzes','state','image'],true)) fail('Требуется POST.',405);
     if ($action==='image') {
         $img=query('SELECT * FROM images WHERE id=?',[$_GET['id']??''])->fetch(); if(!$img)fail('Изображение не найдено.',404);
@@ -90,9 +90,19 @@ try {
         if (!is_array($questions) || count($questions)<1 || count($questions)>50) fail('Добавьте от 1 до 50 вопросов.');
         $valid=[];
         $mode=$input['mode']??'classic';$scoring=$input['scoring']??'speed';
-        if(!in_array($mode,['classic','board'],true)||!in_array($scoring,['speed','fixed'],true))fail('Некорректный режим игры.');
+        if(!in_array($mode,['classic','board','bluff'],true)||!in_array($scoring,['speed','fixed'],true))fail('Некорректный режим игры.');
         $cells=[];
         foreach ($questions as $q) {
+            if($mode==='bluff'){
+                $truth=cleanText($q['truth']??'',120);$aliases=$q['aliases']??[];
+                if(!is_array($aliases)||count($aliases)>10)fail('Добавьте не больше 10 допустимых написаний ответа.');
+                $aliases=array_map(fn($v)=>cleanText($v,120),array_values($aliases));
+                $seconds=filter_var($q['seconds']??60,FILTER_VALIDATE_INT);if($seconds===false||$seconds<5||$seconds>120)fail('Время ввода: 5–120 секунд.');
+                $reference=$q['reference']??'';if(!is_string($reference)||mb_strlen($reference)>200)fail('Источник: до 200 символов.');
+                $image=$q['image']??null;if($image&&!query('SELECT id FROM images WHERE id=?',[$image])->fetchColumn())fail('Изображение не найдено.');
+                $valid[]=['text'=>cleanText($q['text']??'',250),'category'=>cleanText($q['category']??'',60),'truth'=>$truth,'aliases'=>$aliases,'seconds'=>$seconds,'type'=>'quiz','points'=>1000,'options'=>[],'correct'=>null,'image'=>$image,'reference'=>trim($reference)];continue;
+            }
+
             $type=$q['type']??'quiz'; if (!in_array($type,['quiz','poll'],true)) fail('Неизвестный тип вопроса.');
             $options=$q['options']??[]; if (!is_array($options) || count($options)<2 || count($options)>4) fail('Нужно 2–4 варианта ответа.');
             $options=array_map(fn($o)=>cleanText($o,120),array_values($options));
@@ -108,7 +118,7 @@ try {
         }
         $id=$input['id']??bin2hex(random_bytes(8));
         if (!is_string($id) || !preg_match('/^[a-f0-9]{16}$/',$id)) fail('Некорректный идентификатор.');
-        query('INSERT INTO quizzes VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,description=excluded.description,questions=excluded.questions',[$id,$title,$description,json_encode(['mode'=>$mode,'scoring'=>$mode==='board'?'fixed':$scoring,'questions'=>$valid],JSON_UNESCAPED_UNICODE),time()]); out(['id'=>$id]);
+        query('INSERT INTO quizzes VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,description=excluded.description,questions=excluded.questions',[$id,$title,$description,json_encode(['mode'=>$mode,'scoring'=>in_array($mode,['board','bluff'],true)?'fixed':$scoring,'questions'=>$valid],JSON_UNESCAPED_UNICODE),time()]); out(['id'=>$id]);
     }
     if ($action==='delete') { hostOnly(); query('DELETE FROM quizzes WHERE id=?',[$input['id']??'']); out(['ok'=>true]); }
     if ($action==='create_room') {
@@ -127,12 +137,12 @@ try {
         $id=bin2hex(random_bytes(8)); $token=bin2hex(random_bytes(32));
         query('INSERT INTO players(id,room_id,name,token) VALUES (?,?,?,?)',[$id,$room['id'],$name,$token]); $db->exec('COMMIT'); out(['token'=>$token,'room'=>$room['id'],'name'=>$name]);
     }
-    if (in_array($action,['state','control','answer'],true)) {
+    if (in_array($action,['state','control','answer','bluff_select','bluff_lie','bluff_vote'],true)) {
         $db->exec('BEGIN IMMEDIATE');
         $player=null;
         $projector=false;
         if($action==='state'&&!empty($_GET['projector'])) { $meta=query('SELECT * FROM room_meta WHERE projector_token=?',[$_GET['projector']])->fetch();if(!$meta)fail('Экран недоступен.',403);$roomId=$meta['room_id'];$projector=true; }
-        elseif ($action==='answer' || (!$admin && $action==='state') || !empty($_SERVER['HTTP_X_PLAYER_TOKEN'])) {
+        elseif (in_array($action,['answer','bluff_select','bluff_lie','bluff_vote'],true) || (!$admin && $action==='state') || !empty($_SERVER['HTTP_X_PLAYER_TOKEN'])) {
             $player=query('SELECT * FROM players WHERE token=?',[$_SERVER['HTTP_X_PLAYER_TOKEN']??''])->fetch(); if (!$player) fail('Подключитесь к игре заново.',401);
             $roomId=$player['room_id'];
         } else { hostOnly(); $roomId=$input['room']??$_GET['room']??''; }
@@ -140,6 +150,8 @@ try {
         $quiz=json_decode($room['quiz'],true); $index=(int)$room['current_index']; $question=$quiz['questions'][$index]??null;
         $meta=query('SELECT * FROM room_meta WHERE room_id=?',[$roomId])->fetch();
         if(!$meta){query('INSERT INTO room_meta(room_id,projector_token) VALUES (?,?)',[$roomId,bin2hex(random_bytes(24))]);$meta=query('SELECT * FROM room_meta WHERE room_id=?',[$roomId])->fetch();}
+        if(($quiz['mode']??'classic')==='bluff'){require __DIR__.'/assets/bluff.php';$result=bluffHandle($action,$input,$room,$quiz,$meta,$player,$projector);$db->exec('COMMIT');out($result);}
+        if(str_starts_with($action,'bluff_'))fail('Это действие доступно только в Бредовухе.');
         $played=json_decode($meta['played'],true);$boardMode=($quiz['mode']??'classic')==='board';
         if ($room['status']==='question' && microtime(true)>=(float)$room['deadline']) { query("UPDATE rooms SET status='results' WHERE id=?",[$roomId]); $room['status']='results'; }
         if ($action==='control') {
