@@ -1,15 +1,5 @@
 :root {
-    /*
-     * --gp-card-size/--gp-zone-size: единственный источник размера карты
-     * и зоны хронологии на ВСЕХ ширинах экрана (раньше было 4 разных
-     * числа для карты — 156/126/132/122px — в 4 разных блоках, не
-     * согласованных друг с другом и с JS). Числа здесь ПРОДУБЛИРОВАНЫ
-     * как константы CARD_MIN/CARD_VW/CARD_MAX/ZONE_MIN/ZONE_VW/ZONE_MAX
-     * в play.php (функция timelineCapacity()) — совпадение чисел, а не
-     * парсинг computed style, потому что getComputedStyle() на custom
-     * property с clamp() отдаёт исходную строку, а не разрешённый px,
-     * и требует реально отрисованного элемента.
-     */
+    /* Card and insertion-target sizes for the scrollable timeline. */
     --gp-card-min: 116px;
     --gp-card-vw: 28vw;
     --gp-card-max: 164px;

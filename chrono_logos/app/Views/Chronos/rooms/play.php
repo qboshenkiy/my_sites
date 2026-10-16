@@ -145,7 +145,7 @@
                 </button>
             </section>
 
-            <div id="timeline" class="timeline-board"></div>
+            <div id="timeline" class="timeline-board" tabindex="0" role="region" aria-label="Все карты хронологии. Листайте влево и вправо."></div>
         </section>
     </main>
 
@@ -209,43 +209,12 @@
     let pendingPosition = null;
     let draggingCardId = null;
     let busy = false;
-    let timelineStart = 0;
+    let timelineRenderKey = null;
     let lastSeenMoveId = null;
     let lastMoveCard = null;
     let touchGhost = null;
     let touchDropZone = null;
     let suppressCardClickUntil = 0;
-
-    /*
-     * Сколько карт хронологии показывать одновременно — вычисляется из
-     * реальной ширины #timeline, а не угадывается по window.innerWidth
-     * фиксированными порогами (540/820/1150), которые раньше были
-     * полностью независимы от CSS и не гарантировали, что столько карт
-     * физически поместится. Константы CARD_.../ZONE_... — те же числа,
-     * что в --gp-card-size/--gp-zone-size в game-play.css (см. там);
-     * card/zone используют vw как в CSS (доля от ширины ОКНА, а не
-     * контейнера), а вместимость делится на реальную ширину #timeline —
-     * ровно так же CSS clamp(...,vw,...) резолвится внутри контейнера
-     * с отступами.
-     */
-    const CARD_MIN = 116, CARD_VW = 0.28, CARD_MAX = 164;
-    const ZONE_MIN = 44, ZONE_VW = 0.07, ZONE_MAX = 46;
-    const clampSize = (min, vwFraction, max) =>
-        Math.min(max, Math.max(min, window.innerWidth * vwFraction));
-
-    let lastKnownTimelineWidth = 320;
-
-    function timelineCapacity() {
-        const containerWidth = timeline.clientWidth || lastKnownTimelineWidth || 320;
-        lastKnownTimelineWidth = timeline.clientWidth || lastKnownTimelineWidth;
-
-        const cardWidth = clampSize(CARD_MIN, CARD_VW, CARD_MAX);
-        const zoneWidth = clampSize(ZONE_MIN, ZONE_VW, ZONE_MAX);
-
-        /* n карт => n+1 зон (зона и перед первой картой, и после каждой). */
-        const n = Math.floor((containerWidth - zoneWidth) / (cardWidth + zoneWidth));
-        return Math.max(1, Math.min(9, n));
-    }
 
     function openMenu() {
         gameMenu.hidden = false;
@@ -394,26 +363,30 @@
         return zone;
     }
 
+    function updateTimelineNavigation() {
+        const end = Math.max(0, timeline.scrollWidth - timeline.clientWidth);
+        $('timeline-prev').disabled = timeline.scrollLeft <= 1;
+        $('timeline-next').disabled = timeline.scrollLeft >= end - 1;
+    }
+
     function renderTimeline() {
         const cards = state?.timeline || [];
-        const size = timelineCapacity();
-        timeline.replaceChildren();
-        const maxStart = Math.max(0, cards.length - size);
-        timelineStart = Math.max(0, Math.min(timelineStart, maxStart));
-        const visible = cards.slice(timelineStart, timelineStart + size);
         const enabled = !!(state?.isMyTurn && selectedCardId && !busy);
-
-        timeline.appendChild(buildDropZone(timelineStart, enabled));
-        visible.forEach((card, index) => {
-            timeline.appendChild(buildTableCard(card));
-            timeline.appendChild(buildDropZone(timelineStart + index + 1, enabled));
-        });
-
-        $('timeline-range').textContent = cards.length
-            ? `${timelineStart + 1}–${timelineStart + visible.length} из ${cards.length}`
-            : 'Нет карт';
-        $('timeline-prev').disabled = timelineStart <= 0;
-        $('timeline-next').disabled = timelineStart >= maxStart;
+        const key = JSON.stringify([cards, enabled, pendingPosition]);
+        // Polling must not interrupt a swipe or reset its scroll position.
+        if (key !== timelineRenderKey) {
+            const left = timeline.scrollLeft;
+            timeline.replaceChildren();
+            timeline.appendChild(buildDropZone(0, enabled));
+            cards.forEach((card, index) => {
+                timeline.appendChild(buildTableCard(card));
+                timeline.appendChild(buildDropZone(index + 1, enabled));
+            });
+            timeline.scrollLeft = left;
+            timelineRenderKey = key;
+        }
+        $('timeline-range').textContent = cards.length ? `На столе: ${cards.length}` : 'Нет карт';
+        updateTimelineNavigation();
         renderPlacement();
     }
 
@@ -963,26 +936,16 @@
 
     $('draw-button').addEventListener('click', drawCard);
     $('timeline-prev').addEventListener('click', () => {
-        timelineStart = Math.max(0, timelineStart - timelineCapacity());
-        renderTimeline();
+        timeline.scrollBy({left:-timeline.clientWidth * .8, behavior:'smooth'});
     });
     $('timeline-next').addEventListener('click', () => {
-        timelineStart += timelineCapacity();
-        renderTimeline();
+        timeline.scrollBy({left:timeline.clientWidth * .8, behavior:'smooth'});
     });
-
-    /*
-     * ResizeObserver на сам #timeline — ловит изменения его реальной
-     * ширины (в т.ч. от dvh/схлопывания адресной строки браузера), а не
-     * только событие resize окна. window.resize оставлен доп. триггером:
-     * cardWidth/zoneWidth считаются от window.innerWidth (как vw в CSS),
-     * так что могут поменяться и без изменения ширины самого контейнера
-     * (например, при повороте экрана).
-     */
+    timeline.addEventListener('scroll', updateTimelineNavigation, {passive:true});
     if (typeof ResizeObserver !== 'undefined') {
-        new ResizeObserver(() => renderTimeline()).observe(timeline);
+        new ResizeObserver(updateTimelineNavigation).observe(timeline);
     }
-    window.addEventListener('resize', renderTimeline);
+    window.addEventListener('resize', updateTimelineNavigation);
 
     refresh();
     setInterval(refresh, 1600);

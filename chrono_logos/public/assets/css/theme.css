@@ -76,7 +76,9 @@ input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=file])
 .table-nav-slim {gap:10px;margin:4px 0;flex-shrink:0}
 .table-nav-slim button {width:44px;height:44px;font-size:20px;background:transparent;border:0}
 .table-nav-slim span {font-size:12px;min-width:76px;color:var(--cl-muted)}
-.timeline-board {min-height:180px;overflow:visible;flex:1 0 180px;padding:6px 0}
+.timeline-board {min-height:196px;overflow-x:auto;overflow-y:hidden;flex:1 0 196px;padding:12px 0;justify-content:flex-start;overscroll-behavior-x:contain;scrollbar-width:thin;scrollbar-color:var(--cl-border) transparent;-webkit-overflow-scrolling:touch}
+.timeline-board>:first-child {margin-left:auto}
+.timeline-board>:last-child {margin-right:auto}
 .square-card {border-radius:12px;background:var(--cl-raised);box-shadow:none}
 .table-card {height:180px;aspect-ratio:auto}
 .square-card-body strong {font-size:14px;line-height:1.35;-webkit-line-clamp:4}
@@ -197,7 +199,7 @@ input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=file])
     .timeline-heading h1 {font-size:16px}
     .timeline-heading>span {font-size:11px}
     .table-nav-slim {margin:0}
-    .timeline-board {min-height:164px;flex-basis:164px}
+    .timeline-board {min-height:188px;flex-basis:188px}
     .table-card {height:164px}
     .table-card .square-card-body strong {font-size:13px;-webkit-line-clamp:5}
     .table-card .square-card-body span {font-size:10px}
