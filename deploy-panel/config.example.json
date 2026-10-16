@@ -13,7 +13,9 @@
       "directory": "/opt/pulse",
       "compose": "compose.https.yaml",
       "profiles": [],
-      "services": ["web"]
+      "services": [
+        "web"
+      ]
     },
     {
       "id": "marathon",
@@ -25,8 +27,28 @@
       "ssh_key": "",
       "directory": "/opt/marathon",
       "compose": "compose.https.yaml",
-      "profiles": ["telegram"],
-      "services": ["web", "bot"]
+      "profiles": [
+        "telegram"
+      ],
+      "services": [
+        "web",
+        "bot"
+      ]
+    },
+    {
+      "id": "chrono-logos",
+      "name": "Chrono Logos",
+      "kind": "chrono",
+      "repo": "https://github.com/qboshenkiy/games.git",
+      "branch": "main",
+      "subdir": "",
+      "ssh_key": "",
+      "directory": "/opt/chrono-logos",
+      "compose": "compose.yaml",
+      "profiles": [],
+      "services": [
+        "web"
+      ]
     },
     {
       "id": "gitdeck",

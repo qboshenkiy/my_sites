@@ -23,3 +23,6 @@
 .vscode/
 *.pem
 *.key
+
+# Independent repository: https://github.com/qboshenkiy/games
+/chrono_logos/

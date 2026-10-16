@@ -354,5 +354,108 @@ class GitDeckTests(unittest.TestCase):
         self.assertEqual(request('/api/state')[0], 401)
 
 
+class ChronoTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.source = self.root / 'source'
+        self.dest = self.root / 'installed'
+        self.source.mkdir()
+        self.p = dict(id='chrono-logos', name='Chrono Logos', kind='chrono',
+                      repo='https://github.com/qboshenkiy/games.git', branch='main', subdir='',
+                      directory=str(self.dest), compose='compose.yaml', services=['web'], profiles=[])
+        for name in app.REQUIRED['chrono'] + ['public/assets/app.css', '.dockerignore']:
+            path = self.source / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('new code: ' + name)
+        self.config = dict(state_dir=str(self.root / 'state'), projects=[self.p])
+        app.db_open(self.config).close()
+        self.job = 'c' * 24
+        self.jobdir = self.root / 'state/jobs' / self.job
+        self.jobdir.mkdir(parents=True)
+        with app.db_open(self.config) as db:
+            db.execute('INSERT INTO jobs (id,project,status,created,updated) VALUES (?,?,?,?,?)',
+                       (self.job, self.p['id'], 'queued', time.time(), time.time()))
+        self.calls = []
+
+    def checkout(self, p, config, source, log):
+        app.copy_code(self.source, source, p)
+        return 'a' * 40
+
+    def compose(self, p, args, log):
+        self.calls.append(args)
+        if args[0] == 'run' and 'pg_dump ' in args[-1]:
+            (self.jobdir / 'database.dump').write_bytes(b'synthetic PostgreSQL dump')
+        return b''
+
+    def test_first_install_bootstraps_without_database_backup(self):
+        app.validate_project(self.p)
+        with patch.object(app, 'checkout', side_effect=self.checkout), patch.object(app, 'compose', side_effect=self.compose):
+            app.deploy(self.config, self.p, self.job, io.StringIO())
+        self.assertTrue((self.dest / 'ops/Dockerfile').exists())
+        values = {k: v for k, v, *_ in app.env_records(app.env_text(self.p))}
+        self.assertGreaterEqual(len(values['DB_PASSWORD']), 32)
+        self.assertNotEqual(values['DB_PASSWORD'], values['ADMIN_PASSWORD'])
+        self.assertFalse(any(args[0] == 'run' for args in self.calls))
+        self.assertTrue(any(args[:2] == ['up', '-d'] for args in self.calls))
+        self.assertTrue(all(not app.allowed(n, self.p) for n in ('.env', 'writable/session/session1', 'public/uploads/test.jpg', 'vendor/autoload.php', 'compose.yaml')))
+
+    def test_bootstrap_refuses_existing_files(self):
+        self.dest.mkdir()
+        (self.dest / '.env').write_text('original secret')
+        with self.assertRaisesRegex(ValueError, 'пустой'):
+            app.bootstrap_chrono(self.p, self.source)
+        self.assertEqual((self.dest / '.env').read_text(), 'original secret')
+
+    def test_failed_update_restores_postgres_and_keeps_runtime(self):
+        app.bootstrap_chrono(self.p, self.source)
+        app.copy_code(self.source, self.dest, self.p)
+        (self.dest / 'public/index.php').write_text('old application')
+        for name in ('writable/session/session1', 'public/uploads/photo.jpg'):
+            path = self.dest / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('persistent runtime')
+        env = app.env_text(self.p)
+        starts = []
+        def start(*args, **kw):
+            starts.append(1)
+            if len(starts) == 1:
+                raise RuntimeError('synthetic failed build')
+        with patch.object(app, 'checkout', side_effect=self.checkout), patch.object(app, 'compose', side_effect=self.compose), patch.object(app, 'start_services', side_effect=start):
+            with self.assertRaisesRegex(RuntimeError, 'synthetic'):
+                app.deploy(self.config, self.p, self.job, io.StringIO())
+        self.assertEqual((self.dest / 'public/index.php').read_text(), 'old application')
+        self.assertEqual(app.env_text(self.p), env)
+        self.assertEqual((self.dest / 'public/uploads/photo.jpg').read_text(), 'persistent runtime')
+        self.assertEqual((self.dest / 'writable/session/session1').read_text(), 'persistent runtime')
+        restore = next(args for args in self.calls if args[0] == 'run' and 'pg_restore ' in args[-1])
+        self.assertIn('--create --clean', restore[-1])
+        self.assertTrue((self.jobdir / 'database.dump').exists())
+        self.assertEqual(len(starts), 2)
+
+    def test_first_failure_keeps_candidate_for_retry(self):
+        with patch.object(app, 'checkout', side_effect=self.checkout), patch.object(app, 'compose', side_effect=self.compose), patch.object(app, 'start_services', side_effect=RuntimeError('first build failed')):
+            with self.assertRaisesRegex(RuntimeError, 'first build failed'):
+                app.deploy(self.config, self.p, self.job, io.StringIO())
+        self.assertTrue((self.dest / 'ops/Dockerfile').is_file())
+        with patch.object(app, 'checkout', side_effect=self.checkout), patch.object(app, 'compose', side_effect=self.compose):
+            app.deploy(self.config, self.p, self.job, io.StringIO())
+        with app.db_open(self.config) as db:
+            self.assertEqual(db.execute('SELECT status FROM jobs').fetchone()[0], 'success')
+
+    def test_database_identity_change_rejected_before_mutation(self):
+        app.bootstrap_chrono(self.p, self.source)
+        old = app.env_text(self.p)
+        (self.jobdir / 'environment.json').write_text(json.dumps(dict(env_revision=app.env_revision(old), changes={'DB_PASSWORD': 'different-password'})))
+        with self.assertRaisesRegex(ValueError, 'PostgreSQL'), patch.object(app, 'compose') as docker:
+            app.apply_environment(self.config, self.p, self.job, io.StringIO())
+        docker.assert_not_called()
+        self.assertEqual(app.env_text(self.p), old)
+        fields = {f['key']: f for f in app.env_settings(self.p)['fields']}
+        self.assertEqual(fields['ADMIN_PASSWORD']['value'], '')
+        self.assertTrue(fields['ADMIN_PASSWORD']['configured'])
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

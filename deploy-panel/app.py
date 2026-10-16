@@ -22,14 +22,18 @@ import threading
 import time
 import urllib.parse
 
-VERSION = '1.1.0'
+VERSION = '1.2.0'
 LAYOUT = {
     'pulse': ['index.php', 'api.php', 'seed.php', '.htaccess', 'assets', 'tools/check.php', 'tools/backup.php'],
     'marathon': ['index.php', 'api.php', '.htaccess', 'assets', 'lib', 'tools/bot.php', 'tools/backup.php'],
+    'chrono': ['app', 'public/assets', 'public/index.php', 'public/_health.php', 'public/.htaccess',
+               'public/favicon.ico', 'public/robots.txt', 'composer.json', 'composer.lock', 'spark', 'ops', '.dockerignore'],
     'self': ['app.py', 'index.html', 'VERSION', 'README.md', 'install.sh', 'config.example.json', '.gitignore'],
 }
 REQUIRED = {'pulse': ['index.php', 'api.php', 'assets/app.js'],
             'marathon': ['index.php', 'api.php', 'lib/core.php', 'lib/telegram.php'],
+            'chrono': ['app/Config/Paths.php', 'public/index.php', 'composer.lock', 'spark', 'ops/compose.yaml',
+                       'ops/Dockerfile', 'ops/entrypoint.sh', 'app/Commands/DeployAdmin.php'],
             'self': ['app.py', 'index.html', 'VERSION']}
 
 
@@ -90,6 +94,8 @@ def validate_project(p):
             if not isinstance(p.get('wait_health', True), bool):
                 raise ValueError('Некорректный режим проверки готовности')
         else:
+            if p['kind'] == 'chrono' and (p['compose'] != 'compose.yaml' or p.get('services') != ['web'] or p.get('profiles', [])):
+                raise ValueError('Chrono Logos использует compose.yaml, сервис web и PostgreSQL без профилей')
             if p.get('services') not in (['web'], ['web', 'bot']):
                 raise ValueError('Разрешены сервисы web и bot')
             if p.get('profiles', []) not in ([], ['telegram']):
@@ -270,7 +276,7 @@ def git_environment(p):
 
 REF_LOCK = threading.Lock()
 
-PUBLIC_ENV = {'DOMAIN', 'APP_URL', 'APP_PORT', 'APP_BIND', 'TELEGRAM_BOT_USERNAME', 'MARATHON_TIMEZONE', 'TZ'}
+PUBLIC_ENV = {'DOMAIN', 'APP_URL', 'APP_PORT', 'APP_BIND', 'TELEGRAM_BOT_USERNAME', 'MARATHON_TIMEZONE', 'TZ', 'ADMIN_USERNAME'}
 
 
 def env_file(p):
@@ -327,6 +333,8 @@ def env_settings(p):
     defaults = ['DOMAIN', 'APP_URL', 'APP_PORT', 'APP_BIND']
     if p['kind'] == 'marathon':
         defaults += ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME']
+    if p['kind'] == 'chrono':
+        defaults = ['APP_URL', 'APP_PORT', 'APP_BIND', 'ADMIN_USERNAME', 'ADMIN_PASSWORD']
     fields = []
     for key in dict.fromkeys(defaults + list(values)):
         if key.startswith(('COMPOSE_', 'DOCKER_', 'GIT_', 'PYTHON')) or key in ('PATH', 'HOME'):
@@ -334,6 +342,8 @@ def env_settings(p):
         secret = key not in PUBLIC_ENV
         fields.append({'key': key, 'secret': secret, 'value': '' if secret else values.get(key, ''),
                        'configured': bool(values.get(key))})
+        if p['kind'] == 'chrono' and key in ('DB_DATABASE', 'DB_USERNAME', 'DB_PASSWORD'):
+            fields[-1]['readonly'] = True
     return {'fields': fields, 'env_revision': env_revision(text)}
 
 
@@ -405,6 +415,15 @@ def apply_environment(config, p, job, log):
     if env_revision(old) != payload['env_revision']:
         raise ValueError('Файл .env изменился после открытия формы. Откройте настройки заново')
     new = patch_env(old, payload['changes'])
+    if p['kind'] == 'chrono':
+        existing = {k: v for k, v, *_ in env_records(old)}
+        for key in ('DB_DATABASE', 'DB_USERNAME', 'DB_PASSWORD'):
+            if key in payload['changes'] and payload['changes'][key] != existing.get(key):
+                raise ValueError('Реквизиты созданной PostgreSQL нельзя менять через .env: это не меняет саму базу')
+        if 'ADMIN_PASSWORD' in payload['changes'] and not 12 <= len(payload['changes']['ADMIN_PASSWORD']) <= 255:
+            raise ValueError('Пароль администратора должен содержать от 12 до 255 символов')
+        if 'ADMIN_USERNAME' in payload['changes'] and not re.fullmatch(r'[A-Za-z0-9_-]{3,30}', payload['changes']['ADMIN_USERNAME']):
+            raise ValueError('Логин администратора: 3–30 латинских букв, цифры, дефис или подчёркивание')
     previous = folder / 'previous.env'
     previous.write_text(old, encoding='utf-8')
     os.chmod(previous, 0o600)
@@ -572,6 +591,14 @@ def status_update(config, job, status, error='', sha=None):
 
 
 def database_backup(p, jobdir, log):
+    if p['kind'] == 'chrono':
+        compose(p, ['up', '-d', '--wait', '--wait-timeout', '120', 'db'], log)
+        compose(p, ['run', '--rm', '--no-deps', '--user', 'root', '-v', str(jobdir) + ':/gitdeck-backup',
+                    '--entrypoint', 'sh', 'db', '-ec',
+                    'export PGPASSWORD="$POSTGRES_PASSWORD"; pg_dump -h db -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc -f /gitdeck-backup/database.dump; chmod 600 /gitdeck-backup/database.dump'], log)
+        if not (jobdir / 'database.dump').is_file():
+            raise RuntimeError('Не создана резервная копия PostgreSQL')
+        return
     tool = '/opt/pulse/backup.php' if p['kind'] == 'pulse' else '/opt/marathon/backup.php'
     compose(p, ['run', '--rm', '--no-deps', '--user', 'root', '-v', str(jobdir) + ':/gitdeck-backup',
                 '--entrypoint', 'php', 'web', tool, '/gitdeck-backup/data.sqlite'], log)
@@ -580,11 +607,30 @@ def database_backup(p, jobdir, log):
 
 
 def database_restore(p, jobdir, log):
+    if p['kind'] == 'chrono':
+        compose(p, ['run', '--rm', '--no-deps', '--user', 'root', '-v', str(jobdir) + ':/gitdeck-backup:ro',
+                    '--entrypoint', 'sh', 'db', '-ec',
+                    'export PGPASSWORD="$POSTGRES_PASSWORD"; pg_restore -h db -U "$POSTGRES_USER" -d postgres --create --clean --if-exists --no-owner --exit-on-error /gitdeck-backup/database.dump'], log)
+        return
     # SQLite backup is taken with web/bot stopped. Restore DB and remove matching WAL files.
     location = '/var/lib/pulse/quiz.sqlite' if p['kind'] == 'pulse' else '/var/lib/marathon/marathon.sqlite'
     php = '$p=$argv[1]; if(!copy("/gitdeck-backup/data.sqlite",$p))exit(1); foreach(["-wal","-shm"] as $s)if(is_file($p.$s))unlink($p.$s); chown($p,"www-data"); chmod($p,0660);'
     compose(p, ['run', '--rm', '--no-deps', '--user', 'root', '-v', str(jobdir) + ':/gitdeck-backup:ro',
                 '--entrypoint', 'php', 'web', '-r', php, location], log)
+
+
+def bootstrap_chrono(p, source):
+    """Provision only an empty directory; never adopt or overwrite an unknown site."""
+    dest = Path(p['directory'])
+    if dest.exists() and any(dest.iterdir()):
+        raise ValueError('Для первой установки Chrono Logos выберите пустой каталог')
+    dest.mkdir(parents=True, exist_ok=True)
+    validate_destination(dest, p['compose'])
+    shutil.copy2(source / 'ops/compose.yaml', dest / p['compose'])
+    write_env(p, patch_env('', {'APP_URL': 'http://localhost:8082/', 'APP_PORT': '8082',
+        'APP_BIND': '0.0.0.0', 'DB_DATABASE': 'chrono', 'DB_USERNAME': 'chrono',
+        'DB_PASSWORD': secrets.token_urlsafe(32), 'ADMIN_USERNAME': 'admin',
+        'ADMIN_PASSWORD': secrets.token_urlsafe(32)}))
 
 
 def deploy(config, p, job, log):
@@ -594,6 +640,11 @@ def deploy(config, p, job, log):
     dest = Path(p['directory'])
     sha = checkout(p, config, source, log, p['_target_ref']) if p.get('_target_ref') else checkout(p, config, source, log)
     status_update(config, job, 'preparing', sha=sha)
+    first_install = p['kind'] == 'chrono' and not (dest / p['compose']).exists()
+    if first_install:
+        bootstrap_chrono(p, source)
+    if p['kind'] == 'chrono':
+        log = RedactedLog(log, [v for k, v, *_ in env_records(env_text(p)) if k not in PUBLIC_ENV])
     if p['kind'] == 'self':
         run([sys.executable, '-m', 'py_compile', str(source / 'app.py')], log)
         validation = jobdir / 'validation-config.json'
@@ -615,7 +666,7 @@ def deploy(config, p, job, log):
     stopped = False
     mutated = False
     try:
-        if p['kind'] != 'self':
+        if p['kind'] != 'self' and not first_install:
             status_update(config, job, 'backup', sha=sha)
             stopped = True  # A partially failed stop must also be recovered.
             compose(p, ['stop'] + p['services'], log)
@@ -651,6 +702,9 @@ def deploy(config, p, job, log):
             status_update(config, job, 'restoring', sha=sha)
             if p['kind'] != 'self':
                 compose(p, ['stop'] + p['services'], log)
+            if first_install:
+                log.write('\nПервая установка не завершена. Код, данные и настройки оставлены для повторной попытки.\n')
+                raise original
             copy_code(old, dest, p)
             if p['kind'] != 'self':
                 if p['kind'] != 'docker':
