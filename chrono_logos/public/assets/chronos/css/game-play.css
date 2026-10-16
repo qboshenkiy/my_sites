@@ -15,7 +15,7 @@
     --gp-card-max: 152px;
     --gp-card-size: clamp(var(--gp-card-min), var(--gp-card-vw), var(--gp-card-max));
 
-    --gp-zone-min: 28px;
+    --gp-zone-min: 44px;
     --gp-zone-vw: 7vw;
     --gp-zone-max: 46px;
     --gp-zone-size: clamp(var(--gp-zone-min), var(--gp-zone-vw), var(--gp-zone-max));

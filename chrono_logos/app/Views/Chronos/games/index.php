@@ -2,13 +2,15 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Каталог игр | My Games</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Каталог игр | Chronologos</title>
     <link rel="stylesheet" href="/assets/chronos/css/catalog.css">
+    <link rel="stylesheet" href="/assets/css/theme.css">
+    <meta name="theme-color" content="#10131b">
 </head>
 <body>
 <header class="catalog-header">
-    <a class="catalog-logo" href="/"><span>M</span> MY GAMES</a>
+    <a class="catalog-logo" href="/"><span>◷</span> Chronologos</a>
     <nav>
         <?php if (session()->get('logged_in')): ?>
             <a href="/rooms">Комнаты</a>

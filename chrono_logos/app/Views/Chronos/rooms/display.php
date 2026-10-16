@@ -4,13 +4,15 @@
     <meta charset="UTF-8">
     <meta
         name="viewport"
-        content="width=device-width, initial-scale=1.0"
+        content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     >
     <title><?= esc($room['game_title']) ?> | Проектор</title>
     <link
         rel="stylesheet"
         href="/assets/chronos/css/display.css"
     >
+    <link rel="stylesheet" href="/assets/css/theme.css">
+    <meta name="theme-color" content="#10131b">
 </head>
 <body>
 

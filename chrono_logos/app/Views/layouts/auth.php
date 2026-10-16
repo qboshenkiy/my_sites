@@ -9,7 +9,7 @@
     >
 
     <title>
-        <?= esc($title ?? 'Авторизация') ?> | My Games
+        <?= esc($title ?? 'Авторизация') ?> | Chronologos
     </title>
 
     <link
@@ -18,9 +18,12 @@
     >
 
     <?= $this->renderSection('styles') ?>
+    <link rel="stylesheet" href="/assets/css/theme.css">
+    <meta name="theme-color" content="#10131b">
 </head>
 
-<body>
+<body class="auth-screen">
+<a class="auth-brand" href="/games"><span aria-hidden="true">◷</span>Chronologos</a>
 
 <?= $this->renderSection('content') ?>
 

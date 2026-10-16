@@ -10,7 +10,7 @@
 
     <div class="management-heading">
         <div>
-            <div class="section-label">PLAY</div>
+            <div class="section-label">ИГРАТЬ</div>
             <h2>Игровые комнаты</h2>
             <p>
                 Создайте комнату по опубликованной игре

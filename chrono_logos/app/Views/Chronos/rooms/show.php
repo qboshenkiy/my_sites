@@ -19,7 +19,7 @@
             <h2><?= esc($room['game_title']) ?></h2>
             <p>
                 Ведущий: <?= esc($room['host_username']) ?> ·
-                Режим: <?= esc($room['game_mode'] ?? 'NORMAL') ?>
+                Режим: <?= esc(['NORMAL'=>'Обычный','BLIND'=>'Вслепую','HARDCORE'=>'Хардкор'][$room['game_mode'] ?? 'NORMAL'] ?? 'Обычный') ?>
             </p>
         </div>
 

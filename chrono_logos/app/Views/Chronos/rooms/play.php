@@ -2,14 +2,13 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title><?= esc($title ?? 'Игра') ?></title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&display=swap">
     <link rel="stylesheet" href="/assets/chronos/css/game-play.css">
+    <link rel="stylesheet" href="/assets/css/theme.css">
+    <meta name="theme-color" content="#10131b">
 </head>
-<body>
+<body class="game-screen">
 
 <?= view('partials/confirm-dialog') ?>
 
@@ -105,6 +104,7 @@
 
     <main class="game-table-shell">
         <section class="table-surface">
+            <div class="timeline-heading"><div><span class="eyebrow">ИГРОВОЙ СТОЛ</span><h1>Хронология</h1></div><span>Раньше → Позже</span></div>
             <div class="table-nav-slim">
                 <button id="timeline-prev" type="button" aria-label="Раньше">←</button>
                 <span id="timeline-range">—</span>
@@ -150,6 +150,7 @@
     </main>
 
     <footer class="hand-dock">
+        <div class="hand-heading"><strong>Ваши карты</strong><span>Листайте и выберите событие</span></div>
         <div id="blind-draw" class="blind-draw" hidden>
             <span>Карта скрыта до момента вытягивания.</span>
             <button id="draw-button" type="button">Взять карту</button>
@@ -158,10 +159,15 @@
         <div id="hand" class="hand-list"></div>
 
         <span id="hand-count" class="hand-count-badge">0 карт</span>
+        <section class="placement-actions" aria-label="Ваш ход">
+            <div><strong id="selection-title">Выберите карту</strong><span id="selection-hint" role="status" aria-live="polite">Затем нажмите + в хронологии.</span></div>
+            <button id="confirm-placement" type="button" disabled>Поставить карту</button>
+            <button id="cancel-selection" type="button" aria-label="Отменить выбор" hidden>✕</button>
+        </section>
     </footer>
 </div>
 
-<div id="card-modal" class="card-modal" hidden>
+<div id="card-modal" class="card-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" hidden>
     <button type="button" class="modal-backdrop" data-close-modal aria-label="Закрыть"></button>
     <article class="card-modal-card">
         <button type="button" class="modal-close" data-close-modal><?= icon('close', 18) ?></button>
@@ -196,6 +202,7 @@
     let state = null;
     let version = 0;
     let selectedCardId = null;
+    let pendingPosition = null;
     let draggingCardId = null;
     let busy = false;
     let timelineStart = 0;
@@ -218,7 +225,7 @@
      * с отступами.
      */
     const CARD_MIN = 100, CARD_VW = 0.22, CARD_MAX = 152;
-    const ZONE_MIN = 28, ZONE_VW = 0.07, ZONE_MAX = 46;
+    const ZONE_MIN = 44, ZONE_VW = 0.07, ZONE_MAX = 46;
     const clampSize = (min, vwFraction, max) =>
         Math.min(max, Math.max(min, window.innerWidth * vwFraction));
 
@@ -270,6 +277,7 @@
             image.removeAttribute('src');
             wrap.hidden = true;
         }
+        modal.querySelector('.card-modal-card').classList.toggle('without-image', !card.imageSrc);
         modal.hidden = false;
     }
 
@@ -284,9 +292,38 @@
         closeMenu();
     });
 
+    function selectCard(card, canPlay) {
+        if (busy || Date.now() < suppressCardClickUntil) return;
+        if (!canPlay) { openCard(card, false); return; }
+        selectedCardId = card.id;
+        pendingPosition = null;
+        renderHand(); renderTimeline();
+    }
+    function choosePlacement(position, cardId) {
+        if (busy || !state?.isMyTurn) return;
+        selectedCardId = cardId; pendingPosition = position;
+        renderHand(); renderTimeline();
+    }
+    function renderPlacement() {
+        const card = state?.myHand?.find(c => c.id === selectedCardId);
+        const active = !!(state?.isMyTurn && card);
+        $('selection-title').textContent = state?.canDraw ? 'Ваш ход: возьмите карту' : active ? card.title : state?.isMyTurn ? 'Выберите карту из руки' : 'Ожидаем ход другого игрока';
+        $('selection-hint').textContent = state?.canDraw ? 'Нажмите «Взять карту», затем выберите место на столе.' : active && pendingPosition !== null
+            ? 'Место выбрано. Подтвердите ход или выберите другое.'
+            : active ? 'Нажмите + между событиями на столе.' : 'Нажмите i на карте, чтобы прочитать описание.';
+        $('confirm-placement').disabled = !active || pendingPosition === null || busy;
+        $('confirm-placement').textContent = busy ? 'Отправляем…' : 'Поставить карту';
+        $('cancel-selection').hidden = !selectedCardId;
+    }
+    $('confirm-placement').addEventListener('click', () => {
+        if (pendingPosition !== null) placeCard(pendingPosition, selectedCardId);
+    });
+    $('cancel-selection').addEventListener('click', () => { selectedCardId = null; pendingPosition = null; renderHand(); renderTimeline(); });
+
     function buildTableCard(card) {
         const el = document.createElement('article');
         el.className = 'square-card table-card';
+        if (!card.imageSrc) el.classList.add('no-image');
         if (card.wasMisplaced) el.classList.add('is-misplaced');
         el.tabIndex = 0;
 
@@ -327,7 +364,9 @@
         zone.className = 'drop-zone';
         zone.dataset.position = String(position);
         zone.disabled = !enabled;
-        zone.innerHTML = '<span>Поставить сюда</span>';
+        zone.innerHTML = '<span aria-hidden="true">+</span>';
+        zone.setAttribute('aria-label', 'Выбрать место ' + (position + 1) + ' в хронологии');
+        zone.classList.toggle('is-chosen', pendingPosition === position);
 
         zone.addEventListener('dragover', event => {
             if (!enabled) return;
@@ -340,10 +379,10 @@
             event.preventDefault();
             zone.classList.remove('is-over');
             const id = Number(event.dataTransfer.getData('text/plain') || draggingCardId || selectedCardId);
-            if (id) placeCard(position, id);
+            if (id) choosePlacement(position, id);
         });
         zone.addEventListener('click', () => {
-            if (enabled && selectedCardId) placeCard(position, selectedCardId);
+            if (enabled && selectedCardId) choosePlacement(position, selectedCardId);
         });
         return zone;
     }
@@ -368,11 +407,16 @@
             : 'Нет карт';
         $('timeline-prev').disabled = timelineStart <= 0;
         $('timeline-next').disabled = timelineStart >= maxStart;
+        renderPlacement();
     }
 
     function buildHandCard(card, canPlay) {
         const el = document.createElement('article');
         el.className = 'square-card hand-card';
+        if (!card.imageSrc) el.classList.add('no-image');
+        el.tabIndex = 0;
+        el.setAttribute('aria-label', 'Выбрать: ' + card.title);
+        el.addEventListener('keydown', event => { if (event.target === el && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); selectCard(card, canPlay); } });
         el.draggable = canPlay;
         if (selectedCardId === card.id) el.classList.add('is-selected');
 
@@ -390,7 +434,7 @@
         }
         media.addEventListener('click', event => {
             event.stopPropagation();
-            openCard(card, false);
+            selectCard(card, canPlay);
         });
 
         const body = document.createElement('div');
@@ -401,6 +445,11 @@
         meta.textContent = [card.category, card.difficulty].filter(Boolean).join(' · ');
         body.append(title, meta);
         el.append(media, body);
+        const details = document.createElement('button');
+        details.type = 'button'; details.className = 'hand-card-details'; details.textContent = 'i';
+        details.setAttribute('aria-label', 'Подробнее: ' + card.title);
+        details.addEventListener('click', event => { event.stopPropagation(); openCard(card, false); });
+        el.append(details);
 
         el.addEventListener('click', () => {
             if (Date.now() < suppressCardClickUntil) {
@@ -411,9 +460,7 @@
                 openCard(card, false);
                 return;
             }
-            selectedCardId = card.id;
-            renderHand();
-            renderTimeline();
+            selectCard(card, canPlay);
         });
 
         el.addEventListener('dragstart', event => {
@@ -479,7 +526,8 @@
 
         element.addEventListener('pointerdown', event => {
             if (
-                busy
+                event.target.closest('.hand-card-details')
+                || busy
                 || !state?.isMyTurn
                 || (event.pointerType !== 'touch' && event.pointerType !== 'pen')
             ) {
@@ -567,7 +615,7 @@
             draggingCardId = null;
 
             if (Number.isInteger(position)) {
-                placeCard(position, card.id);
+                choosePlacement(position, card.id);
             } else {
                 renderTimeline();
             }
@@ -601,7 +649,9 @@
             return;
         }
 
+        const scroll = hand.scrollLeft;
         hand.replaceChildren(...cards.map(card => buildHandCard(card, canPlay)));
+        hand.scrollLeft = scroll;
     }
 
     function renderPlayers() {
@@ -731,6 +781,7 @@
 
 
     function renderState(data) {
+        if (version !== data.room.stateVersion) pendingPosition = null;
         state = data;
         version = data.room.stateVersion;
 
@@ -813,6 +864,7 @@
                 return;
             }
             selectedCardId = null;
+            pendingPosition = null;
             showResult(data);
             await refresh();
         } catch (error) {
@@ -848,8 +900,11 @@
                 return;
             }
             await refresh();
+        } catch (error) {
+            alert('Не удалось связаться с сервером. Попробуйте ещё раз.');
         } finally {
             busy = false;
+            if (state) { renderHand(); renderTimeline(); }
         }
     }
 

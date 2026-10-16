@@ -110,6 +110,10 @@ with tempfile.TemporaryDirectory(prefix='chrono-deploy-test-') as tmp:
             if os.environ.get('TIMELINE_UI') == '1':
                 ui_env = dict(env, TIMELINE_TEST_URL=base)
                 print(run(['node', ROOT / 'tests/timeline_ui.js'], env=ui_env), end='')
+            if os.environ.get('MOBILE_UI') == '1':
+                run([PG / 'psql', '-d', 'chrono_test', '-Atc', "UPDATE cards SET is_enabled=TRUE WHERE title<>'' AND sort_order IS NOT NULL"], env=env)
+                room_code = run([PG / 'psql', '-d', 'chrono_test', '-Atc', "SELECT code FROM game_rooms WHERE status='PLAYING' ORDER BY id LIMIT 1"], env=env).strip()
+                print(run(['node', ROOT / 'tests/mobile_ui.js'], env=dict(env, TIMELINE_TEST_URL=base, MOBILE_ROOM_CODE=room_code)), end='')
     finally:
         if server:
             server.terminate()

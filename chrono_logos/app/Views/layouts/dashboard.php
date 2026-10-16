@@ -11,11 +11,11 @@ $isMobileClient =
 
     <meta
         name="viewport"
-        content="width=device-width, initial-scale=1.0"
+        content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     >
 
     <title>
-        <?= esc($title ?? 'Dashboard') ?> | My Games
+        <?= esc($title ?? 'Dashboard') ?> | Chronologos
     </title>
 
     <link
@@ -29,6 +29,8 @@ $isMobileClient =
     >
 
     <?= $this->renderSection('styles') ?>
+    <link rel="stylesheet" href="/assets/css/theme.css">
+    <meta name="theme-color" content="#10131b">
 </head>
 
 <body class="<?= $isMobileClient ? 'mobile-client' : 'desktop-client' ?>">
@@ -50,8 +52,8 @@ $isMobileClient =
                     href="/rooms"
                     class="mobile-app-logo"
                 >
-                    <span>M</span>
-                    MY GAMES
+                    <span>◷</span>
+                    Chronologos
                 </a>
 
                 <div class="mobile-app-actions">
@@ -103,6 +105,12 @@ $isMobileClient =
             <?= $this->renderSection('content') ?>
 
         </main>
+        <nav class="mobile-bottom-nav" aria-label="Основная навигация">
+            <?php $currentPath = trim(service('uri')->getPath(), '/'); ?>
+            <?php foreach ([['rooms','Играть','play'],['games','Каталог','book'],['creator/games','Мои игры','cards'],['account/settings','Профиль','settings']] as [$path,$label,$symbol]): ?>
+            <a href="/<?= $path ?>" <?= str_starts_with($currentPath,$path) ? 'aria-current="page"' : '' ?>><span aria-hidden="true"><?= ['play'=>'▷','book'=>'▤','cards'=>'▦','settings'=>'◉'][$symbol] ?></span><?= $label ?></a>
+            <?php endforeach ?>
+        </nav>
 
     </div>
 
