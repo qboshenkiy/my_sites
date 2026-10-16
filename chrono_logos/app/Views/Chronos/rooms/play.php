@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title><?= esc($title ?? 'Игра') ?></title>
     <link rel="stylesheet" href="/assets/chronos/css/game-play.css">
     <link rel="stylesheet" href="/assets/css/theme.css">
@@ -105,14 +105,13 @@
 
     <main class="game-table-shell">
         <section class="table-surface">
-            <div class="timeline-heading"><div><span class="eyebrow">ИГРОВОЙ СТОЛ</span><h1>Хронология</h1></div><span>Раньше → Позже</span></div>
+            <div class="timeline-heading"><h1>Хронология</h1><span>Раньше → Позже</span></div>
             <div class="table-nav-slim">
                 <button id="timeline-prev" type="button" aria-label="Раньше">←</button>
                 <span id="timeline-range">—</span>
                 <button id="timeline-next" type="button" aria-label="Позже">→</button>
             </div>
 
-            <div id="move-result" class="move-toast" hidden></div>
 
             <section
                 id="live-move"
@@ -151,7 +150,7 @@
     </main>
 
     <footer class="hand-dock">
-        <div class="hand-heading"><strong>Ваши карты</strong><span>Листайте и выберите событие</span></div>
+        <div class="hand-heading"><strong>Ваши карты</strong><span>Описание — по кнопке i</span></div>
         <div id="blind-draw" class="blind-draw" hidden>
             <span>Карта скрыта до момента вытягивания.</span>
             <button id="draw-button" type="button">Взять карту</button>
@@ -160,6 +159,7 @@
         <div id="hand" class="hand-list"></div>
 
         <span id="hand-count" class="hand-count-badge">0 карт</span>
+        <div id="move-result" class="move-toast" role="status" aria-live="polite" hidden></div>
         <section class="placement-actions" aria-label="Ваш ход">
             <div><strong id="selection-title">Выберите карту</strong><span id="selection-hint" role="status" aria-live="polite">Затем нажмите + в хронологии.</span></div>
             <button id="confirm-placement" type="button" disabled>Поставить карту</button>
@@ -187,6 +187,8 @@
 <script src="/assets/chronos/js/room-share.js"></script>
 <script>
 (() => {
+    // Keep the game board stable during two-finger gestures on mobile Safari.
+    document.addEventListener('gesturestart', event => event.preventDefault(), {passive:false});
     const root = document.getElementById('play-root');
     const $ = id => document.getElementById(id);
 
@@ -226,7 +228,7 @@
      * ровно так же CSS clamp(...,vw,...) резолвится внутри контейнера
      * с отступами.
      */
-    const CARD_MIN = 100, CARD_VW = 0.22, CARD_MAX = 152;
+    const CARD_MIN = 116, CARD_VW = 0.28, CARD_MAX = 164;
     const ZONE_MIN = 44, ZONE_VW = 0.07, ZONE_MAX = 46;
     const clampSize = (min, vwFraction, max) =>
         Math.min(max, Math.max(min, window.innerWidth * vwFraction));
@@ -311,8 +313,11 @@
         const active = !!(state?.isMyTurn && card);
         $('selection-title').textContent = state?.canDraw ? 'Ваш ход: возьмите карту' : active ? card.title : state?.isMyTurn ? 'Выберите карту из руки' : 'Ожидаем ход другого игрока';
         $('selection-hint').textContent = state?.canDraw ? 'Нажмите «Взять карту», затем выберите место на столе.' : active && pendingPosition !== null
-            ? 'Место выбрано. Подтвердите ход или выберите другое.'
-            : active ? 'Нажмите + между событиями на столе.' : 'Нажмите i на карте, чтобы прочитать описание.';
+            ? 'Место выбрано — подтвердите ход.'
+            : active ? 'Выберите + на столе: раньше или позже.' : state?.isMyTurn ? 'Затем выберите место на столе.' : 'Можно посмотреть описание своих карт.';
+        root.classList.toggle('has-selection', active);
+        root.classList.toggle('my-turn', !!state?.isMyTurn);
+        $('confirm-placement').hidden = !active;
         $('confirm-placement').disabled = !active || pendingPosition === null || busy;
         $('confirm-placement').textContent = busy ? 'Отправляем…' : 'Поставить карту';
         $('cancel-selection').hidden = !selectedCardId;
@@ -425,7 +430,8 @@
         const media = document.createElement('button');
         media.type = 'button';
         media.className = 'square-card-media hand-card-media';
-        media.title = 'Открыть детали карты';
+        media.title = 'Выбрать карту';
+        media.setAttribute('aria-label', 'Выбрать: ' + card.title);
         if (card.imageSrc) {
             const img = document.createElement('img');
             img.src = card.imageSrc;
@@ -692,6 +698,7 @@
             return;
         }
 
+        panel.classList.toggle('without-image', !move.imageSrc);
         lastMoveCard = {
             title:
                 move.cardTitle,

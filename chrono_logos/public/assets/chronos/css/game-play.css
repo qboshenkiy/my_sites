@@ -10,9 +10,9 @@
      * property с clamp() отдаёт исходную строку, а не разрешённый px,
      * и требует реально отрисованного элемента.
      */
-    --gp-card-min: 100px;
-    --gp-card-vw: 22vw;
-    --gp-card-max: 152px;
+    --gp-card-min: 116px;
+    --gp-card-vw: 28vw;
+    --gp-card-max: 164px;
     --gp-card-size: clamp(var(--gp-card-min), var(--gp-card-vw), var(--gp-card-max));
 
     --gp-zone-min: 44px;

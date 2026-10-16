@@ -52,7 +52,7 @@
                 <div class="room-lobby-code"><?= esc($room['code']) ?></div>
 
                 <?php if (! empty($qrDataUri ?? null)): ?>
-                    <img src="<?= esc($qrDataUri, 'attr') ?>" alt="QR-код комнаты">
+                    <details class="invite-qr"><summary>Показать QR-код</summary><img src="<?= esc($qrDataUri, 'attr') ?>" alt="QR-код комнаты"></details>
                 <?php endif; ?>
 
                 <?= view('partials/room-share', ['room'=>$room,'joinUrl'=>$joinUrl,'shareId'=>'lobby']) ?>

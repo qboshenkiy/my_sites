@@ -25,6 +25,7 @@
     } catch {}
     if (!copied) copied = legacyCopy(value);
     if (copied) {status(widget, code ? 'Код скопирован.' : 'Ссылка скопирована.');return;}
+    widget.querySelector('.share-more').open = true;
     select(input);
     status(widget, code
       ? `Код комнаты: ${widget.dataset.code}. Ссылка выделена — её можно скопировать вручную.`
@@ -45,6 +46,7 @@
     button.disabled = true;
     try {
       if (typeof navigator.share !== 'function' || (navigator.canShare && !navigator.canShare(data))) {
+        widget.querySelector('.share-more').open = true;
         status(widget, 'Выберите Telegram или WhatsApp ниже, либо скопируйте ссылку.');
         return;
       }
@@ -53,7 +55,7 @@
       status(widget, 'Приглашение передано выбранному приложению.');
     } catch (error) {
       if (error.name === 'AbortError') status(widget, 'Отправка отменена.');
-      else status(widget, 'Браузер не открыл отправку. Выберите Telegram или WhatsApp ниже, либо скопируйте ссылку.');
+      else {widget.querySelector('.share-more').open = true;status(widget, 'Браузер не открыл отправку. Выберите Telegram или WhatsApp ниже, либо скопируйте ссылку.');}
     } finally {button.disabled = false;}
   });
   document.addEventListener('click', event => {

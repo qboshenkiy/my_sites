@@ -44,6 +44,7 @@ const fs = require('node:fs');
     await widget.locator('[data-room-copy="link"]').tap();
     await page.waitForFunction(()=>document.querySelector('[data-share-status]').textContent==='Ссылка скопирована.');
     assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),url);
+    await widget.locator('.share-more').evaluate(el=>el.open=true);
     await widget.locator('[data-room-copy="code"]').tap();
     await page.waitForFunction(()=>document.querySelector('[data-share-status]').textContent==='Код скопирован.');
     assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),roomCode);
@@ -111,6 +112,34 @@ const fs = require('node:fs');
       {base,code,version:before.room.stateVersion});
     const after = await (await player.request.get(base+'/rooms/state/'+code)).json();
     assert.equal(after.timeline.length,before.timeline.length+1);
+    await player.waitForSelector('#live-move:not([hidden])');
+    const touchSession = await player.context().newCDPSession(player);
+    await touchSession.send('Input.synthesizePinchGesture',{x:150,y:250,scaleFactor:1.5,relativeSpeed:800,gestureSourceType:'touch'});
+    assert.ok(await player.evaluate(()=>visualViewport.scale<=1.01),'Two-finger gesture zoomed game');
+    await touchSession.detach();
+    // Reproduce a played card on a short phone: cards must never be clipped by the last move.
+    for (const viewport of [{width:390,height:640},{width:320,height:568},{width:390,height:844}]) {
+      await player.setViewportSize(viewport);
+      await fits(player);
+      const boxes = await player.evaluate(() => {
+        const rect = selector => {const r=document.querySelector(selector).getBoundingClientRect();return {top:r.top,bottom:r.bottom,width:r.width};};
+        return {board:rect('#timeline'),card:rect('.table-card'),move:rect('#live-move'),body:rect('.live-move-body')};
+      });
+      assert.ok(boxes.card.top>=boxes.move.bottom-1,'Last move overlaps cards');
+      assert.ok(boxes.card.bottom<=boxes.board.bottom+1,'Timeline card is vertically clipped');
+      assert.ok(boxes.body.width>150,'Last move text collapsed into image column');
+      assert.equal(await player.locator('#play-root').evaluate(el=>getComputedStyle(el).touchAction),'pan-x pan-y');
+    }
+    await player.waitForSelector('#move-result',{state:'hidden'});
+    await player.screenshot({path:path.join(folder,'mobile-game-after-move.png'),fullPage:true});
+    await player.locator('#live-move-details').tap();
+    assert.ok(await player.locator('#card-modal').isVisible());
+    await player.locator('.modal-close').tap();
+    await player.setViewportSize({width:1280,height:800});
+    await fits(player);
+    assert.ok((await player.locator('.live-move-body').boundingBox()).width>400,'Desktop last move collapsed');
+    await player.screenshot({path:path.join(folder,'desktop-game-minimal.png'),fullPage:true});
+    await player.setViewportSize({width:390,height:844});
     await player.locator('#menu-toggle').tap();
     await player.waitForSelector('#game-menu:not([hidden])');
     await invitation(player,code);
@@ -126,6 +155,14 @@ const fs = require('node:fs');
     await a.locator('#create-room-form button[type=submit]').tap();
     await a.waitForURL(/\/rooms\/show\//);
     await fits(a);
+    assert.ok(await a.locator('.room-lobby-invite img').isHidden(),'QR is collapsed by default');
+    assert.ok(await a.locator('.share-more [data-invite-url]').isHidden(),'Advanced sharing is collapsed');
+    const start = await a.locator('.room-action-start').boundingBox();
+    const nav = await a.locator('.mobile-bottom-nav').boundingBox();
+    assert.ok(start.y+start.height<=nav.y,'Start action is behind bottom navigation');
+    await a.screenshot({path:path.join(folder,'mobile-lobby-minimal.png'),fullPage:true});
+    await a.locator('.invite-qr summary').tap();
+    await a.locator('.room-lobby-invite img').scrollIntoViewIfNeeded();
     const qr = await a.locator('.room-lobby-invite img').boundingBox();
     assert.ok(await a.evaluate(({x,y})=>!!document.elementFromPoint(x,y)?.closest('.room-lobby-invite img'),
       {x:qr.x+qr.width/2,y:qr.y+qr.height/2}),'Invitation QR is covered by controls');
