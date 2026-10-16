@@ -19,6 +19,9 @@ function db(): PDO {
     // Additive migration: retain the old page/minute reports as historical data.
     $db->exec('BEGIN IMMEDIATE');
     try {
+        $auditColumns=array_column(sql('PRAGMA table_info(audit)')->fetchAll(),'name');
+        foreach(['metadata'=>"TEXT NOT NULL DEFAULT '{}'",'actor_name'=>'TEXT','target_name'=>'TEXT'] as $column=>$type)if(!in_array($column,$auditColumns,true))$db->exec('ALTER TABLE audit ADD COLUMN '.$column.' '.$type);
+        $db->exec('CREATE INDEX IF NOT EXISTS audit_target_id ON audit(target_id,id); CREATE INDEX IF NOT EXISTS audit_week_id ON audit(json_extract(metadata,\'$.week\'),id)');
         $userColumns=array_column(sql('PRAGMA table_info(users)')->fetchAll(),'name');
         if(!in_array('deleted_at',$userColumns,true))$db->exec('ALTER TABLE users ADD COLUMN deleted_at INTEGER');
         if(!in_array('session_epoch',$userColumns,true))$db->exec('ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0');
@@ -68,7 +71,6 @@ function calendar(?string $id=null): array {
 }
 function publicUser(array $u): array { unset($u['password'],$u['session_epoch']);$u['round']=(int)(activeRound($u['id'])['number']??1);return $u; }
 function user(string $id): ?array { return sql('SELECT * FROM users WHERE id=? AND deleted_at IS NULL',[$id])->fetch() ?: null; }
-function audit(string $actor,string $event,?string $target,string $details): void { sql('INSERT INTO audit(actor_id,event,target_id,details,created_at) VALUES (?,?,?,?,?)',[$actor,$event,$target,$details,time()]); }
 function legacyStats(string $id): array {
     $reports=sql('SELECT r.*,u.name AS editor FROM reports r JOIN users u ON u.id=r.editor_id WHERE r.user_id=? ORDER BY week',[$id])->fetchAll();
     $goal=(int)setting('weekly_goal');$pages=0;$minutes=0;$books=0;$done=0;
@@ -119,9 +121,9 @@ function addReading(string $id,string $actor,int $chapters,string $date,string $
     $week=intdiv((int)(new DateTimeImmutable($c['start']))->diff($d)->format('%a'),7)+1;$w=assertWeekEditable($week,$id);
     if($chapters<1||$chapters>100000)throw new DomainException('Укажите положительное число глав.');
     $existing=sql('SELECT * FROM reading_entries WHERE id=?',[$entryId])->fetch();if($existing){if($existing['user_id']!==$id)throw new DomainException('Запись недоступна.');return weekResults($id)[$week-1];}
-    $total=weekResults($id)[$week-1]['chapters'];$left=max(0,$w['goal']-$total);if($chapters>$left)throw new DomainException('Можно зачесть не больше '.$left.' глав: недельный план — '.$w['goal'].'.');
+    $before=auditWeekSnapshot($id,$week);$total=$before['chapters'];$left=max(0,$w['goal']-$total);if($chapters>$left)throw new DomainException('Можно зачесть не больше '.$left.' глав: недельный план — '.$w['goal'].'.');
     if($total+$chapters===$w['goal'])assertCompletionAllowed($actor,$week,$id);
-    sql('INSERT INTO reading_entries VALUES (?,?,?,?,?,?,?,?,?,?)',[$entryId,$id,$week,$date,$chapters,$title,$note,$actor,$source,time()]);sql('UPDATE reports SET chapters_override=chapters_override+? WHERE user_id=? AND week=? AND chapters_override IS NOT NULL',[$chapters,$id,$week]);syncCompletion($id,$week);audit($actor,'reading',$id,$date.': +'.$chapters.' глав ('.$source.')');return weekResults($id)[$week-1];
+    sql('INSERT INTO reading_entries VALUES (?,?,?,?,?,?,?,?,?,?)',[$entryId,$id,$week,$date,$chapters,$title,$note,$actor,$source,time()]);sql('UPDATE reports SET chapters_override=chapters_override+? WHERE user_id=? AND week=? AND chapters_override IS NOT NULL',[$chapters,$id,$week]);syncCompletion($id,$week);auditWeekChange($actor,'reading',$id,$week,$date.': +'.$chapters.' глав ('.$source.')',$before,['entry_id'=>$entryId,'date'=>$date,'added'=>$chapters,'source'=>$source]);return weekResults($id)[$week-1];
 }
 
 // Called inside the Telegram update transaction. Validate the complete allocation before writing.
@@ -134,11 +136,11 @@ function telegramReadingPlan(string $id,int $chapters): array {
 }
 function addTelegramReading(string $id,int $chapters,int $updateId): array {
     $allocation=telegramReadingPlan($id,$chapters);$c=calendar($id);$result=[];
-    foreach($allocation as $w){$amount=$w['added'];$week=$w['week'];
+    foreach($allocation as $w){$amount=$w['added'];$week=$w['week'];$before=auditWeekSnapshot($id,$week);
         sql('INSERT INTO reading_entries VALUES (?,?,?,?,?,?,?,?,?,?)',['tg_'.$updateId.'_w'.$week,$id,$week,$c['today'],$amount,'','Отметка из Telegram: распределение по планам',$id,'telegram',time()]);
         sql('UPDATE reports SET chapters_override=chapters_override+? WHERE user_id=? AND week=? AND chapters_override IS NOT NULL',[$amount,$id,$week]);
         syncCompletion($id,$week);$saved=weekResults($id)[$week-1];$saved['added']=$amount;$result[]=$saved;
-        audit($id,'reading',$id,$c['today'].': +'.$amount.' глав (Telegram, неделя '.$week.')');
+        auditWeekChange($id,'reading',$id,$week,$c['today'].': +'.$amount.' глав (Telegram, неделя '.$week.')',$before,['source'=>'telegram','added'=>$amount,'date'=>$c['today']]);
     }
     return $result;
 }
@@ -153,25 +155,25 @@ function assertCompletionAllowed(string $actor,int $week,?string $id=null): void
 }
 function planBookText(array $books): string {return implode('; ',array_map(fn($b)=>$b['title'].' '.$b['chapter_from'].'–'.$b['chapter_to'],$books));}
 function saveWeeklyResult(string $id,string $actor,int $week,int $total,?int $days,string $title,string $note): array {
-    $w=assertWeekEditable($week,$id);
+    $w=assertWeekEditable($week,$id);$before=auditWeekSnapshot($id,$week);
     if($total<0||$total>$w['goal'])throw new DomainException('Укажите от 0 до '.$w['goal'].' глав.');
     if($days!==null&&($days<($total?1:0)||$days>3660))throw new DomainException('Неверное количество дней.');
     if($total===$w['goal'])assertCompletionAllowed($actor,$week,$id);
     $daily=(int)(sql('SELECT SUM(chapters) FROM reading_entries WHERE user_id=? AND week=?',[$id,$week])->fetchColumn()?:0);
     sql('INSERT INTO reports(user_id,week,editor_id,updated_at,chapters_manual,days_manual,title,note) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(user_id,week) DO UPDATE SET chapters_manual=excluded.chapters_manual,days_manual=excluded.days_manual,title=excluded.title,note=excluded.note,editor_id=excluded.editor_id,updated_at=excluded.updated_at',[$id,$week,$actor,time(),max(0,$total-$daily),$days,$title,$note]);
     sql('UPDATE reports SET chapters_override=? WHERE user_id=? AND week=?',[$total,$id,$week]);
-    syncCompletion($id,$week);audit($actor,'week_result',$id,'Неделя '.$week.': ручной итог '.$total.' глав'.($days!==null?', '.$days.' дн.':''));return weekResults($id)[$week-1];
+    syncCompletion($id,$week);auditWeekChange($actor,'week_result',$id,$week,'Неделя '.$week.': ручной итог '.$total.' глав'.($days!==null?', '.$days.' дн.':''),$before);return weekResults($id)[$week-1];
 }
 function completeWeek(string $id,string $actor,int $week,?int $days): array {
     $c=calendar($id);if($week<1||$week>22||!$c['calendar'][$week-1]['canComplete'])throw new DomainException('Эта неделя ещё не началась.');
     assertCompletionAllowed($actor,$week,$id);
     $w=weekResults($id)[$week-1];if($w['completed'])return $w;
-    $effectiveDays=$days??$w['daysAuto'];if($effectiveDays<1||$effectiveDays>3660)throw new DomainException('Количество дней должно быть от 1 до 3660.');
+    $before=auditWeekSnapshot($id,$week);$effectiveDays=$days??$w['daysAuto'];if($effectiveDays<1||$effectiveDays>3660)throw new DomainException('Количество дней должно быть от 1 до 3660.');
     $daily=(int)(sql('SELECT SUM(chapters) FROM reading_entries WHERE user_id=? AND week=?',[$id,$week])->fetchColumn()?:0);
     $title=mb_substr(planBookText($w['books']),0,200);
     sql('INSERT INTO reports(user_id,week,editor_id,updated_at,chapters_manual,days_manual,title) VALUES (?,?,?,?,?,?,?) ON CONFLICT(user_id,week) DO UPDATE SET chapters_manual=excluded.chapters_manual,days_manual=excluded.days_manual,editor_id=excluded.editor_id,updated_at=excluded.updated_at',[$id,$week,$actor,time(),max(0,$w['goal']-$daily),$days,$title]);
     sql('UPDATE reports SET chapters_override=? WHERE user_id=? AND week=?',[$w['goal'],$id,$week]);
-    syncCompletion($id,$week);audit($actor,'complete_week',$id,'Неделя '.$week.': '.$w['goal'].' глав за '.$effectiveDays.' дн.'.($c['today']>$w['end']?' (с опозданием)':''));return weekResults($id)[$week-1];
+    syncCompletion($id,$week);auditWeekChange($actor,'complete_week',$id,$week,'Неделя '.$week.': '.$w['goal'].' глав за '.$effectiveDays.' дн.'.($c['today']>$w['end']?' (с опозданием)':''),$before);return weekResults($id)[$week-1];
 }
 function sessionStart(): void {
     $https=(!empty($_SERVER['HTTPS'])&&$_SERVER['HTTPS']!=='off')||(getenv('MARATHON_TRUST_PROXY')==='1'&&($_SERVER['HTTP_X_FORWARDED_PROTO']??'')==='https');
@@ -189,3 +191,4 @@ function sessionStart(): void {
 }
 
 require_once __DIR__.'/rounds.php';
+require_once __DIR__.'/audit.php';

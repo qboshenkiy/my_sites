@@ -3,10 +3,12 @@ declare(strict_types=1);
 require_once __DIR__.'/core.php';
 require_once __DIR__.'/bot-menu.php';
 require_once __DIR__.'/bot-admin.php';
+require_once __DIR__.'/bot-audit.php';
 // Pure update handler: tests exercise Telegram binding without contacting Telegram.
 function telegramUpdate(array $update): array {
     $updateId=$update['update_id']??null;
     if(!is_int($updateId))return [];
+    $GLOBALS['audit_transport']=['source'=>'telegram','request_id'=>bin2hex(random_bytes(8))];
     $out=[];db()->exec('BEGIN IMMEDIATE');
     try {
         if(sql('SELECT id FROM bot_updates WHERE id=?',[$updateId])->fetchColumn()!==false){db()->exec('COMMIT');return [];}
@@ -29,7 +31,8 @@ function telegramUpdate(array $update): array {
         if($callback&&preg_match('/^([ai])_([a-f0-9]{48})$/',$text,$match)){$kind=$match[1]==='a'?'login':'invite';$token=$match[2];}
         elseif(!$callback&&preg_match('/^\/start(?:@\w+)? ([ai])_([a-f0-9]{48})$/',$text,$match)){$kind=$match[1]==='a'?'login':'invite';$token=$match[2];}
         if($callback)$out[]=['method'=>'answerCallbackQuery','args'=>['callback_query_id'=>$callback['id']]];
-        if(telegramAdminMenu($text,(bool)$callback,$linked,$telegramId,$reply)){}
+        if(telegramAuditMenu($text,(bool)$callback,$linked,$reply)){}
+        elseif(telegramAdminMenu($text,(bool)$callback,$linked,$telegramId,$reply)){}
         elseif(telegramMenu($text,(bool)$callback,$linked,$telegramId,$reply)){}
         elseif($callback&&preg_match('/^r_([yn])_([a-f0-9]{32})$/',$text,$confirmation)){
             $request=sql('SELECT * FROM telegram_reading_requests WHERE token_hash=?',[hash('sha256',$confirmation[2])])->fetch();

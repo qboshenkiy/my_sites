@@ -32,6 +32,7 @@ function telegramAdminCard(string $id,int $week,callable $reply): void {
     if($u['active']&&$w['canComplete']&&!$w['completed'])$buttons[]=[['text'=>'✅ Отметить план прочитанным','callback_data'=>'ad:c:'.$id.':'.$week]];
     if(!$w['editable']&&$w['canComplete'])$lines[]='Неделя закрыта для исправлений. Администратор может открыть её на сайте. Поздняя отметка выполнения доступна отдельно.';
     $nav=[];if($week>1)$nav[]=['text'=>'← Неделя '.($week-1),'callback_data'=>'ad:u:'.$id.':'.($week-1)];if($week<22)$nav[]=['text'=>'Неделя '.($week+1).' →','callback_data'=>'ad:u:'.$id.':'.($week+1)];if($nav)$buttons[]=$nav;
+    $buttons[]=[['text'=>'🧾 История участника','callback_data'=>'lg:b:0:'.$id.':0']];
     $buttons[]=[['text'=>'👥 К списку','callback_data'=>'ad:l:0:'.$week],['text'=>'📋 Отчёт','callback_data'=>'ad:r:0:'.$week]];$reply(implode("\n",array_filter($lines,fn($s)=>$s!=='')),$buttons);
 }
 function telegramAdminPreview(array $actor,string $telegramId,array $p,int $chapters,?int $days,callable $reply): void {
@@ -65,7 +66,6 @@ function telegramAdminMenu(string $text,bool $callback,?array $actor,string $tel
             $w=telegramAdminWeek($state['target'],$state['week']);
             if($state['mode']==='complete')$saved=completeWeek($u['id'],$actor['id'],$state['week'],null);
             else $saved=saveWeeklyResult($u['id'],$actor['id'],$state['week'],$state['chapters'],$state['days'],$w['title'],$w['note']);
-            audit($actor['id'],'telegram_admin_result',$u['id'],'Неделя '.$state['week'].', круг '.$saved['cycle'].': '.$saved['chapters'].' глав');
             $reply('✅ Сохранено: '.$u['name'].' · неделя '.$state['week'].' · круг '.$saved['cycle']."\n".$saved['chapters'].'/'.$saved['goal'].' глав · '.$saved['days'].' дн.',[[['text'=>'👤 Участник','callback_data'=>'ad:u:'.$u['id'].':'.$state['week']],['text'=>'📋 Общий отчёт','callback_data'=>'ad:r:0:'.$state['week']]]]);return true;
         }
         if($adminCallback){

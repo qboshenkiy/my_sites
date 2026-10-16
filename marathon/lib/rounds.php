@@ -23,7 +23,7 @@ function changeWeeklyCycle(string $id,string $actor,int $week,int $cycle,int $ex
     $u=user($id);$a=user($actor);if(!$u||!$a||!$u['active'])throw new DomainException('Аккаунт недоступен.');
     if($actor!==$id&&$a['role']!=='admin')throw new DomainException('Удалять чужие круги может только администратор.');
     if($week>calendar($id)['current'])throw new DomainException('Эта неделя ещё не началась.');
-    $current=weeklyCycle($id,$week);if($current!==$expected)throw new DomainException('Текущий круг изменился. Обновите страницу.');
+    $before=auditWeekSnapshot($id,$week);$current=weeklyCycle($id,$week);if($current!==$expected)throw new DomainException('Текущий круг изменился. Обновите страницу.');
     setWeeklyCycle($id,$week,$current);
     $row=sql('SELECT * FROM weekly_repeats WHERE user_id=? AND week=? AND cycle=?',[$id,$week,$cycle])->fetch();
     if($restore){
@@ -42,7 +42,7 @@ function changeWeeklyCycle(string $id,string $actor,int $week,int $cycle,int $ex
         setWeeklyCycle($id,$week,$current);sql('UPDATE weekly_repeats SET deleted_at=? WHERE user_id=? AND week=? AND cycle=?',[time(),$id,$week,$cycle]);
     }
     sql('DELETE FROM telegram_reading_requests WHERE user_id=?',[$id]);sql('DELETE FROM telegram_menu_states WHERE user_id=?',[$id]);
-    audit($actor,$restore?'restore_weekly_cycle':'delete_weekly_cycle',$id,'Неделя '.$week.', круг '.$cycle.($restore?' восстановлен в истории':' удалён в архив'));
+    auditWeekChange($actor,$restore?'restore_weekly_cycle':'delete_weekly_cycle',$id,$week,'Неделя '.$week.', круг '.$cycle.($restore?' восстановлен в истории':' удалён в архив'),$before,['affected_cycle'=>$cycle]);
     return weekResults($id)[$week-1];
 }
 function weeklyRepeats(string $id,int $week,bool $deleted=false): array {
@@ -54,7 +54,7 @@ function startWeeklyRepeat(string $id,string $actor,int $week,int $expected): ar
     $w=weekResults($id)[$week-1];
     if($w['cycle']!==$expected)throw new DomainException('Круг недели уже изменился. Обновите план.');
     if(!$w['completed'])throw new DomainException('Сначала полностью завершите текущий круг недели.');
-    $next=nextWeeklyCycle($id,$week);$archived=$w;unset($archived['repeats'],$archived['deletedRepeats']);
+    $before=auditWeekSnapshot($id,$week);$next=nextWeeklyCycle($id,$week);$archived=$w;unset($archived['repeats'],$archived['deletedRepeats']);
     $snapshot=['result'=>$archived,'report'=>sql('SELECT * FROM reports WHERE user_id=? AND week=?',[$id,$week])->fetch()?:null,'entries'=>sql('SELECT * FROM reading_entries WHERE user_id=? AND week=?',[$id,$week])->fetchAll(),'completion'=>sql('SELECT * FROM week_completions WHERE user_id=? AND week=?',[$id,$week])->fetch()?:null];
     sql('INSERT INTO weekly_repeats(user_id,week,cycle,snapshot,created_at) VALUES (?,?,?,?,?)',[$id,$week,$expected,json_encode($snapshot,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR),time()]);
     sql('DELETE FROM reading_entries WHERE user_id=? AND week=?',[$id,$week]);
@@ -63,7 +63,7 @@ function startWeeklyRepeat(string $id,string $actor,int $week,int $expected): ar
     sql('DELETE FROM reports WHERE user_id=? AND week=? AND pages=0 AND minutes=0 AND books=0',[$id,$week]);
     sql('DELETE FROM telegram_reading_requests WHERE user_id=?',[$id]);sql('DELETE FROM telegram_menu_states WHERE user_id=?',[$id]);
     setWeeklyCycle($id,$week,$next);
-    audit($actor,'weekly_repeat',$id,'Неделя '.$week.': начат круг '.$next.', предыдущий результат сохранён.');
+    auditWeekChange($actor,'weekly_repeat',$id,$week,'Неделя '.$week.': начат круг '.$next.', предыдущий результат сохранён.',$before);
     return weekResults($id)[$week-1];
 }
 function visibleCalendar(array $c,bool $admin): array {
@@ -85,7 +85,7 @@ function startReadingRound(string $id,string $actor,int $expectedRound): array {
     $next=$expectedRound+1;sql('INSERT INTO reading_rounds(user_id,number,start,plans,created_at) VALUES (?,?,?,?,?)',[$id,$next,$c['today'],$plans,time()]);
     sql('DELETE FROM reading_entries WHERE user_id=?',[$id]);sql('DELETE FROM week_completions WHERE user_id=?',[$id]);sql('DELETE FROM reports WHERE user_id=?',[$id]);
     sql('DELETE FROM telegram_reading_requests WHERE user_id=?',[$id]);sql('DELETE FROM telegram_menu_states WHERE user_id=?',[$id]);
-    audit($actor,'start_round',$id,'Начат круг '.$next.'. Предыдущий круг сохранён в истории.');return calendar($id);
+    audit($actor,'start_round',$id,'Начат круг '.$next.'. Предыдущий круг сохранён в истории.',['round'=>$next,'before'=>['round'=>$expectedRound,'chapters'=>$stats['chapters']],'after'=>['round'=>$next,'chapters'=>0]]);return calendar($id);
 }
 function archivedReadingRound(string $id,int $number): array {
     $snapshot=sql('SELECT snapshot FROM reading_rounds WHERE user_id=? AND number=?',[$id,$number])->fetchColumn();

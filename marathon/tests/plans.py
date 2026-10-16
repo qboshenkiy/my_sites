@@ -59,6 +59,9 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         books=[{'title':'Матфей','chapter_from':1,'chapter_to':7},{'title':'Марк','chapter_from':1,'chapter_to':3}]
         admin.call('week_plan',{'week':2,'books':books})
         admin.call('week_plan',{'week':3,'books':[{'title':'Лука','chapter_from':1,'chapter_to':20}]})
+        plan_log=admin.call('audit',suffix='&week=2')['events'][0]
+        assert plan_log['event']=='week_plan' and plan_log['metadata']['before']['goal']==7 and plan_log['metadata']['after']['goal']==10
+        assert plan_log['metadata']['source']=='site' and plan_log['metadata']['after']['books'][0]['title']=='Матфей'
         profile=reader.call('profile')['stats'];current=profile['pace']
         assert current['goal']==10 and len(current['books'])==2
         assert current['status']=='in_progress' and current['plannedByToday']==6 and current['daysLeft']==4
@@ -297,6 +300,19 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         db.close()
         admin.call('unlink_telegram',{'user':aid})
         assert admin.boot()['user']['id']==aid and admin.boot()['user']['telegram_id'] is None
+        events=[];cursor=0
+        while True:
+            page=admin.call('audit',suffix='&target='+uid+'&week=2&cursor='+str(cursor))
+            events.extend(page['events'])
+            if page['older'] is None:break
+            cursor=page['older']
+        kinds={event['event'] for event in events}
+        assert {'reading','week_result','clear_week_result','delete_reading','complete_week'}<=kinds,kinds
+        for event in events:
+            assert event['metadata']['week']==2 and event['metadata']['before'] is not None and event['metadata']['after'] is not None
+        assert 'fake-test-token' not in json.dumps(events)
+        admin.call('audit',suffix='&cursor=-1',status=400)
+        print('PASS: detailed website plan/result/reset/deletion logs, source, before/after and weekly history pagination.')
         print('PASS: admin-only Telegram unlink, preserved reading, session/request revocation, rebinding and staff login protection.')
         print('PASS: participant days cannot be forged, daily and manual days, participant chapter corrections, zero-day legacy completion recovery, automatic completion and current/previous week restriction.')
         print('PASS: role-independent reading, staff weekly editing, staff XLSX, account editing, archive/restore, permissions and session revocation.')
