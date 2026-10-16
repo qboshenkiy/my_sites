@@ -193,6 +193,9 @@ class GitDeckTests(unittest.TestCase):
         old = config['projects'][0]
         form = dict(old, name='Renamed Pulse')
         prepared = app.project_from_form(form, old, config)
+        for changes in ({'id': 'different-id'}, {'kind': 'marathon'}):
+            with self.assertRaisesRegex(ValueError, 'Тип и идентификатор'):
+                app.project_from_form(dict(form, **changes), old, config)
         app.save_config(server, [prepared], app.config_revision(config))
         self.assertEqual(app.load_config(path)['projects'][0]['name'], 'Renamed Pulse')
         with self.assertRaisesRegex(ValueError, 'изменились'):
