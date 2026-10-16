@@ -1,0 +1,63 @@
+services:
+  db:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-chrono}
+      POSTGRES_USER: ${DB_USERNAME:-chrono}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
+    volumes:
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  web:
+    build:
+      context: .
+      dockerfile: ops/Dockerfile
+    restart: unless-stopped
+    logging: *logging
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - '${APP_BIND:-0.0.0.0}:${APP_PORT:-8082}:80'
+    environment:
+      CI_ENVIRONMENT: production
+      app_baseURL: ${APP_URL:-http://localhost:8082/}
+      app_indexPage: ''
+      database_default_hostname: db
+      database_default_database: ${DB_DATABASE:-chrono}
+      database_default_username: ${DB_USERNAME:-chrono}
+      database_default_password: ${DB_PASSWORD:?Set DB_PASSWORD}
+      database_default_DBDriver: Postgre
+      database_default_port: 5432
+      database_default_charset: utf8
+      database_default_DBDebug: 'false'
+      DB_HOST: db
+      DB_DATABASE: ${DB_DATABASE:-chrono}
+      DB_USERNAME: ${DB_USERNAME:-chrono}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD with at least 12 characters}
+      session_cookieName: chrono_session
+    volumes:
+      - writable:/var/www/html/writable
+      - uploads:/var/www/html/public/uploads
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --max-time, '5', 'http://127.0.0.1/_health.php']
+      interval: 10s
+      timeout: 6s
+      start_period: 60s
+      retries: 12
+volumes:
+  database:
+  writable:
+  uploads:

@@ -1,0 +1,91 @@
+/* =========================================================
+   STATUS BADGES — one tone system for every enum
+   =========================================================
+
+   Loaded from layouts/dashboard.php so every page on the layout has it.
+   Previously these rules lived in management.css, which the dashboard does
+   not load, so a badge rendered there came out unstyled.
+
+   Tones are assigned by meaning, not by table:
+     amber  — pending / not live yet   (DRAFT, WAITING)
+     green  — live / in progress       (PRODUCTION, PLAYING, ACTIVE)
+     grey   — done / archived          (FINISHED)
+     red    — dropped out              (ELIMINATED, LEFT)
+
+   Markup comes from enum_badge() in app/Helpers/label_helper.php.
+   ========================================================= */
+
+.status-badge {
+    display: inline-flex;
+
+    align-items: center;
+
+    padding: 5px 8px;
+
+    border: 1px solid transparent;
+
+    border-radius: 3px;
+
+    font-size: 9px;
+    font-weight: 800;
+
+    letter-spacing: .5px;
+
+    white-space: nowrap;
+}
+
+
+/* PENDING */
+
+.status-draft,
+.status-waiting {
+    background: #2a261b;
+
+    border-color: #55492c;
+
+    color: #c1a166;
+}
+
+
+/* LIVE */
+
+.status-production,
+.status-playing,
+.status-active {
+    background: #17271f;
+
+    border-color: #28593d;
+
+    color: #48b77a;
+}
+
+
+/* DONE */
+
+.status-finished {
+    background: #252a36;
+
+    border-color: #353b4a;
+
+    color: #8993aa;
+}
+
+
+/* DROPPED OUT */
+
+.status-eliminated,
+.status-left {
+    background: #2b1d1f;
+
+    border-color: #5a2f33;
+
+    color: #e06c75;
+}
+
+
+@media (max-width: 760px) {
+    .status-badge {
+        width: max-content;
+        font-size: 11px;
+    }
+}

@@ -1,5 +1,10 @@
 # Пульс — опросники и викторины в реальном времени
 
+В одном репозитории `https://github.com/qboshenkiy/my_sites` находятся четыре приложения:
+Пульс в корне, марафон чтения в `marathon/`, панель обновлений в `deploy-panel/`
+и Chrono Logos в `chrono_logos/`. Они запускаются отдельно и сохраняют собственные данные.
+Для Chrono Logos в GitDeck укажите этот репозиторий, ветку `main` и папку `chrono_logos`.
+
 Проект для Laragon и Linux-сервера: PHP 8.1+ и SQLite (`pdo_sqlite`, `mbstring`). Composer, Node.js и MySQL не нужны.
 
 ## Запуск на Hetzner Cloud

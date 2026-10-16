@@ -1,0 +1,23 @@
+.draw-page {
+    max-width: 1100px;
+    margin: 0 auto;
+}
+
+.draw-heading {
+    margin-bottom: 24px;
+}
+
+.draw-heading h2 {
+    margin: 6px 0;
+}
+
+.draw-heading p {
+    color: #8e98ad;
+}
+
+.draw-card {
+    padding: 32px;
+    border: 1px solid #373e4d;
+    border-radius: 8px;
+    background: #10141d;
+}

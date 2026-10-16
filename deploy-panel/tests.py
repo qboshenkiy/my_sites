@@ -363,7 +363,7 @@ class ChronoTests(unittest.TestCase):
         self.dest = self.root / 'installed'
         self.source.mkdir()
         self.p = dict(id='chrono-logos', name='Chrono Logos', kind='chrono',
-                      repo='https://github.com/qboshenkiy/games.git', branch='main', subdir='',
+                      repo='https://github.com/qboshenkiy/my_sites.git', branch='main', subdir='chrono_logos',
                       directory=str(self.dest), compose='compose.yaml', services=['web'], profiles=[])
         for name in app.REQUIRED['chrono'] + ['public/assets/app.css', '.dockerignore']:
             path = self.source / name
@@ -408,6 +408,24 @@ class ChronoTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'пустой'):
             app.bootstrap_chrono(self.p, self.source)
         self.assertEqual((self.dest / '.env').read_text(), 'original secret')
+
+    def test_checkout_chrono_from_monorepo_subdirectory(self):
+        repository = self.root / 'monorepo'
+        shutil_source = repository / 'chrono_logos'
+        app.copy_code(self.source, shutil_source, self.p)
+        (shutil_source / '.env').write_text('LOCAL_SECRET_MUST_NOT_DEPLOY')
+        (repository / 'index.php').write_text('another application')
+        for args in [['init', '-b', 'main'], ['add', '.'],
+                     ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'monorepo']]:
+            subprocess.run(['git'] + args, cwd=repository, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        p = dict(self.p, repo=str(repository))
+        output = self.root / 'checkout'
+        sha = app.checkout(p, self.config, output, io.StringIO())
+        self.assertEqual(len(sha), 40)
+        self.assertTrue((output / 'ops/Dockerfile').is_file())
+        self.assertTrue((output / 'app/Config/Paths.php').is_file())
+        self.assertFalse((output / '.env').exists())
+        self.assertFalse((output / 'index.php').exists())
 
     def test_failed_update_restores_postgres_and_keeps_runtime(self):
         app.bootstrap_chrono(self.p, self.source)

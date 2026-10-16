@@ -1,0 +1,502 @@
+:root {
+    /*
+     * --gp-card-size/--gp-zone-size: единственный источник размера карты
+     * и зоны хронологии на ВСЕХ ширинах экрана (раньше было 4 разных
+     * числа для карты — 156/126/132/122px — в 4 разных блоках, не
+     * согласованных друг с другом и с JS). Числа здесь ПРОДУБЛИРОВАНЫ
+     * как константы CARD_MIN/CARD_VW/CARD_MAX/ZONE_MIN/ZONE_VW/ZONE_MAX
+     * в play.php (функция timelineCapacity()) — совпадение чисел, а не
+     * парсинг computed style, потому что getComputedStyle() на custom
+     * property с clamp() отдаёт исходную строку, а не разрешённый px,
+     * и требует реально отрисованного элемента.
+     */
+    --gp-card-min: 100px;
+    --gp-card-vw: 22vw;
+    --gp-card-max: 152px;
+    --gp-card-size: clamp(var(--gp-card-min), var(--gp-card-vw), var(--gp-card-max));
+
+    --gp-zone-min: 28px;
+    --gp-zone-vw: 7vw;
+    --gp-zone-max: 46px;
+    --gp-zone-size: clamp(var(--gp-zone-min), var(--gp-zone-vw), var(--gp-zone-max));
+
+    /* Квадратно и ровно — один переключатель на всё. */
+    --gp-radius: 0px;
+
+    --gp-bg: #0b0f14;
+    --gp-panel: #151923;
+    --gp-panel-2: #11151e;
+    --gp-border: #2c3240;
+    --gp-border-felt: #23342a;
+
+    --gp-accent: #c1a166;
+    --gp-accent-soft: rgba(193, 161, 102, .16);
+
+    --gp-text: #e8ebf2;
+    --gp-text-dim: #8993a6;
+    --gp-text-faint: #667087;
+
+    --gp-good: #3d9a6a;
+    --gp-good-bg: #173d2b;
+    --gp-good-text: #54c98a;
+    --gp-bad: #a94d4d;
+    --gp-bad-bg: #4a2020;
+    --gp-bad-text: #ff7373;
+
+    --gp-felt-1: rgba(43, 86, 65, .95);
+    --gp-felt-2: rgba(20, 52, 39, .98);
+    --gp-felt-3: #12281f;
+
+    /* Один акцентный шрифт для крупной игровой "хромы" — номер хода,
+       заголовок стола, банneр хода. Тело и подписи остаются на system-ui,
+       чтобы не перегружать читаемость. */
+    --gp-display-font: 'Oswald', Inter, system-ui, sans-serif;
+
+    color-scheme: dark;
+    font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--gp-bg);
+    color: var(--gp-text);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; background: var(--gp-bg); width: 100%; overflow-x: hidden; }
+button, a { font: inherit; }
+button { color: inherit; }
+
+.play-root {
+    min-height: 100vh;
+    min-height: 100dvh;
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    background:
+        radial-gradient(ellipse 140% 60% at 50% -10%, rgba(43, 86, 65, .24), transparent 62%),
+        var(--gp-bg);
+    overflow-x: hidden;
+}
+
+/*
+ * Grid/flex-элементы по умолчанию min-width:auto — не сжимаются меньше
+ * содержимого. Без явного min-width:0 по всей цепочке .play-root →
+ * .game-table-shell → .table-surface → .timeline-board узкая карточка
+ * с фикс-шириной раздувала родителя шире экрана — overflow-x:hidden на
+ * .play-root это просто молча прятал, скрывая обрезанные карту и кнопку
+ * "→" без видимого скролла (document.scrollWidth оставался в норме,
+ * т.к. переполнение гасилось на уровень выше, не долетая до html/body).
+ */
+.play-bar,
+.game-table-shell,
+.table-surface,
+.timeline-board,
+.table-nav-slim,
+.hand-dock {
+    min-width: 0;
+}
+
+/* =========================================================
+   ВЕРХНЯЯ ПЛАШКА — единственное, что всегда на виду сверху:
+   кнопка меню, чей ход, счётчик колоды. Всё остальное (название
+   комнаты, код, счёт игроков, выход, проектор) — в #game-menu.
+   Один и тот же минимальный вид на любой ширине, не только на
+   мобильном — на этом экране больше нет "развёрнутой" desktop-шапки.
+   ========================================================= */
+.play-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: var(--gp-panel);
+    border-bottom: 1px solid var(--gp-border-felt);
+}
+
+.menu-toggle {
+    flex: 0 0 auto;
+    width: 38px;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--gp-border);
+    border-radius: var(--gp-radius);
+    background: #10131b;
+    cursor: pointer;
+}
+.menu-toggle:hover { border-color: var(--gp-accent); color: var(--gp-accent); }
+
+.play-bar-turn {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    overflow: hidden;
+}
+.play-bar-turn strong {
+    color: #fff;
+    font-family: var(--gp-display-font);
+    font-weight: 600;
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.play-bar-turn em {
+    color: var(--gp-accent);
+    font-style: normal;
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.play-bar-deck {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 9px;
+    border: 1px solid var(--gp-border);
+    background: #10131b;
+    color: var(--gp-text-dim);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* =========================================================
+   МЕНЮ КОМНАТЫ — комната/код/счёт игроков/проектор/выход. Скрыто
+   по умолчанию на любой ширине, открывается кнопкой в .play-bar.
+   Тот же простой паттерн hidden/скрыт, что и у #card-modal — без
+   анимации, специально ради единообразия с уже устоявшимся в
+   проекте способом показывать/прятать оверлеи.
+   ========================================================= */
+.menu-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    border: 0;
+    background: rgba(5, 7, 11, .72);
+    cursor: pointer;
+}
+.menu-overlay[hidden] { display: none; }
+
+.game-menu {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 95;
+    width: min(320px, 88vw);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 16px;
+    overflow-y: auto;
+    background: var(--gp-panel);
+    border-right: 1px solid var(--gp-border-felt);
+    box-shadow: 24px 0 48px rgba(0, 0, 0, .4);
+}
+.game-menu[hidden] { display: none; }
+
+.game-menu-top { display: flex; align-items: center; justify-content: space-between; }
+.play-back { color: var(--gp-accent); text-decoration: none; font-size: 12px; }
+.menu-close {
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--gp-border);
+    border-radius: var(--gp-radius);
+    background: transparent;
+    cursor: pointer;
+}
+.menu-close:hover { border-color: var(--gp-accent); color: var(--gp-accent); }
+
+.eyebrow { color: var(--gp-text-faint); font-size: 9px; font-weight: 900; letter-spacing: 1px; }
+.game-menu-room h1 {
+    margin: 3px 0 0;
+    font-family: var(--gp-display-font);
+    font-weight: 600;
+    letter-spacing: .01em;
+    font-size: 19px;
+}
+
+.game-menu-stats { display: flex; gap: 8px; }
+.game-menu-stats > div { flex: 1; min-width: 0; padding: 8px 10px; background: #10131b; border: 1px solid var(--gp-border); border-radius: var(--gp-radius); }
+.game-menu-stats span { display: block; color: var(--gp-text-faint); font-size: 8px; text-transform: uppercase; }
+.game-menu-stats strong { display: block; margin-top: 2px; color: #fff; font-family: var(--gp-display-font); font-variant-numeric: tabular-nums; font-size: 15px; }
+
+.game-menu-players { display: flex; flex-direction: column; gap: 8px; }
+
+.player-pill {
+    padding: 8px 10px 8px 12px;
+    background: #181d27; border: 1px solid #303746; border-left: 3px solid transparent;
+    border-radius: var(--gp-radius);
+}
+.player-pill strong { display: block; font-size: 12px; }
+.player-pill span { color: var(--gp-text-dim); font-size: 10px; }
+.player-pill.is-current { border-color: var(--gp-accent); border-left-color: var(--gp-accent); background: var(--gp-accent-soft); }
+.player-pill.is-eliminated { opacity: .35; text-decoration: line-through; }
+.player-pill.is-offline { border-style: dashed; opacity: .65; }
+
+.game-menu-actions { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
+.projector-link {
+    display: block;
+    text-align: center;
+    padding: 10px;
+    border: 1px solid var(--gp-border);
+    color: var(--gp-accent);
+    text-decoration: none;
+    font-size: 12px;
+}
+.game-menu-actions form { margin: 0; }
+.play-leave {
+    width: 100%;
+    min-height: 40px;
+    padding: 0 13px;
+    border: 1px solid #613c3c;
+    border-radius: var(--gp-radius);
+    background: #241718;
+    color: #f0b3b3;
+    cursor: pointer;
+}
+
+/* =========================================================
+   СТОЛ
+   ========================================================= */
+
+.game-table-shell { min-height: 0; padding: 10px 12px; }
+
+.table-surface {
+    height: 100%;
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid #34493e;
+    border-radius: var(--gp-radius);
+    background: radial-gradient(circle at 50% 45%, var(--gp-felt-1), var(--gp-felt-2) 55%, var(--gp-felt-3) 100%);
+    box-shadow: inset 0 0 60px rgba(0, 0, 0, .3), 0 16px 48px rgba(0, 0, 0, .28);
+}
+
+.table-nav-slim {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+.table-nav-slim button { width: 30px; height: 26px; border: 1px solid rgba(255, 255, 255, .16); border-radius: var(--gp-radius); background: rgba(0, 0, 0, .18); cursor: pointer; }
+.table-nav-slim button:disabled { opacity: .3; cursor: default; }
+.table-nav-slim span { min-width: 70px; text-align: center; color: #bdc5d3; font-size: 9px; font-variant-numeric: tabular-nums; }
+
+.timeline-board {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.square-card {
+    aspect-ratio: 1 / 1;
+    background: #171b24;
+    border: 1px solid var(--gp-border);
+    border-radius: var(--gp-radius);
+    overflow: hidden;
+    box-shadow: 0 8px 22px rgba(0, 0, 0, .28);
+    transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+.table-card { flex: 0 0 var(--gp-card-size); cursor: pointer; }
+.table-card:hover { transform: translateY(-5px); border-color: var(--gp-accent); box-shadow: 0 16px 36px rgba(0, 0, 0, .34); }
+.square-card-media { height: 62%; display: flex; align-items: center; justify-content: center; background: #202633; color: #687288; overflow: hidden; border: 0; padding: 0; width: 100%; cursor: pointer; position: relative; }
+.square-card-media img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .18s ease; }
+.square-card:hover .square-card-media img { transform: scale(1.04); }
+.square-card-body { height: 38%; display: flex; flex-direction: column; justify-content: space-between; gap: 4px; padding: 9px; }
+.square-card-body strong { color: #fff; font-size: 10px; line-height: 1.25; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.square-card-body span { color: var(--gp-accent); font-size: 9px; font-weight: 800; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/*
+ * Карта, поставленная неверно: всё равно стоит на своём историческом
+ * месте в хронологии, но помечена, чтобы отличаться от верных ходов.
+ */
+.table-card.is-misplaced { border-color: #5a2f33; }
+.misplaced-badge {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    padding: 3px 6px;
+    background: rgba(43, 29, 31, .92);
+    border-top: 1px solid #5a2f33;
+    color: #e06c75;
+    font-size: 8px;
+    font-weight: 800;
+    letter-spacing: .03em;
+    text-align: center;
+}
+
+.drop-zone {
+    flex: 0 0 var(--gp-zone-size);
+    height: 142px;
+    padding: 0 5px;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+}
+.drop-zone span {
+    display: flex; align-items: center; justify-content: center;
+    width: 100%; height: 100%;
+    border: 1px dashed rgba(230, 206, 157, .34);
+    border-radius: var(--gp-radius);
+    color: transparent;
+    font-size: 8px;
+    writing-mode: vertical-rl;
+    transition: .15s ease;
+}
+.drop-zone:not(:disabled):hover span,
+.drop-zone.is-over span {
+    color: #f0d49c;
+    background: var(--gp-accent-soft);
+    border-color: #d6b87f;
+    transform: scaleX(1.08);
+}
+.drop-zone.is-over { transform: scaleX(1.35); }
+.drop-zone:disabled { cursor: default; opacity: .22; }
+
+.move-toast { position: fixed; z-index: 40; top: 56px; left: 50%; transform: translateX(-50%); padding: 12px 18px; border-radius: var(--gp-radius); box-shadow: 0 12px 36px rgba(0, 0, 0, .38); font-size: 12px; }
+.move-toast.is-good { background: var(--gp-good-bg); border: 1px solid var(--gp-good); }
+.move-toast.is-bad { background: var(--gp-bad-bg); border: 1px solid var(--gp-bad); }
+
+/* =========================================================
+   LIVE MOVE — единственное окно в чужие ходы, всегда на виду
+   ========================================================= */
+
+.live-move {
+    flex: 0 0 auto;
+    width: min(720px, 100%);
+    margin: 0 auto 8px;
+    padding: 10px;
+    display: grid;
+    grid-template-columns: 52px minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    background: rgba(15, 19, 25, .95);
+    border: 1px solid #36404a;
+    border-radius: var(--gp-radius);
+    box-shadow: 0 12px 34px rgba(0, 0, 0, .24);
+}
+.live-move[hidden] { display: none; }
+.live-move.is-new { animation: liveMovePulse .85s ease; }
+@keyframes liveMovePulse {
+    0% { transform: translateY(-8px) scale(.985); opacity: .35; }
+    45% { transform: translateY(0) scale(1.018); opacity: 1; }
+    100% { transform: scale(1); }
+}
+
+.live-move-image { width: 52px; aspect-ratio: 1 / 1; overflow: hidden; border-radius: var(--gp-radius); background: #11161b; }
+.live-move-image img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.live-move-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.live-move-body span { color: #8e9aa6; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-move-body strong { overflow: hidden; color: #fff; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.live-move-body b { font-size: 11px; letter-spacing: .08em; }
+.live-move-body b.is-good { color: var(--gp-good-text); }
+.live-move-body b.is-bad { color: var(--gp-bad-text); }
+.live-move-body em { color: var(--gp-accent); font-size: 12px; font-style: normal; font-weight: 800; font-variant-numeric: tabular-nums; }
+
+#live-move-details {
+    min-height: 32px;
+    padding: 0 10px;
+    border: 1px solid #48525e;
+    border-radius: var(--gp-radius);
+    background: #171d23;
+    color: #dbe2e8;
+    font-size: 11px;
+    cursor: pointer;
+}
+#live-move-details:hover { border-color: var(--gp-accent); color: var(--gp-accent); }
+
+/* =========================================================
+   РУКА ИГРОКА
+   ========================================================= */
+
+.hand-dock {
+    position: relative;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    background: var(--gp-panel);
+    border-top: 1px solid var(--gp-border-felt);
+}
+.hand-list { max-width: 1400px; margin: 0 auto; display: flex; gap: 10px; overflow-x: auto; padding: 4px; }
+.hand-card {
+    flex: 0 0 132px; cursor: grab; transition: transform .15s, border-color .15s;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+}
+.hand-card:hover { transform: translateY(-4px); }
+.hand-card.is-selected { border-color: #d1ad68; box-shadow: 0 0 0 2px var(--gp-accent-soft); }
+.hand-card.is-dragging { opacity: .45; transform: scale(.96); }
+.hand-card-media { cursor: zoom-in; }
+.hand-empty { width: 100%; padding: 24px; border: 1px dashed #363d4d; text-align: center; color: var(--gp-text-faint); font-size: 10px; }
+
+.hand-count-badge {
+    position: absolute;
+    top: 6px;
+    right: 10px;
+    color: var(--gp-accent);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+}
+
+.blind-draw { max-width: 1400px; margin: 0 auto 10px; padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; gap: 12px; background: #10141d; border: 1px solid #373e4d; border-radius: var(--gp-radius); color: #8e98ad; font-size: 10px; }
+.blind-draw[hidden] { display: none; }
+.blind-draw button { padding: 9px 14px; background: var(--gp-accent); border: 0; border-radius: var(--gp-radius); color: #10131a; font-weight: 900; cursor: pointer; }
+
+.touch-drag-ghost {
+    position: fixed !important;
+    z-index: 9999;
+    width: var(--gp-card-size) !important;
+    height: var(--gp-card-size) !important;
+    pointer-events: none !important;
+    transform: translate(-50%, -50%) rotate(3deg) scale(.92);
+    opacity: .88;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, .5);
+}
+
+.card-modal { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; }
+.card-modal[hidden] { display: none; }
+.modal-backdrop { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: rgba(5, 7, 11, .82); }
+.card-modal-card { position: relative; z-index: 1; width: min(760px, 94vw); max-height: 90vh; display: grid; grid-template-columns: minmax(260px, 1fr) minmax(280px, 1fr); overflow: auto; background: #171b24; border: 1px solid #41495b; border-radius: var(--gp-radius); box-shadow: 0 30px 80px rgba(0, 0, 0, .6); }
+.modal-image-wrap { min-height: 420px; background: #0f131a; }
+.modal-image-wrap img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.modal-content { padding: 28px; }
+.modal-content h2 { margin: 8px 0 14px; font-family: var(--gp-display-font); font-size: 25px; }
+.modal-content p { color: #a2abbd; line-height: 1.6; font-size: 12px; }
+.modal-value { display: block; margin-top: 20px; color: var(--gp-accent); font-size: 16px; font-variant-numeric: tabular-nums; }
+.modal-close { position: absolute; z-index: 3; top: 10px; right: 10px; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border: 1px solid #4b5364; border-radius: var(--gp-radius); background: #11151c; cursor: pointer; }
+
+/* =========================================================
+   МАЛЕНЬКИЙ ТЕЛЕФОН — ≤400px. Токен --gp-card-size держит минимум
+   100px на любой ширине. Здесь только точечная правка пропорций
+   карточки: при 62%/38% media/body на 100px карточке под текст
+   остаётся ~38px, а туда должны влезть двухстрочный заголовок +
+   значение — при проверке скриншотом текст реально обрезался.
+   Плюс меню на весь экран вместо фиксированных 320px.
+   ========================================================= */
+@media (max-width: 400px) {
+    .game-menu { width: 100%; }
+
+    .square-card-media { height: 54%; }
+    .square-card-body {
+        height: 46%;
+        padding: 5px 6px;
+        gap: 2px;
+    }
+    .square-card-body strong { font-size: 9px; line-height: 1.2; }
+    .square-card-body span { font-size: 8px; }
+
+    .live-move { grid-template-columns: 44px minmax(0, 1fr); }
+    .live-move-image { width: 44px; }
+    #live-move-details { display: none; }
+}
