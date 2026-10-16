@@ -12,6 +12,10 @@ function element() {
 const document = {querySelector(selector) { return nodes[selector] ??= element(); },
   addEventListener() {}, createElement: element, body: element()};
 const html = fs.readFileSync(__dirname + '/index.html', 'utf8');
+const idPattern = html.match(/id="m-id"[^>]*pattern="([^"]+)"/)[1];
+const idValidator = new RegExp('^(?:' + idPattern + ')$', 'v');
+assert.ok(idValidator.test('chrono-logos'));
+assert.ok(!idValidator.test('chrono_logos'));
 const script = html.split('<script>')[1].split('</script>')[0]
   .replace('refresh();setInterval(()=>{if(state)refresh()},4000);', '');
 const context = vm.createContext({document, assert, nodes, console});
@@ -22,6 +26,8 @@ vm.runInContext(`(async () => {
     repo:'https://github.com/qboshenkiy/my_sites.git',branch:'main',subdir:'',
     directory:'/opt/chrono-logos',compose:'compose.yaml',services:['web'],profiles:[]};
   openModule(project);
+  assert.equal(nodes['#m-id'].readOnly, true);
+  assert.equal(nodes['#m-kind'].disabled, true);
   assert.equal(nodes['#m-subdir'].value, 'chrono_logos');
   // Simulate an extension/autofill changing disabled identity controls.
   nodes['#m-id'].value = 'chrono_logos';
@@ -40,6 +46,7 @@ vm.runInContext(`(async () => {
   openModule({...project,repo:'https://example.org/custom.git'});
   assert.equal(nodes['#m-subdir'].value, '');
   openModule(null);
+  assert.equal(nodes['#m-id'].readOnly, false);
   nodes['#m-kind'].value = 'chrono';
   nodes['#m-kind'].onchange();
   assert.equal(nodes['#m-subdir'].value, 'chrono_logos');
