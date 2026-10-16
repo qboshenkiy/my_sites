@@ -22,7 +22,7 @@ import threading
 import time
 import urllib.parse
 
-VERSION = '1.2.0'
+VERSION = '1.2.1'
 LAYOUT = {
     'pulse': ['index.php', 'api.php', 'seed.php', '.htaccess', 'assets', 'tools/check.php', 'tools/backup.php'],
     'marathon': ['index.php', 'api.php', '.htaccess', 'assets', 'lib', 'tools/bot.php', 'tools/backup.php'],
@@ -627,7 +627,7 @@ def bootstrap_chrono(p, source):
     dest.mkdir(parents=True, exist_ok=True)
     validate_destination(dest, p['compose'])
     shutil.copy2(source / 'ops/compose.yaml', dest / p['compose'])
-    write_env(p, patch_env('', {'APP_URL': 'http://localhost:8082/', 'APP_PORT': '8082',
+    write_env(p, patch_env('', {'APP_URL': 'https://vano.sbena.net/', 'APP_PORT': '8082',
         'APP_BIND': '0.0.0.0', 'DB_DATABASE': 'chrono', 'DB_USERNAME': 'chrono',
         'DB_PASSWORD': secrets.token_urlsafe(32), 'ADMIN_USERNAME': 'admin',
         'ADMIN_PASSWORD': secrets.token_urlsafe(32)}))

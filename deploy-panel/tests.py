@@ -396,6 +396,7 @@ class ChronoTests(unittest.TestCase):
         self.assertTrue((self.dest / 'ops/Dockerfile').exists())
         values = {k: v for k, v, *_ in app.env_records(app.env_text(self.p))}
         self.assertGreaterEqual(len(values['DB_PASSWORD']), 32)
+        self.assertEqual(values['APP_URL'], 'https://vano.sbena.net/')
         self.assertNotEqual(values['DB_PASSWORD'], values['ADMIN_PASSWORD'])
         self.assertFalse(any(args[0] == 'run' for args in self.calls))
         self.assertTrue(any(args[:2] == ['up', '-d'] for args in self.calls))
