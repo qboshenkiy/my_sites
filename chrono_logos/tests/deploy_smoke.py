@@ -40,7 +40,7 @@ with tempfile.TemporaryDirectory(prefix='chrono-deploy-test-') as tmp:
     for name in ('cache', 'logs', 'session', 'uploads', 'debugbar'):
         (site / 'writable' / name).mkdir(parents=True, exist_ok=True)
     db_port, web_port = port(), port()
-    env = dict(os.environ, CI_ENVIRONMENT='production', ADMIN_USERNAME='deployadmin', ADMIN_PASSWORD='test-password-for-deployment',
+    env = dict(os.environ, CI_ENVIRONMENT='production', ADMIN_USERNAME='deployadmin', ADMIN_PASSWORD='test-password-for-deployment', TELEGRAM_BOT_TOKEN='12345:chrono-test-token',
                PGHOST='127.0.0.1', PGPORT=str(db_port), PGUSER='postgres',
                DB_HOST='127.0.0.1', DB_PORT=str(db_port), DB_DATABASE='chrono_test', DB_USERNAME='postgres', DB_PASSWORD='')
     env.update({'app_baseURL': f'http://127.0.0.1:{web_port}/', 'app_indexPage': '',
@@ -104,6 +104,8 @@ with tempfile.TemporaryDirectory(prefix='chrono-deploy-test-') as tmp:
             assert data.get('success'), data
             assert client.open(base + '/admin/users').status == 200
             print('PASS: catalogue, CSRF-protected login and administrator page')
+            from telegram_http import run_telegram_checks
+            run_telegram_checks(base, env, lambda statement: run([PG / 'psql', '-d', 'chrono_test', '-Atc', statement], env=env))
             from timeline_http import run_timeline_checks
             run_timeline_checks(base, client, data, env,
                                 lambda statement: run([PG / 'psql', '-d', 'chrono_test', '-Atc', statement], env=env))
@@ -114,6 +116,8 @@ with tempfile.TemporaryDirectory(prefix='chrono-deploy-test-') as tmp:
                 run([PG / 'psql', '-d', 'chrono_test', '-Atc', "UPDATE cards SET is_enabled=TRUE WHERE title<>'' AND sort_order IS NOT NULL"], env=env)
                 room_code = run([PG / 'psql', '-d', 'chrono_test', '-Atc', "SELECT code FROM game_rooms WHERE status='PLAYING' ORDER BY id LIMIT 1"], env=env).strip()
                 print(run(['node', ROOT / 'tests/mobile_ui.js'], env=dict(env, TIMELINE_TEST_URL=base, MOBILE_ROOM_CODE=room_code)), end='')
+            if os.environ.get('TELEGRAM_UI') == '1':
+                print(run(['node', ROOT / 'tests/telegram_ui.js'], env=dict(env, TIMELINE_TEST_URL=base)), end='')
     finally:
         if server:
             server.terminate()

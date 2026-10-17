@@ -22,7 +22,7 @@ import threading
 import time
 import urllib.parse
 
-VERSION = '1.2.4'
+VERSION = '1.3.0'
 LAYOUT = {
     'pulse': ['index.php', 'api.php', 'seed.php', '.htaccess', 'assets', 'tools/check.php', 'tools/backup.php'],
     'marathon': ['index.php', 'api.php', '.htaccess', 'assets', 'lib', 'tools/bot.php', 'tools/backup.php'],
@@ -227,6 +227,10 @@ def run(command, log=None, cwd=None, env=None, timeout=900):
 
 def compose(p, args, log):
     command = ['docker', 'compose', '-f', p['compose']]
+    if p['kind'] == 'chrono' and (Path(p['directory']) / 'ops/compose.runtime.yaml').is_file():
+        command += ['-f', 'ops/compose.runtime.yaml']
+    if (Path(p['directory']) / 'compose.gitdeck-https.yaml').is_file():
+        command += ['-f', 'compose.gitdeck-https.yaml']
     for profile in p.get('profiles', []):
         command += ['--profile', profile]
     return run(command + args, log, cwd=p['directory'])
@@ -276,7 +280,7 @@ def git_environment(p):
 
 REF_LOCK = threading.Lock()
 
-PUBLIC_ENV = {'DOMAIN', 'APP_URL', 'APP_PORT', 'APP_BIND', 'TELEGRAM_BOT_USERNAME', 'MARATHON_TIMEZONE', 'TZ', 'ADMIN_USERNAME'}
+PUBLIC_ENV = {'DOMAIN', 'APP_URL', 'APP_PORT', 'APP_BIND', 'TELEGRAM_BOT_USERNAME', 'MARATHON_TIMEZONE', 'TZ', 'ADMIN_USERNAME', 'HTTPS_PROXY_PROJECT'}
 
 
 def env_file(p):
@@ -334,7 +338,7 @@ def env_settings(p):
     if p['kind'] == 'marathon':
         defaults += ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME']
     if p['kind'] == 'chrono':
-        defaults = ['APP_URL', 'APP_PORT', 'APP_BIND', 'ADMIN_USERNAME', 'ADMIN_PASSWORD']
+        defaults = ['APP_URL', 'HTTPS_PROXY_PROJECT', 'APP_PORT', 'APP_BIND', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME', 'ADMIN_USERNAME', 'ADMIN_PASSWORD']
     fields = []
     for key in dict.fromkeys(defaults + list(values)):
         if key.startswith(('COMPOSE_', 'DOCKER_', 'GIT_', 'PYTHON')) or key in ('PATH', 'HOME'):
@@ -365,6 +369,84 @@ def validate_env_changes(changes):
             raise ValueError('Порт должен быть числом от 1 до 65535')
         if key == 'APP_BIND' and value not in ('', '0.0.0.0', '127.0.0.1', '::'):
             raise ValueError('APP_BIND: используйте 0.0.0.0, 127.0.0.1 или ::')
+        if key == 'HTTPS_PROXY_PROJECT' and value and not re.fullmatch(r'[a-z][a-z0-9-]{0,39}', value):
+            raise ValueError('Выберите модуль с работающим HTTPS-прокси')
+
+
+def prepare_chrono_https(config, p, text, log):
+    """Attach to an existing Caddy proxy; preserve server files and restore on failure."""
+    values = {k: v for k, v, *_ in env_records(text)}
+    proxy_id = values.get('HTTPS_PROXY_PROJECT', '')
+    if p['kind'] != 'chrono':
+        return None, lambda: None
+    if not proxy_id:
+        if (Path(p['directory']) / 'compose.gitdeck-https.yaml').exists():
+            raise ValueError('HTTPS уже подключён: сохраните выбранный модуль прокси. Отключение выполняется отдельно')
+        return None, lambda: None
+    proxy = next((item for item in config['projects'] if item['id'] == proxy_id), None)
+    if not proxy or proxy['kind'] not in ('marathon', 'pulse') or proxy['compose'] != 'compose.https.yaml':
+        raise ValueError('Нужен установленный модуль марафона или Пульса с compose.https.yaml')
+    url = urllib.parse.urlsplit(values.get('APP_URL', ''))
+    proxy_values = {k: v for k, v, *_ in env_records(env_text(proxy))}
+    if (url.scheme != 'https' or url.hostname != proxy_values.get('DOMAIN') or url.username or url.password
+            or url.query or url.fragment or url.path not in ('', '/') or not url.port or url.port in (80, 443)):
+        raise ValueError('Для общего домена укажите https://ДОМЕН_МАРАФОНА:8083/ с отдельным портом')
+    # Full Compose output includes the OTHER project's bot token. Never log it.
+    details = json.loads(compose(proxy, ['config', '--format', 'json'], None))
+    network = details.get('networks', {}).get('default', {}).get('name')
+    if not network or not re.fullmatch(r'[A-Za-z0-9_.-]+', network):
+        raise ValueError('Не найдена Docker-сеть HTTPS-прокси')
+    caddy = Path(proxy['directory']) / 'deploy' / 'Caddyfile'
+    overlay = Path(proxy['directory']) / 'compose.gitdeck-https.yaml'
+    local = Path(p['directory']) / 'compose.gitdeck-https.yaml'
+    files = [caddy, overlay, local]
+    if any(file.is_symlink() for file in files) or not caddy.is_file():
+        raise ValueError('Не найден обычный файл deploy/Caddyfile HTTPS-прокси')
+    previous = {file: file.read_bytes() if file.exists() else None for file in files}
+    def restore():
+        for file, content in previous.items():
+            if content is None:
+                file.unlink(missing_ok=True)
+            else:
+                # Keep the inode: Caddyfile is bind-mounted in the running container.
+                with file.open('wb') as target:
+                    target.write(content)
+    try:
+        alias = 'gitdeck-' + p['id']
+        marker = '# GitDeck ' + p['id']
+        original = previous[caddy].decode('utf-8')
+        block = marker + ' BEGIN\nhttps://' + url.netloc + ' {\n    encode gzip zstd\n    reverse_proxy ' + alias + ':80\n}\n' + marker + ' END'
+        pattern = re.escape(marker + ' BEGIN') + r'.*?' + re.escape(marker + ' END')
+        updated = re.sub(pattern, lambda _: block, original, flags=re.S) if marker + ' BEGIN' in original else original.rstrip() + '\n\n' + block + '\n'
+        hook_marker = '# GitDeck bot ' + p['id']
+        hook_pattern = re.escape(hook_marker + ' BEGIN') + r'.*?' + re.escape(hook_marker + ' END')
+        hook_path = '/gitdeck-telegram-' + p['id']
+        hook = hook_marker + ' BEGIN\n    handle ' + hook_path + ' {\n        rewrite * /telegram/webhook\n        reverse_proxy ' + alias + ':80\n    }\n    ' + hook_marker + ' END'
+        if hook_marker + ' BEGIN' in updated:
+            updated = re.sub(hook_pattern, lambda _: hook, updated, flags=re.S)
+        elif '{$DOMAIN} {' in updated:
+            updated = updated.replace('{$DOMAIN} {', '{$DOMAIN} {\n    ' + hook, 1)
+        else:
+            raise ValueError('Для бота нужен основной блок {$DOMAIN} в Caddyfile общего прокси')
+        # Never take another site's listener silently.
+        without_own = re.sub(pattern, '', original, flags=re.S)
+        if re.search(r'(?m)^\s*(?:https://)?' + re.escape(url.netloc) + r'\s*\{', without_own):
+            raise ValueError('Этот HTTPS-адрес уже занят другим маршрутом прокси')
+        with caddy.open('w', encoding='utf-8', newline='\n') as target:
+            target.write(updated)
+        proxy_overlay = json.loads(previous[overlay]) if previous[overlay] else {'services': {'proxy': {'ports': []}}}
+        ports = proxy_overlay['services']['proxy']['ports']
+        listener = str(url.port) + ':' + str(url.port)
+        if listener not in ports:
+            ports.append(listener)
+        overlay.write_text(json.dumps(proxy_overlay, indent=2), encoding='utf-8')
+        # !reset requires Compose 2.24+; remove the old HTTP listener before Caddy claims it.
+        local.write_text('services:\n  web:\n    ports: !reset []\n    environment:\n      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}\n      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}\n      TELEGRAM_WEBHOOK_URL: https://' + url.hostname + hook_path + '\n      cookie_secure: "true"\n      cookie_samesite: None\n    networks:\n      default: {}\n      gitdeck_https:\n        aliases: [' + alias + ']\nnetworks:\n  gitdeck_https:\n    external: true\n    name: ' + network + '\n', encoding='utf-8')
+        compose(proxy, ['exec', '-T', 'proxy', 'caddy', 'validate', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile'], log)
+        return proxy, restore
+    except Exception:
+        restore()
+        raise
 
 
 def patch_env(text, changes):
@@ -430,11 +512,16 @@ def apply_environment(config, p, job, log):
     values = [v for k, v, *_ in env_records(old) if k not in PUBLIC_ENV]
     values += [v for k, v in payload['changes'].items() if k not in PUBLIC_ENV]
     protected_log = RedactedLog(log, values)
+    shared_proxy, restore_https = None, lambda: None
     try:
         status_update(config, job, 'configuring')
         write_env(p, new)
+        shared_proxy, restore_https = prepare_chrono_https(config, p, new, protected_log)
         compose(p, ['config', '--quiet'], protected_log)
         start_services(p, protected_log, build=False)
+        if shared_proxy:
+            compose(shared_proxy, ['up', '-d', '--no-deps', 'proxy'], protected_log)
+            compose(shared_proxy, ['exec', '-T', 'proxy', 'caddy', 'reload', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile'], protected_log)
         services = compose(p, ['config', '--services'], protected_log).decode().splitlines()
         if 'proxy' in services:
             compose(p, ['up', '-d', '--no-deps', 'proxy'], protected_log)
@@ -442,7 +529,11 @@ def apply_environment(config, p, job, log):
         protected_log.write('\nНастройки применены. Домен DNS настраивается отдельно у провайдера.\n')
     except Exception:
         protected_log.write('\nНе удалось применить настройки; возвращается прежний .env.\n')
+        restore_https()
         write_env(p, old)
+        if shared_proxy:
+            compose(shared_proxy, ['up', '-d', '--no-deps', 'proxy'], protected_log)
+            compose(shared_proxy, ['exec', '-T', 'proxy', 'caddy', 'reload', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile'], protected_log)
         start_services(p, protected_log, build=False)
         services = compose(p, ['config', '--services'], protected_log).decode().splitlines()
         if 'proxy' in services:

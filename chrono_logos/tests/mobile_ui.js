@@ -163,6 +163,8 @@ const fs = require('node:fs');
     await player.locator('.modal-close').tap();
     await player.setViewportSize({width:1280,height:800});
     await fits(player);
+    const desktopBounds=await player.evaluate(()=>({card:document.querySelector('.table-card').getBoundingClientRect().bottom,dock:document.querySelector('.hand-dock').getBoundingClientRect().top}));
+    assert.ok(desktopBounds.card<=desktopBounds.dock,'Desktop hand covers the timeline cards');
     assert.ok((await player.locator('.live-move-body').boundingBox()).width>400,'Desktop last move collapsed');
     await player.screenshot({path:path.join(folder,'desktop-game-minimal.png'),fullPage:true});
     await player.setViewportSize({width:390,height:844});

@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="/assets/chronos/css/game-play.css">
     <link rel="stylesheet" href="/assets/css/theme.css">
     <meta name="theme-color" content="#10131b">
+    <link rel="stylesheet" href="/assets/css/game-world.css?v=20261017">
 </head>
 <body class="game-screen">
 
@@ -52,6 +53,8 @@
             <span id="deck-count">—</span>
         </div>
     </header>
+
+    <div class="table-players" id="table-players" aria-label="Игроки и очередь хода"></div>
 
     <button
         id="menu-overlay"
@@ -105,7 +108,7 @@
 
     <main class="game-table-shell">
         <section class="table-surface">
-            <div class="timeline-heading"><h1>Хронология</h1><span>Раньше → Позже</span></div>
+            <div class="timeline-heading"><div><span class="table-eyebrow">ИГРОВОЙ СТОЛ</span><h1>Линия времени</h1></div><span>Раньше → Позже</span></div>
             <div class="table-nav-slim">
                 <button id="timeline-prev" type="button" aria-label="Раньше">←</button>
                 <span id="timeline-range">—</span>
@@ -286,6 +289,7 @@
             : active ? 'Выберите + на столе: раньше или позже.' : state?.isMyTurn ? 'Затем выберите место на столе.' : 'Можно посмотреть описание своих карт.';
         root.classList.toggle('has-selection', active);
         root.classList.toggle('my-turn', !!state?.isMyTurn);
+        root.dataset.step = !active ? 'card' : pendingPosition === null ? 'place' : 'confirm';
         $('confirm-placement').hidden = !active;
         $('confirm-placement').disabled = !active || pendingPosition === null || busy;
         $('confirm-placement').textContent = busy ? 'Отправляем…' : 'Поставить карту';
@@ -637,6 +641,23 @@
 
     function renderPlayers() {
         const players = state?.players || [];
+        const strip = $('table-players');
+        const key = JSON.stringify([players, state?.currentPlayer?.id]);
+        if (strip.dataset.state !== key) {
+            const left = strip.scrollLeft;
+            strip.replaceChildren(...players.map(player => {
+                const chip = document.createElement('div');
+                chip.className = 'table-player';
+                if (state?.currentPlayer?.id === player.id) { chip.classList.add('is-current'); chip.setAttribute('aria-current', 'true'); }
+                if (player.status === 'ELIMINATED' || player.status === 'LEFT') chip.classList.add('is-out');
+                const avatar = document.createElement('span'); avatar.className = 'player-avatar'; avatar.textContent = (player.username || '?').slice(0, 1).toUpperCase();
+                const body = document.createElement('span');
+                const name = document.createElement('strong'); name.textContent = player.username;
+                const info = document.createElement('small'); info.textContent = `${player.score} очк. · ${player.handCount} карт`;
+                body.append(name, info); chip.append(avatar, body); return chip;
+            }));
+            strip.scrollLeft = left; strip.dataset.state = key;
+        }
         $('players-bar').replaceChildren(...players.map(player => {
             const el = document.createElement('div');
             el.className = 'player-pill';
@@ -773,6 +794,7 @@
         }
 
         $('turn-number').textContent = data.room.turnNumber;
+        root.dataset.turn = String(data.room.turnNumber);
         $('deck-count').textContent = data.deck?.remaining ?? 0;
         $('current-player').textContent = data.currentPlayer?.username || '—';
 
@@ -951,5 +973,6 @@
     setInterval(refresh, 1600);
 })();
 </script>
+<?= view('partials/telegram-assets') ?>
 </body>
 </html>

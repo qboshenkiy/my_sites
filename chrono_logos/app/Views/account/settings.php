@@ -20,6 +20,7 @@
 
 
 <div class="settings-grid">
+<?= view('partials/telegram-settings', ['user' => $user]) ?>
 
     <!-- ПРОФИЛЬ -->
 
@@ -146,6 +147,7 @@
             <?= csrf_field() ?>
 
 
+            <?php if (!in_array($user['telegram_only'] ?? false, [true, 't', '1', 1], true)): ?>
             <div class="settings-form-group">
 
                 <label for="current_password">
@@ -160,6 +162,9 @@
                     autocomplete="current-password">
 
             </div>
+            <?php else: ?>
+                <p class="field-hint">Задайте первый пароль, чтобы входить в этот профиль в Android-приложении и обычном браузере.</p>
+            <?php endif; ?>
 
 
             <div class="settings-form-group">

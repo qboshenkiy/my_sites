@@ -17,6 +17,8 @@ class User extends Model
         'username',
         'email',
         'password_hash',
+        'telegram_id',
+        'telegram_only',
     ];
 
     protected $useTimestamps = true;

@@ -479,5 +479,62 @@ class ChronoTests(unittest.TestCase):
         self.assertTrue(fields['ADMIN_PASSWORD']['configured'])
 
 
+class SharedHttpsTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        game_dir, proxy_dir = self.root / 'chrono', self.root / 'marathon'
+        game_dir.mkdir(); (proxy_dir / 'deploy').mkdir(parents=True)
+        (proxy_dir / '.env').write_text('DOMAIN=vano.sbena.net\n')
+        self.caddy = proxy_dir / 'deploy/Caddyfile'
+        self.caddy.write_text('{$DOMAIN} {\n    reverse_proxy web:80\n}\n')
+        self.game = dict(id='chrono-logos', kind='chrono', directory=str(game_dir), compose='compose.yaml')
+        self.proxy = dict(id='marathon', kind='marathon', directory=str(proxy_dir), compose='compose.https.yaml')
+        self.config = {'projects': [self.game, self.proxy]}
+        self.env = 'APP_URL=https://vano.sbena.net:8083/\nHTTPS_PROXY_PROJECT=marathon\n'
+
+    def fake_compose(self, p, args, log):
+        if args == ['config', '--format', 'json']:
+            return json.dumps({'networks': {'default': {'name': 'glava-marathon_default'}}}).encode()
+        return b''
+
+    def test_existing_proxy_route_network_and_port_are_idempotent(self):
+        with patch.object(app, 'compose', side_effect=self.fake_compose):
+            proxy, undo = app.prepare_chrono_https(self.config, self.game, self.env, io.StringIO())
+            app.prepare_chrono_https(self.config, self.game, self.env, io.StringIO())
+        text = self.caddy.read_text()
+        self.assertEqual(text.count('https://vano.sbena.net:8083'), 1)
+        self.assertEqual(text.count('handle /gitdeck-telegram-chrono-logos'), 1)
+        self.assertIn('reverse_proxy web:80', text)
+        local = Path(self.game['directory']) / 'compose.gitdeck-https.yaml'
+        self.assertIn('ports: !reset []', local.read_text())
+        self.assertIn('name: glava-marathon_default', local.read_text())
+        self.assertIn('TELEGRAM_WEBHOOK_URL: https://vano.sbena.net/gitdeck-telegram-chrono-logos', local.read_text())
+        ports = json.loads((Path(proxy['directory']) / 'compose.gitdeck-https.yaml').read_text())['services']['proxy']['ports']
+        self.assertEqual(ports, ['8083:8083'])
+        undo()
+        self.assertEqual(self.caddy.read_text(), '{$DOMAIN} {\n    reverse_proxy web:80\n}\n')
+        self.assertFalse(local.exists())
+
+    def test_rejects_wrong_domain_and_reserved_port_without_writes(self):
+        original = self.caddy.read_bytes()
+        for url in ('https://evil.test:8083/', 'http://vano.sbena.net:8083/', 'https://vano.sbena.net/', 'https://vano.sbena.net:443/'):
+            with self.assertRaises(ValueError):
+                app.prepare_chrono_https(self.config, self.game, self.env.replace('https://vano.sbena.net:8083/', url), io.StringIO())
+        self.assertEqual(self.caddy.read_bytes(), original)
+
+    def test_proxy_validation_failure_restores_every_file(self):
+        original = self.caddy.read_bytes()
+        def failing(p, args, log):
+            if args[0] == 'exec': raise RuntimeError('Invalid proxy configuration')
+            return self.fake_compose(p, args, log)
+        with patch.object(app, 'compose', side_effect=failing), self.assertRaises(RuntimeError):
+            app.prepare_chrono_https(self.config, self.game, self.env, io.StringIO())
+        self.assertEqual(self.caddy.read_bytes(), original)
+        self.assertFalse((Path(self.game['directory']) / 'compose.gitdeck-https.yaml').exists())
+        self.assertFalse((Path(self.proxy['directory']) / 'compose.gitdeck-https.yaml').exists())
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

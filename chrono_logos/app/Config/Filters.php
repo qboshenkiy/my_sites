@@ -100,7 +100,7 @@ class Filters extends BaseFilters
     public array $globals = [
         'before' => [
             // 'honeypot',
-            'csrf',
+            'csrf' => ['except' => ['telegram/webhook']],
             // 'invalidchars',
             'auth' => [
                 'except' => [
@@ -109,6 +109,9 @@ class Filters extends BaseFilters
                     'auth*',
                     'rooms/invite/*',
                     'rooms/guest-join',
+                    'telegram/app',
+                    'telegram/login',
+                    'telegram/webhook',
                 ],
             ],
         ],

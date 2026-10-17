@@ -1,0 +1,138 @@
+/* Shared game identity: quiet navigation, a felt table, tactile readable cards. */
+:root {
+    --cl-bg:#101b21; --cl-surface:#192930; --cl-raised:#22353d;
+    --cl-border:#34505a; --cl-text:#f5f2e9; --cl-muted:#b0c2c6;
+    --cl-accent:#ecc783; --cl-radius:16px;
+    --gp-card-min:124px; --gp-card-max:164px;
+}
+body {background:var(--cl-bg)}
+button,a,input,select,textarea {-webkit-tap-highlight-color:transparent}
+button:focus-visible,a:focus-visible,[tabindex]:focus-visible {outline:3px solid #ecc783;outline-offset:4px}
+.app-sidebar,.sidebar,.mobile-app-header,.app-header,.catalog-header {background:#14232b;border-color:#2d424b}
+.catalog-logo>span,.mobile-app-logo>span {color:var(--cl-accent)}
+.catalog-hero {position:relative;padding:28px 0 36px;max-width:850px}
+.catalog-hero::after {content:'◷';position:absolute;right:-200px;top:-24px;font-size:210px;line-height:1;color:#ecc7830a;pointer-events:none}
+.catalog-hero h1,.management-heading h2,.room-lobby-head h2 {letter-spacing:-.04em;font-weight:800}
+.catalog-hero h1 {font-size:clamp(34px,5vw,64px);line-height:1.07;max-width:650px}
+.catalog-card,.panel-form,.room-lobby-panel,.settings-card {background:#192930;border:1px solid #34505a;box-shadow:0 12px 36px #00000014;border-radius:18px}
+.catalog-cover {background:radial-gradient(ellipse at 50% 0,#49776855,transparent 80%),#1e363c;position:relative;overflow:hidden}
+.catalog-cover::after {content:'';position:absolute;inset:12px;border:1px solid #ecc7832b;border-radius:10px;pointer-events:none}
+.catalog-cover>span {color:#ecc78380}
+.catalog-card h2 {font-size:24px;letter-spacing:-.025em}
+.catalog-meta>span,.section-label {color:var(--cl-accent)}
+.primary-action,.room-action-start,#confirm-placement,.panel-form button[type=submit],.catalog-filters button {background:#ecc783;color:#202b2c;border:1px solid #f7dba7;box-shadow:0 3px 0 #a57e3b;border-radius:12px;font-weight:750;min-height:46px}
+.primary-action:active,.room-action-start:active,#confirm-placement:active {transform:translateY(2px);box-shadow:0 1px 0 #a57e3b}
+.room-lobby-player {background:#22353d;border:1px solid #34505a;border-radius:12px;padding:14px 16px}
+.room-lobby-player>span::before {content:'●';color:#7bd0a2;font-size:9px;margin-right:12px}
+.room-lobby-code {font-variant-numeric:tabular-nums;letter-spacing:.22em;color:#ecc783}
+.room-lobby-grid {align-items:start}
+.room-lobby-panel {min-height:0}
+.room-lobby-invite {background:linear-gradient(150deg,#2b4248,#192930)}
+.mobile-bottom-nav {background:#14232bf5}
+.mobile-bottom-nav a[aria-current] {background:#ecc78314;color:#ecc783}
+.game-screen {background:#101b21}
+.game-screen .play-root {background:#101b21;grid-template-rows:auto auto minmax(0,1fr) auto}
+.play-bar {background:#101b21;border-bottom:0;max-width:1440px;width:100%;margin:auto;padding:14px 24px 8px;box-sizing:border-box}
+.play-bar-turn strong {font-size:18px;letter-spacing:-.02em}
+.play-bar-turn em {color:#9eb7be}
+.my-turn .play-bar-turn em {color:#9de0b8}
+.my-turn .play-bar-turn em::before {content:'●';font-size:8px;margin-right:7px}
+.play-bar-deck {background:#22353d;border:1px solid #34505a;border-radius:12px;padding:8px 12px;box-shadow:3px 3px 0 #17272f}
+.table-players {display:flex;gap:8px;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;min-width:0;padding:4px 24px 12px;width:100%;max-width:1440px;margin:0 auto;box-sizing:border-box;touch-action:pan-x}
+.table-player {display:flex;align-items:center;gap:9px;flex:0 0 auto;max-width:200px;border:1px solid #30464f;border-radius:14px;padding:8px 12px 8px 8px;background:#17262e;min-height:48px;box-sizing:border-box}
+.table-player.is-current {border-color:#ecc78388;background:#ecc7830b}
+.table-player.is-out {opacity:.5}
+.player-avatar {display:grid;place-items:center;flex:0 0 32px;height:32px;border-radius:10px;background:#30464f;color:#d9e5e7;font-size:15px;font-weight:800}
+.is-current .player-avatar {background:#ecc783;color:#263236}
+.table-player>span:last-child {display:grid;min-width:0}
+.table-player strong {font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.table-player small {font-size:10px;color:#b0c2c6}
+.game-table-shell {padding:0 24px 14px;min-height:0}
+.table-surface {position:relative;background:radial-gradient(ellipse at 50% 10%,#31564b88,transparent 80%),#1b352f;border:1px solid #476354;box-shadow:inset 0 0 0 5px #132a2366,inset 0 0 60px #07150e33;border-radius:24px;padding:20px;min-height:260px}
+.table-surface::before {content:'';position:absolute;inset:10px;border:1px solid #77927a26;border-radius:16px;pointer-events:none}
+.timeline-heading {position:relative;align-items:center;gap:8px}
+.timeline-heading h1 {font-size:25px;letter-spacing:-.03em;margin:2px 0;color:#f4f2e9}
+.table-eyebrow {font-size:9px;font-weight:800;letter-spacing:.15em;color:#a6c1af}
+.timeline-heading>span {color:#b4c7b9;font-size:12px}
+.table-nav-slim {position:relative;margin-top:4px}
+.table-nav-slim span {color:#c3d3c8;font-size:11px}
+.table-nav-slim button {border:1px solid #70907a55;border-radius:10px;color:#e9efdf;background:#0c241c33;min-height:36px}
+.timeline-board {position:relative;align-items:center;min-height:194px;flex-basis:194px;padding-bottom:10px;scrollbar-color:#75947a #132b24;gap:6px}
+.square-card {border-radius:12px;border:1px solid #6f7d7299;background:#efe9db;color:#283830;box-shadow:0 4px 0 #0b171a66;overflow:hidden}
+.square-card-body strong {color:#27372e;line-height:1.3;font-weight:750}
+.square-card-body span {color:#596b59}
+.table-card {height:174px;transform:rotate(-1deg)}
+.table-card:nth-of-type(even) {transform:rotate(1deg)}
+.table-card.no-image .square-card-media {background:#d5daca;color:#637761;border-bottom:1px solid #9eaf9744}
+.table-card.is-misplaced {border-color:#ec9690;background:#f1ded8}
+.hand-dock {background:#14232b;border-top:1px solid #34505a;padding:10px 24px max(10px,env(safe-area-inset-bottom));box-shadow:0 -12px 32px #00000018}
+.hand-heading {font-size:15px;color:#f5f2e9;margin-bottom:4px}
+.hand-card {height:140px;flex-basis:158px;background:linear-gradient(145deg,#fbf6e9,#e0decc);border:1px solid #adb7a4;box-shadow:0 4px 0 #0005;transition:transform .15s,border-color .15s}
+.hand-card .square-card-body strong {font-size:14px}
+.hand-card.no-image .square-card-media {background:transparent;color:#7b896e;height:30px;border:0}
+.hand-card.no-image .square-card-body {height:calc(100% - 30px)}
+.hand-card-details {background:#e2dfce;color:#506344;border:1px solid #a2b099;border-radius:10px;width:36px;min-height:36px}
+.hand-card.is-selected {background:#fff5d6;border-color:#ecc783;box-shadow:0 0 0 3px #ecc78366,0 5px 0 #0004;transform:translateY(-3px)}
+.hand-list {padding:6px 4px 8px;gap:12px}
+.drop-zone {border-color:#98b59966;background:#183b2b77;border-radius:12px;color:#d9d8aa;height:150px}
+.drop-zone:disabled {opacity:.18}
+.has-selection .drop-zone:not(:disabled) {border-color:#ecc78399;background:#ecc78312}
+.drop-zone.is-chosen {background:#ecc78333;box-shadow:inset 0 0 0 2px #ecc783;color:#fce7ba}
+.live-move,.live-move.without-image {background:#0e241ccc;border:1px solid #74927a44;border-radius:12px;padding:8px 12px}
+.live-move-body strong {color:#ecf1e5}
+.live-move-body span {color:#afc5b5}
+.live-move-body em {color:#ecc783}
+.placement-actions {gap:12px;padding-top:6px}
+.placement-actions strong {font-size:14px}
+.placement-actions span {font-size:12px;color:#b0c2c6}
+#confirm-placement:disabled {box-shadow:none;opacity:.45}
+.move-toast.is-good {background:#244d3b;color:#b8f1ca;border-color:#699e77}
+.move-toast.is-bad {background:#543b38;color:#ffd5cc;border-color:#aa746a}
+.card-modal-card {border-radius:20px;border:1px solid #567263;background:#192c31}
+.telegram-entry {width:min(100%,520px);margin:auto;text-align:center;padding:28px 20px;box-sizing:border-box}
+.telegram-entry h1 {font-size:clamp(27px,6vw,40px);line-height:1.15;letter-spacing:-.04em}
+.game-emblem {display:grid;place-items:center;width:76px;height:76px;border-radius:24px;border:1px solid #ecc78388;background:#ecc78312;font-size:46px;color:#ecc783;margin:0 auto 24px}
+.telegram-entry p,.telegram-settings p {color:#b0c2c6;line-height:1.55}
+#telegram-entry-actions:not([hidden]) {display:grid;gap:12px;margin:20px 0}
+.telegram-browser-link {display:inline-block;margin-top:24px;font-size:13px}
+.telegram-settings {display:flex;flex-direction:column;align-items:stretch;gap:12px}
+.telegram-settings h3,.telegram-settings p {margin:0}
+.telegram-settings button,.telegram-settings>a {padding:12px;text-align:center;text-decoration:none;min-height:46px}
+.telegram-settings small {color:#b0c2c6;font-size:12px}
+.telegram-settings hr {border:0;border-top:1px solid #34505a;width:100%}
+.telegram-app .play-bar,.telegram-app .mobile-app-header {padding-top:calc(10px + var(--tg-safe-top,0px))}
+.telegram-app .hand-dock {padding-bottom:max(10px,env(safe-area-inset-bottom),var(--tg-safe-bottom,0px))}
+@media(max-width:760px) {
+    .catalog-hero::after {display:none}
+    .catalog-hero {padding-top:8px}
+    .catalog-hero h1 {font-size:36px}
+    .play-bar {padding:8px 12px 4px}
+    .play-bar-turn strong {font-size:16px}
+    .play-bar-turn em {font-size:12px}
+    .table-players {padding:4px 12px 8px;gap:6px}
+    .table-player {min-height:42px;padding:5px 9px 5px 5px;gap:6px;border-radius:11px;max-width:155px}
+    .player-avatar {height:28px;flex-basis:28px;font-size:12px;border-radius:8px}
+    .table-player strong {font-size:11px}
+    .table-player small {font-size:9px}
+    .game-table-shell {padding:0 8px 8px}
+    .table-surface {padding:14px 10px 8px;border-radius:18px;min-height:256px}
+    .table-surface::before {inset:6px;border-radius:12px}
+    .timeline-heading h1 {font-size:20px}
+    .table-eyebrow {font-size:8px}
+    .timeline-heading>span {font-size:10px}
+    .timeline-board {min-height:184px;flex-basis:184px}
+    .table-card {height:164px}
+    .hand-dock {padding:10px 12px max(10px,env(safe-area-inset-bottom))}
+    .hand-card {height:140px;flex-basis:148px}
+    .hand-card .square-card-body strong {font-size:13px}
+    .hand-heading {font-size:13px;margin-bottom:3px}
+    .hand-heading>span {font-size:10px}
+    .hand-card-details {width:40px;min-height:40px}
+    .placement-actions {gap:7px;padding-top:2px}
+    .placement-actions>div {flex-basis:100%}
+    .placement-actions strong {font-size:13px}
+    .placement-actions span {font-size:11px}
+    #confirm-placement {min-height:46px}
+    .room-lobby-head h2 {font-size:29px}
+}
+@media(prefers-reduced-motion:reduce) {.square-card,.primary-action,#confirm-placement {transition:none;transform:none}}

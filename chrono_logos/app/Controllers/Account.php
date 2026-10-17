@@ -183,6 +183,8 @@ class Account extends BaseController
     public function postChangePassword()
     {
         $userId = (int) session()->get('user_id');
+        $passwordAccount = (new User())->find($userId);
+        $firstPassword = $passwordAccount && in_array($passwordAccount['telegram_only'] ?? false, [true, 't', '1', 1], true) && !empty($passwordAccount['telegram_id']);
 
         $currentPassword =
             (string) $this->request->getPost('current_password');
@@ -204,7 +206,7 @@ class Account extends BaseController
         $rules = [
             'current_password' => [
                 'label' => 'Текущий пароль',
-                'rules' => 'required|max_length[255]',
+                'rules' => $firstPassword ? 'permit_empty|max_length[255]' : 'required|max_length[255]',
             ],
 
             'new_password' => [
@@ -261,7 +263,7 @@ class Account extends BaseController
         /*
          * Проверяем текущий пароль.
          */
-        if (! password_verify(
+        if (!$firstPassword && ! password_verify(
             $currentPassword,
             $user['password_hash']
         )) {
@@ -289,6 +291,7 @@ class Account extends BaseController
 
         if (! $userModel->update($userId, [
             'password_hash' => $passwordHash,
+            'telegram_only' => false,
         ])) {
 
             return $this->response

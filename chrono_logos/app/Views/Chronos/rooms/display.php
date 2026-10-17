@@ -13,6 +13,7 @@
     >
     <link rel="stylesheet" href="/assets/css/theme.css">
     <meta name="theme-color" content="#10131b">
+    <link rel="stylesheet" href="/assets/css/game-world.css?v=20261017">
 </head>
 <body>
 
@@ -584,5 +585,6 @@
 })();
 </script>
 
+<?= view('partials/telegram-assets') ?>
 </body>
 </html>
