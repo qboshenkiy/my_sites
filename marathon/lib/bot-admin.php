@@ -81,7 +81,7 @@ function telegramAdminMenu(string $text,bool $callback,?array $actor,string $tel
             }
             $reply('Кнопка недоступна. Откройте «👥 Участники» заново.');return true;
         }
-        if(in_array($text,['Отмена','/cancel','/start','/menu','🏠 Меню'],true)||str_starts_with($text,'📖')||str_starts_with($text,'📊')||str_starts_with($text,'📚')||str_starts_with($text,'🗓')||str_starts_with($text,'🔁')||str_starts_with($text,'🌐')||str_starts_with($text,'❓')||$callback){sql('DELETE FROM telegram_admin_states WHERE user_id=?',[$actor['id']]);return false;}
+        if(in_array($text,['Отмена','/cancel','/start','/menu','🏠 Меню'],true)||str_starts_with($text,'📖')||str_starts_with($text,'📊')||str_starts_with($text,'📚')||str_starts_with($text,'🗓')||str_starts_with($text,'🔁')||str_starts_with($text,'🌐')||str_starts_with($text,'📱')||$text==='/app'||str_starts_with($text,'❓')||$callback){sql('DELETE FROM telegram_admin_states WHERE user_id=?',[$actor['id']]);return false;}
         if(!$state){sql('DELETE FROM telegram_admin_states WHERE user_id=?',[$actor['id']]);$reply('Ввод администратора истёк. Выберите участника заново.');return true;}
         if($state['stage']!=='input'){$reply('Проверьте результат и нажмите «Сохранить» или «Отмена».');return true;}
         if(!preg_match('/^(\d{1,6})(?:\s+(\d{1,4}))?$/',trim($text),$m)){$reply('Введите общий итог: «5» или «5 2» (главы и дни). Для выхода нажмите «Отмена».');return true;}

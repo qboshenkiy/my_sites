@@ -13,6 +13,11 @@ try {
     if(strtolower($me['username']??'')!==strtolower(getenv('TELEGRAM_BOT_USERNAME')?:''))throw new RuntimeException('Bot username does not match TELEGRAM_BOT_USERNAME.');
     if((telegramCall('getWebhookInfo',[])['result']['url']??'')!=='')throw new RuntimeException('This bot already has a webhook. Use a new bot or remove its webhook before running this worker.');
 } catch(Throwable $e){fwrite(STDERR,$e->getMessage()."\n");exit(1);}
+// Menu button and inline buttons use the signed Mini App launch mode.
+if($miniApp=telegramMiniAppUrl()){
+    try{telegramCall('setChatMenuButton',['menu_button'=>['type'=>'web_app','text'=>'Марафон','web_app'=>['url'=>$miniApp]]]);}
+    catch(Throwable $e){fwrite(STDERR,"Could not configure Mini App menu. Inline launch buttons remain available.\n");}
+}else fwrite(STDERR,"Mini App needs an HTTPS APP_URL. Browser and bot reading remain available.\n");
 echo "Telegram authorization worker started.\n";
 while(true){
     try {

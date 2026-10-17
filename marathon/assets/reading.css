@@ -17,3 +17,8 @@
 .audit-nav{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
 .audit-row>div{min-width:0;overflow-wrap:anywhere}
 @media(max-width:600px){.audit-filters label{flex-basis:100%}.audit-filters button{width:100%}.audit-row{flex-wrap:wrap}.audit-row time{width:100%;padding-left:36px}.audit-nav button{flex:1;min-height:44px}}
+
+/* Telegram client controls and device safe areas must not overlap reading actions. */
+body.miniapp{padding-top:var(--miniapp-safe-top,0px);padding-left:var(--miniapp-safe-left,0px);padding-right:var(--miniapp-safe-right,0px);padding-bottom:var(--miniapp-safe-bottom,0px)}
+.miniapp .mobile-reading-action{padding-bottom:calc(12px + var(--miniapp-safe-bottom,0px))}
+.miniapp input,.miniapp textarea,.miniapp select{font-size:16px}

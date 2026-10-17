@@ -184,7 +184,7 @@ function sessionStart(): void {
     ini_set('session.save_handler','files');session_save_path($dir);
     ini_set('session.use_strict_mode','1');ini_set('session.use_only_cookies','1');ini_set('session.use_trans_sid','0');
     ini_set('session.gc_maxlifetime',(string)$lifetime);session_name('marathon_session');
-    $options=['path'=>'/','httponly'=>true,'samesite'=>'Lax','secure'=>$https];
+    $options=['path'=>'/','httponly'=>true,'samesite'=>$https&&($_SERVER['HTTP_X_MARATHON_MINIAPP']??'')==='1'?'None':'Lax','secure'=>$https];
     session_set_cookie_params(['lifetime'=>$lifetime]+$options);session_start();
     // Browsers cap persistent cookies; renew the deadline on every visit.
     setcookie(session_name(),session_id(),['expires'=>time()+$lifetime]+$options);
@@ -192,3 +192,5 @@ function sessionStart(): void {
 
 require_once __DIR__.'/rounds.php';
 require_once __DIR__.'/audit.php';
+
+require_once __DIR__.'/miniapp.php';

@@ -67,8 +67,8 @@ function telegramUpdate(array $update): array {
                     if($kind==='invite')sql('UPDATE users SET telegram_id=?,telegram_name=? WHERE id=?',[$telegramId,$from['username']??null,$target['id']]);
                     sql('UPDATE requests SET approved=1,user_id=? WHERE token_hash=?',[$target['id'],$r['token_hash']]);
                     audit($target['id'],$kind==='invite'?'telegram_link':'telegram_login',$target['id'],$kind==='invite'?'Telegram привязан':'Вход подтверждён в Telegram');
-                    $keyboard=$base!==''?[[['text'=>'Открыть сайт','url'=>$base]]]:null;
-                    $reply($kind==='invite'?'Telegram привязан. Откройте сайт и нажмите «Войти через Telegram».':'Вход подтверждён. Вернитесь во вкладку сайта — кабинет откроется автоматически.',$keyboard);
+                    $keyboard=telegramAppButtons();
+                    $reply($kind==='invite'?(telegramMiniAppUrl()?'Telegram привязан. Нажмите «Открыть марафон» для входа в приложение.':'Telegram привязан. Откройте сайт и нажмите «Войти через Telegram».'):'Вход подтверждён. Вернитесь на сайт или в Android-приложение — кабинет откроется автоматически.',$keyboard);
                 }
             }
         } elseif((!$callback||str_starts_with($text,'amount:'))&&preg_match('/^(?:прочитал(?:а)?|\/read(?:@\w+)?)\s+(\d+)\s*(?:глав(?:у|ы)?\s*)?$/iu',trim($readingText),$reading)) {

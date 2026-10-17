@@ -1,0 +1,28 @@
+plugins { id 'com.android.application' }
+
+def marathonUrl = providers.gradleProperty('marathonUrl').orElse('https://vano.sbena.net/').get()
+def address = new URI(marathonUrl)
+if (address.scheme != 'https' || !address.host || address.userInfo || address.query || address.fragment) {
+    throw new GradleException('marathonUrl must be an HTTPS website URL without credentials, query or fragment')
+}
+android {
+    namespace 'net.sbena.vano.marathon'
+    compileSdk 36
+    defaultConfig {
+        applicationId 'net.sbena.vano.marathon'
+        minSdk 24
+        targetSdk 36
+        versionCode 1
+        versionName '1.0.0'
+        buildConfigField 'String', 'MARATHON_URL', groovy.json.JsonOutput.toJson(marathonUrl)
+    }
+    buildFeatures { buildConfig true }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    buildTypes { release { minifyEnabled false } }
+    testOptions { unitTests.returnDefaultValues = true }
+    lint { abortOnError true; checkReleaseBuilds true }
+}
+dependencies {
+    implementation 'androidx.activity:activity:1.13.0'
+    testImplementation 'junit:junit:4.13.2'
+}

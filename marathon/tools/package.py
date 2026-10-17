@@ -4,7 +4,7 @@ import zipfile
 
 root=Path(__file__).resolve().parents[1]
 files=['index.php','api.php','router.php','.htaccess','.dockerignore','.env.example','Dockerfile',
-       'compose.yaml','compose.https.yaml','compose.shared.yaml','start.sh','start-local.ps1','README.md','UPDATE.md','storage/.htaccess']
+       'compose.yaml','compose.https.yaml','compose.shared.yaml','start.sh','start-local.ps1','README.md','UPDATE.md','MINIAPP.md','storage/.htaccess']
 for folder in ['assets','lib','deploy','tools']:
     files.extend(p.relative_to(root).as_posix() for p in (root/folder).rglob('*') if p.is_file())
 assert not any('.sqlite' in p or p=='.env' for p in files)

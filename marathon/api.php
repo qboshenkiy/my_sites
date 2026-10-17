@@ -8,7 +8,7 @@ header('Content-Type: application/json; charset=utf-8');header('Cache-Control: n
 if($_SERVER['REQUEST_METHOD']==='GET'&&($_GET['action']??'')==='health'){
     try{db();echo json_encode(['ok'=>true]);}catch(Throwable $e){http_response_code(503);echo json_encode(['ok'=>false]);}exit;
 }
-sessionStart();$uid=$_SESSION['uid']??null;$epoch=$_SESSION['epoch']??0;$csrf=$_SESSION['csrf']??=bin2hex(random_bytes(24));$sessionHash=hash('sha256',session_id());session_write_close();
+sessionStart();$uid=$_SESSION['uid']??null;$epoch=$_SESSION['epoch']??0;$clientChannel=$_SESSION['channel']??'site';$csrf=$_SESSION['csrf']??=bin2hex(random_bytes(24));$sessionHash=hash('sha256',session_id());session_write_close();
 function fail(string $message,int $status=400): never { http_response_code($status);echo json_encode(['error'=>$message],JSON_UNESCAPED_UNICODE);exit; }
 function send(array $data): never { echo json_encode($data,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR);exit; }
 function text(mixed $value,int $limit,bool $required=true): string { if(!is_string($value))fail('Некорректный текст.');$v=trim($value);if(($required&&$v==='')||mb_strlen($v)>$limit)fail('Заполните текст, максимум '.$limit.' символов.');return $v; }
@@ -20,17 +20,17 @@ function assertInputRound(string $id,array $input): void {
     if($week>=1&&$week<=22){$cycle=weekResults($id)[$week-1]['cycle'];if(($cycle>1&&!isset($input['cycle']))||(isset($input['cycle'])&&(int)$input['cycle']!==$cycle))fail('Круг недели изменился. Обновите страницу.',409);}
     if(($current>1&&!isset($input['round']))||(isset($input['round'])&&(int)$input['round']!==$current))fail('Круг изменился. Обновите страницу и проверьте план.',409);
 }
-function loginAs(string $id): void { sessionStart();session_regenerate_id(true);$_SESSION['uid']=$id;$_SESSION['epoch']=(int)user($id)['session_epoch'];$_SESSION['csrf']=bin2hex(random_bytes(24));session_write_close(); }
+function loginAs(string $id,string $channel='site'): void { sessionStart();session_regenerate_id(true);$_SESSION['uid']=$id;$_SESSION['channel']=$channel;$_SESSION['epoch']=(int)user($id)['session_epoch'];$_SESSION['csrf']=bin2hex(random_bytes(24));session_write_close(); }
 try {
     if(!extension_loaded('pdo_sqlite')||!extension_loaded('mbstring'))fail('На сервере нужны PHP-модули pdo_sqlite и mbstring.',503);
-    db();$me=$uid?user($uid):null;if($me&&(!(int)$me['active']||(int)$me['session_epoch']!==(int)$epoch))$me=null;
+    db();$me=$uid?user($uid):null;if($me&&(!(int)$me['active']||(int)$me['session_epoch']!==(int)$epoch))$me=null;if($me&&$clientChannel==='miniapp')$GLOBALS['audit_transport']['channel']='miniapp';
     $action=$_GET['action']??'bootstrap';$input=[];
     if($_SERVER['REQUEST_METHOD']==='POST') {
         if((int)($_SERVER['CONTENT_LENGTH']??0)>100000)fail('Запрос слишком большой.',413);
         if(!hash_equals($csrf,$_SERVER['HTTP_X_CSRF_TOKEN']??''))fail('Обновите страницу и повторите.',403);
         $input=json_decode(file_get_contents('php://input'),true);if(!is_array($input))fail('Некорректный запрос.');
     } elseif(!in_array($action,['bootstrap','overview','profile','audit','export','export_xlsx','archived_users','round_history'],true))fail('Нужен POST.',405);
-    if($action==='bootstrap')send(['user'=>$me?publicUser($me):null,'csrf'=>$csrf,'configured'=>(bool)sql("SELECT id FROM users WHERE role='admin' LIMIT 1")->fetchColumn(),'marathon'=>visibleCalendar(calendar($me&&$me['role']==='participant'?$me['id']:null),$me&&$me['role']==='admin'),'telegram'=>['configured'=>(bool)(getenv('TELEGRAM_BOT_TOKEN')&&getenv('TELEGRAM_BOT_USERNAME')),'username'=>getenv('TELEGRAM_BOT_USERNAME')?:null]]);
+    if($action==='bootstrap')send(['user'=>$me?publicUser($me):null,'csrf'=>$csrf,'configured'=>(bool)sql("SELECT id FROM users WHERE role='admin' LIMIT 1")->fetchColumn(),'marathon'=>visibleCalendar(calendar($me&&$me['role']==='participant'?$me['id']:null),$me&&$me['role']==='admin'),'telegram'=>['configured'=>(bool)(getenv('TELEGRAM_BOT_TOKEN')&&getenv('TELEGRAM_BOT_USERNAME')),'username'=>getenv('TELEGRAM_BOT_USERNAME')?:null,'miniapp_url'=>telegramMiniAppUrl()]]);
     if($action==='setup'||$action==='login') {
         $login=strtolower(text($input['login']??'',40));$password=text($input['password']??'',200);
         if(!preg_match('/^[a-z0-9_.-]{3,40}$/',$login)||strlen($password)<8)fail('Логин: 3–40 латинских символов. Пароль: минимум 8 символов.');
@@ -52,6 +52,16 @@ try {
         db()->exec('COMMIT');loginAs($id);send(['ok'=>true]);
     }
     if($action==='logout'){sessionStart();$_SESSION=[];session_regenerate_id(true);session_write_close();send(['ok'=>true]);}
+    if($action==='telegram_miniapp_login') {
+        $token=getenv('TELEGRAM_BOT_TOKEN')?:'';if($token==='')fail('Telegram ещё не настроен администратором.',503);
+        $proof=validateTelegramInitData(text($input['init_data']??'',16384),$token);
+        db()->exec('BEGIN IMMEDIATE');
+        $u=sql('SELECT * FROM users WHERE telegram_id=? AND active=1 AND deleted_at IS NULL',[$proof['telegram_id']])->fetch();
+        if(!$u)fail('Этот Telegram не привязан к активному участнику. Получите персональное приглашение у команды марафона и подтвердите привязку в боте.',403);
+        $sameMiniApp=$me&&$me['id']===$u['id']&&$clientChannel==='miniapp';
+        if(!$sameMiniApp)audit($u['id'],'telegram_miniapp_login',$u['id'],'Вход в Telegram Mini App',['source'=>'telegram','channel'=>'miniapp']);
+        db()->exec('COMMIT');if(!$sameMiniApp)loginAs($u['id'],'miniapp');send(['ok'=>true]);
+    }
     if($action==='telegram_request') {
         if(!getenv('TELEGRAM_BOT_TOKEN')||!getenv('TELEGRAM_BOT_USERNAME'))fail('Telegram ещё не настроен администратором.');
         $kind=$input['kind']??'login';$target=null;

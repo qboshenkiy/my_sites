@@ -9,7 +9,8 @@ function telegramAuditPage(int $cursor,string $direction,?string $target,int $we
         $m=$e['metadata'];$lines[]="\n#".$e['id'].' · '.date('d.m.Y H:i:s',(int)$e['created_at']).' · '.(($m['source']??'')==='telegram'?'Telegram':(($m['source']??'')==='site'?'Сайт':(($m['source']??'')==='system'?'Система':'Старый журнал')));
         $lines[]=mb_substr($e['actor']?:'Система',0,60).($e['target']?' → '.mb_substr($e['target'],0,60):'');
         $lines[]=mb_substr($e['details'],0,180);
-        if(isset($m['week']))$lines[]='Неделя '.$m['week'].(isset($m['cycle'])?' · круг '.$m['cycle']:'');
+        if(($m['channel']??'')==='miniapp')$lines[]='Приложение: Telegram Mini App';
+    if(isset($m['week']))$lines[]='Неделя '.$m['week'].(isset($m['cycle'])?' · круг '.$m['cycle']:'');
         foreach(array_slice(auditChangeLines($m),0,3) as $line)$lines[]=mb_substr($line,0,120);
         $buttons[]=[['text'=>'Подробнее #'.$e['id'],'callback_data'=>'lg:e:'.$e['id'].':'.($target??'-').':'.$week]];
     }
@@ -33,6 +34,7 @@ function telegramAuditMenu(string $text,bool $callback,?array $actor,callable $r
     if(!$e){$reply('Запись не найдена.');return true;}
     $m=json_decode($e['metadata'],true,512,JSON_THROW_ON_ERROR);
     $lines=['🧾 Запись #'.$id,date('d.m.Y H:i:s T',(int)$e['created_at']),'Кто: '.($e['actor']?:'Система'),'Участник: '.($e['target']?:'Общие настройки'),'Действие: '.$e['details'],'Источник: '.($m['source']??'старый журнал')];
+    if(($m['channel']??'')==='miniapp')$lines[]='Приложение: Telegram Mini App';
     if(isset($m['week']))$lines[]='Неделя '.$m['week'].(isset($m['cycle'])?' · круг '.$m['cycle']:'');
     $changes=auditChangeLines($m);$lines[]=$changes?"\nБыло → стало:\n".implode("\n",$changes):(isset($m['before'],$m['after'])?'Отслеживаемые поля не изменились.':'Подробные изменения полей для этой записи не сохранены.');
     if(isset($m['affected_cycle']))$lines[]='Удалённый / восстановленный круг: '.$m['affected_cycle'];
