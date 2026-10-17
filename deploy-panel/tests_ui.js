@@ -18,7 +18,7 @@ assert.ok(idValidator.test('chrono-logos'));
 assert.ok(!idValidator.test('chrono_logos'));
 const script = html.split('<script>')[1].split('</script>')[0]
   .replace('refresh();setInterval(()=>{if(state)refresh()},4000);', '');
-const context = vm.createContext({document, assert, nodes, console});
+const context = vm.createContext({document, assert, nodes, console, URL});
 vm.runInContext(script, context);
 vm.runInContext(`(async () => {
   state = {config_revision: 'revision', jobs: [], projects: []};
@@ -52,4 +52,27 @@ vm.runInContext(`(async () => {
   assert.equal(nodes['#m-subdir'].value, 'chrono_logos');
   assert.equal(nodes['#m-repo'].value, project.repo);
   console.log('PASS: immutable module identity, editable subdirectory, monorepo defaults');
+  const select = {value:'',append(){}}, button = {}, small = {};
+  const section = {dataset:{},querySelector(s){return {select,button,small}[s]}};
+  document.createElement = type => type==='div' ? section : {value:'',textContent:''};
+  envDialog.querySelector = () => null;
+  nodes['#environment-form'].prepend = () => {};
+  envProject = project;
+  state.projects = [{id:'marathon',name:'Marathon',kind:'marathon',compose:'compose.https.yaml'}];
+  nodes['#env-HTTPS_PROXY_PROJECT'] = {value:''};
+  nodes['#env-APP_URL'] = {value:'https://vano.sbena.net:8083/'};
+  setupChronoHttpsForm();
+  button.onclick();
+  assert.equal(nodes['#env-HTTPS_PROXY_PROJECT'].value, 'marathon');
+  assert.equal(nodes['#env-APP_URL'].value, 'https://chrono.vano.sbena.net/');
+  button.onclick();
+  assert.equal(nodes['#env-APP_URL'].value, 'https://chrono.vano.sbena.net/');
+  nodes['#env-APP_URL'].value='https://game.example.org/';
+  button.onclick();
+  assert.equal(nodes['#env-APP_URL'].value, 'https://game.example.org/');
+  state.projects=[];
+  setupChronoHttpsForm();
+  assert.equal(button.disabled,true);
+  assert.ok(small.textContent.includes('compose.https.yaml'));
+  console.log('PASS: HTTPS subdomain preparation, existing custom domain, missing proxy explanation');
 })()`, context).catch(error => { console.error(error); process.exitCode = 1; });

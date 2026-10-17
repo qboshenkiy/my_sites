@@ -1,6 +1,6 @@
 # Chrono Logos — Android
 
-Отдельное Android-приложение с WebView для `https://vano.sbena.net:8083/`.
+Отдельное Android-приложение с WebView для `https://chrono.vano.sbena.net/`.
 Идентификатор `net.sbena.vano.chronologos`, Android 7+. Устанавливается рядом с марафоном.
 Работает после подключения HTTPS через GitDeck: [инструкция](../../DEPLOY.md).
 
@@ -15,7 +15,7 @@ GitHub Actions → **Build Chrono Logos Android APK** → **Run workflow** → A
 Локально: JDK 17, Android SDK platform 36, build-tools 35.0.0.
 
 ```sh
-./gradlew -PgameUrl=https://vano.sbena.net:8083/ testDebugUnitTest lintDebug assembleDebug
+./gradlew -PgameUrl=https://chrono.vano.sbena.net/ testDebugUnitTest lintDebug assembleDebug
 ```
 
 На Windows используйте `gradlew.bat`. APK: `app/build/outputs/apk/debug/app-debug.apk`.

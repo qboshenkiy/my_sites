@@ -22,7 +22,7 @@ import threading
 import time
 import urllib.parse
 
-VERSION = '1.3.0'
+VERSION = '1.3.1'
 LAYOUT = {
     'pulse': ['index.php', 'api.php', 'seed.php', '.htaccess', 'assets', 'tools/check.php', 'tools/backup.php'],
     'marathon': ['index.php', 'api.php', '.htaccess', 'assets', 'lib', 'tools/bot.php', 'tools/backup.php'],
@@ -384,13 +384,21 @@ def prepare_chrono_https(config, p, text, log):
             raise ValueError('HTTPS уже подключён: сохраните выбранный модуль прокси. Отключение выполняется отдельно')
         return None, lambda: None
     proxy = next((item for item in config['projects'] if item['id'] == proxy_id), None)
-    if not proxy or proxy['kind'] not in ('marathon', 'pulse') or proxy['compose'] != 'compose.https.yaml':
-        raise ValueError('Нужен установленный модуль марафона или Пульса с compose.https.yaml')
+    if not proxy:
+        raise ValueError('Модуль HTTPS-прокси «' + proxy_id + '» не найден. Выберите его из списка в настройках сайта')
+    if proxy['kind'] not in ('marathon', 'pulse'):
+        raise ValueError('HTTPS-прокси должен быть модулем марафона или Пульса')
+    if proxy['compose'] != 'compose.https.yaml':
+        raise ValueError('Модуль прокси «' + proxy_id + '» использует ' + proxy['compose'] + '. Если на нём уже работает HTTPS, выберите compose.https.yaml в настройках этого модуля')
     url = urllib.parse.urlsplit(values.get('APP_URL', ''))
     proxy_values = {k: v for k, v, *_ in env_records(env_text(proxy))}
-    if (url.scheme != 'https' or url.hostname != proxy_values.get('DOMAIN') or url.username or url.password
-            or url.query or url.fragment or url.path not in ('', '/') or not url.port or url.port in (80, 443)):
-        raise ValueError('Для общего домена укажите https://ДОМЕН_МАРАФОНА:8083/ с отдельным портом')
+    if (url.scheme != 'https' or not url.hostname or not re.fullmatch(r'[a-z0-9.-]+', url.hostname)
+            or url.username or url.password or url.query or url.fragment or url.path not in ('', '/')
+            or url.port == 80):
+        raise ValueError('Укажите HTTPS-адрес сайта, например https://chrono.vano.sbena.net/')
+    port = url.port or 443
+    if port == 443 and url.hostname == proxy_values.get('DOMAIN', '').lower():
+        raise ValueError('Этот домен уже используется основным сайтом. Для игры задайте отдельный поддомен, например https://chrono.vano.sbena.net/')
     # Full Compose output includes the OTHER project's bot token. Never log it.
     details = json.loads(compose(proxy, ['config', '--format', 'json'], None))
     network = details.get('networks', {}).get('default', {}).get('name')
@@ -421,8 +429,14 @@ def prepare_chrono_https(config, p, text, log):
         hook_marker = '# GitDeck bot ' + p['id']
         hook_pattern = re.escape(hook_marker + ' BEGIN') + r'.*?' + re.escape(hook_marker + ' END')
         hook_path = '/gitdeck-telegram-' + p['id']
+        webhook = 'https://' + url.hostname + hook_path
         hook = hook_marker + ' BEGIN\n    handle ' + hook_path + ' {\n        rewrite * /telegram/webhook\n        reverse_proxy ' + alias + ':80\n    }\n    ' + hook_marker + ' END'
-        if hook_marker + ' BEGIN' in updated:
+        if port == 443:
+            # The game's own HTTPS origin accepts Telegram webhooks on port 443.
+            # No dependency on the main site's Caddyfile formatting is needed.
+            updated = re.sub(hook_pattern, '', updated, flags=re.S)
+            webhook = 'https://' + url.netloc + '/telegram/webhook'
+        elif hook_marker + ' BEGIN' in updated:
             updated = re.sub(hook_pattern, lambda _: hook, updated, flags=re.S)
         elif '{$DOMAIN} {' in updated:
             updated = updated.replace('{$DOMAIN} {', '{$DOMAIN} {\n    ' + hook, 1)
@@ -436,12 +450,12 @@ def prepare_chrono_https(config, p, text, log):
             target.write(updated)
         proxy_overlay = json.loads(previous[overlay]) if previous[overlay] else {'services': {'proxy': {'ports': []}}}
         ports = proxy_overlay['services']['proxy']['ports']
-        listener = str(url.port) + ':' + str(url.port)
-        if listener not in ports:
+        listener = str(port) + ':' + str(port)
+        if port != 443 and listener not in ports:
             ports.append(listener)
         overlay.write_text(json.dumps(proxy_overlay, indent=2), encoding='utf-8')
         # !reset requires Compose 2.24+; remove the old HTTP listener before Caddy claims it.
-        local.write_text('services:\n  web:\n    ports: !reset []\n    environment:\n      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}\n      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}\n      TELEGRAM_WEBHOOK_URL: https://' + url.hostname + hook_path + '\n      cookie_secure: "true"\n      cookie_samesite: None\n    networks:\n      default: {}\n      gitdeck_https:\n        aliases: [' + alias + ']\nnetworks:\n  gitdeck_https:\n    external: true\n    name: ' + network + '\n', encoding='utf-8')
+        local.write_text('services:\n  web:\n    ports: !reset []\n    environment:\n      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}\n      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}\n      TELEGRAM_WEBHOOK_URL: ' + webhook + '\n      cookie_secure: "true"\n      cookie_samesite: None\n    networks:\n      default: {}\n      gitdeck_https:\n        aliases: [' + alias + ']\nnetworks:\n  gitdeck_https:\n    external: true\n    name: ' + network + '\n', encoding='utf-8')
         compose(proxy, ['exec', '-T', 'proxy', 'caddy', 'validate', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile'], log)
         return proxy, restore
     except Exception:
@@ -513,11 +527,13 @@ def apply_environment(config, p, job, log):
     values += [v for k, v in payload['changes'].items() if k not in PUBLIC_ENV]
     protected_log = RedactedLog(log, values)
     shared_proxy, restore_https = None, lambda: None
+    services_touched = False
     try:
         status_update(config, job, 'configuring')
         write_env(p, new)
         shared_proxy, restore_https = prepare_chrono_https(config, p, new, protected_log)
         compose(p, ['config', '--quiet'], protected_log)
+        services_touched = True
         start_services(p, protected_log, build=False)
         if shared_proxy:
             compose(shared_proxy, ['up', '-d', '--no-deps', 'proxy'], protected_log)
@@ -527,17 +543,22 @@ def apply_environment(config, p, job, log):
             compose(p, ['up', '-d', '--no-deps', 'proxy'], protected_log)
         status_update(config, job, 'success')
         protected_log.write('\nНастройки применены. Домен DNS настраивается отдельно у провайдера.\n')
-    except Exception:
+    except Exception as error:
+        protected_log.write('\nПричина ошибки: ' + str(error) + '\n')
         protected_log.write('\nНе удалось применить настройки; возвращается прежний .env.\n')
         restore_https()
         write_env(p, old)
-        if shared_proxy:
-            compose(shared_proxy, ['up', '-d', '--no-deps', 'proxy'], protected_log)
-            compose(shared_proxy, ['exec', '-T', 'proxy', 'caddy', 'reload', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile'], protected_log)
-        start_services(p, protected_log, build=False)
-        services = compose(p, ['config', '--services'], protected_log).decode().splitlines()
-        if 'proxy' in services:
-            compose(p, ['up', '-d', '--no-deps', 'proxy'], protected_log)
+        try:
+            if shared_proxy and services_touched:
+                compose(shared_proxy, ['up', '-d', '--no-deps', 'proxy'], protected_log)
+                compose(shared_proxy, ['exec', '-T', 'proxy', 'caddy', 'reload', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile'], protected_log)
+            if services_touched:
+                start_services(p, protected_log, build=False)
+                services = compose(p, ['config', '--services'], protected_log).decode().splitlines()
+                if 'proxy' in services:
+                    compose(p, ['up', '-d', '--no-deps', 'proxy'], protected_log)
+        except Exception as rollback_error:
+            protected_log.write('\nОшибка перезапуска при возврате прежних настроек: ' + str(rollback_error) + '\n')
         raise RuntimeError('Ошибка применения настроек сайта. См. журнал задания') from None
 
 

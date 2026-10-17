@@ -242,7 +242,23 @@ class GitDeckTests(unittest.TestCase):
         self.assertEqual((self.dest / '.env').read_text(encoding='utf-8'), old)
         self.assertEqual(len(calls), 2)
         self.assertNotIn('private-token', log.getvalue())
+        self.assertIn('Причина ошибки: failed startup', log.getvalue())
         self.assertTrue((folder / 'previous.env').exists())
+
+    def test_environment_preflight_error_is_visible_without_container_restart(self):
+        old = 'DOMAIN=old.example.com\nTELEGRAM_BOT_TOKEN=private-token-value\n'
+        (self.dest / '.env').write_text(old, encoding='utf-8')
+        folder = self.root / 'state/jobs' / self.job
+        payload = {'env_revision': app.env_revision(old), 'changes': {'DOMAIN': 'new.example.com'}}
+        (folder / 'environment.json').write_text(json.dumps(payload), encoding='utf-8')
+        log = io.StringIO()
+        with patch.object(app, 'prepare_chrono_https', side_effect=ValueError('Invalid proxy private-token-value')), patch.object(app, 'start_services') as start:
+            with self.assertRaises(RuntimeError):
+                app.apply_environment(self.config, self.project, self.job, log)
+        self.assertIn('Причина ошибки: Invalid proxy [секрет скрыт]', log.getvalue())
+        self.assertNotIn('private-token-value', log.getvalue())
+        self.assertEqual((self.dest / '.env').read_text(), old)
+        start.assert_not_called()
 
     def test_environment_success_updates_file_without_touching_code(self):
         old = 'DOMAIN=old.example.com\nTELEGRAM_BOT_TOKEN=keep-me-private\n'
@@ -517,12 +533,35 @@ class SharedHttpsTests(unittest.TestCase):
         self.assertEqual(self.caddy.read_text(), '{$DOMAIN} {\n    reverse_proxy web:80\n}\n')
         self.assertFalse(local.exists())
 
-    def test_rejects_wrong_domain_and_reserved_port_without_writes(self):
+    def test_rejects_invalid_url_and_main_site_collision_without_writes(self):
         original = self.caddy.read_bytes()
-        for url in ('https://evil.test:8083/', 'http://vano.sbena.net:8083/', 'https://vano.sbena.net/', 'https://vano.sbena.net:443/'):
+        for url in ('https://evil.test:80/', 'http://vano.sbena.net:8083/', 'https://vano.sbena.net/', 'https://vano.sbena.net:443/', 'https://chrono.vano.sbena.net/path'):
             with self.assertRaises(ValueError):
                 app.prepare_chrono_https(self.config, self.game, self.env.replace('https://vano.sbena.net:8083/', url), io.StringIO())
         self.assertEqual(self.caddy.read_bytes(), original)
+
+    def test_subdomain_uses_existing_443_and_own_webhook(self):
+        # An existing custom main-site block must not prevent subdomain setup.
+        self.caddy.write_text('vano.sbena.net {\n    reverse_proxy web:80\n}\n')
+        env = self.env.replace('https://vano.sbena.net:8083/', 'https://chrono.vano.sbena.net/')
+        with patch.object(app, 'compose', side_effect=self.fake_compose):
+            app.prepare_chrono_https(self.config, self.game, env, io.StringIO())
+            app.prepare_chrono_https(self.config, self.game, env, io.StringIO())
+        text = self.caddy.read_text()
+        self.assertEqual(text.count('https://chrono.vano.sbena.net {'), 1)
+        self.assertIn('reverse_proxy web:80', text)
+        self.assertNotIn('handle /gitdeck-telegram-', text)
+        local = Path(self.game['directory']) / 'compose.gitdeck-https.yaml'
+        self.assertIn('TELEGRAM_WEBHOOK_URL: https://chrono.vano.sbena.net/telegram/webhook', local.read_text())
+        ports = json.loads((Path(self.proxy['directory']) / 'compose.gitdeck-https.yaml').read_text())['services']['proxy']['ports']
+        self.assertEqual(ports, [])
+
+    def test_moving_to_subdomain_removes_old_bot_route(self):
+        with patch.object(app, 'compose', side_effect=self.fake_compose):
+            app.prepare_chrono_https(self.config, self.game, self.env, io.StringIO())
+            app.prepare_chrono_https(self.config, self.game, self.env.replace('https://vano.sbena.net:8083/', 'https://chrono.vano.sbena.net/'), io.StringIO())
+        self.assertNotIn('https://vano.sbena.net:8083', self.caddy.read_text())
+        self.assertNotIn('handle /gitdeck-telegram-', self.caddy.read_text())
 
     def test_proxy_validation_failure_restores_every_file(self):
         original = self.caddy.read_bytes()
@@ -534,6 +573,13 @@ class SharedHttpsTests(unittest.TestCase):
         self.assertEqual(self.caddy.read_bytes(), original)
         self.assertFalse((Path(self.game['directory']) / 'compose.gitdeck-https.yaml').exists())
         self.assertFalse((Path(self.proxy['directory']) / 'compose.gitdeck-https.yaml').exists())
+
+    def test_proxy_selection_errors_explain_how_to_fix_configuration(self):
+        with self.assertRaisesRegex(ValueError, 'не найден'):
+            app.prepare_chrono_https(self.config, self.game, self.env.replace('=marathon', '=missing'), io.StringIO())
+        self.proxy['compose'] = 'compose.yaml'
+        with self.assertRaisesRegex(ValueError, 'выберите compose.https.yaml'):
+            app.prepare_chrono_https(self.config, self.game, self.env, io.StringIO())
 
 
 if __name__ == '__main__':

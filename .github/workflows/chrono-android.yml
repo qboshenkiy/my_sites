@@ -3,9 +3,9 @@ on:
   workflow_dispatch:
     inputs:
       game_url:
-        description: 'HTTPS-адрес Chrono Logos, например https://vano.sbena.net:8083/'
+        description: 'HTTPS-адрес Chrono Logos, например https://chrono.vano.sbena.net/'
         required: true
-        default: 'https://vano.sbena.net:8083/'
+        default: 'https://chrono.vano.sbena.net/'
         type: string
 permissions:
   contents: read

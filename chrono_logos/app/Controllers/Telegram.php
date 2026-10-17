@@ -86,7 +86,7 @@ class Telegram extends BaseController
             $url = TelegramApp::url();
             if (!$url) throw new DomainException('Сначала подключите HTTPS и задайте APP_URL в GitDeck.');
             $webhook = (string)env('TELEGRAM_WEBHOOK_URL', '');
-            if (!preg_match('~^https://[a-z0-9.-]+/gitdeck-telegram-[a-z0-9-]+$~D', $webhook)) throw new DomainException('Сначала примените HTTPS через общий прокси в GitDeck.');
+            if (!preg_match('~^https://[a-z0-9.-]+(?::443)?/(?:gitdeck-telegram-[a-z0-9-]+|telegram/webhook)$~D', $webhook)) throw new DomainException('Сначала примените HTTPS через общий прокси в GitDeck.');
             $me = TelegramApp::call('getMe', []);
             TelegramApp::call('setChatMenuButton', ['menu_button' => ['type' => 'web_app', 'text' => 'Играть', 'web_app' => ['url' => $url]]]);
             TelegramApp::call('setMyCommands', ['commands' => [['command' => 'start', 'description' => 'Открыть Chrono Logos'], ['command' => 'app', 'description' => 'Играть в хронологию']]]);
