@@ -45,7 +45,7 @@ public class MainActivity extends ComponentActivity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        policy = new NavigationPolicy(BuildConfig.MARATHON_URL);
+        policy = new NavigationPolicy(BuildConfig.MARATHON_URL, BuildConfig.DEBUG && BuildConfig.ALLOW_HTTP_DEBUG);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.rgb(248,248,241));
@@ -106,7 +106,16 @@ public class MainActivity extends ComponentActivity {
                 progress.setVisibility(View.GONE);CookieManager.getInstance().flush();
             }
             @Override public void onReceivedError(WebView view,WebResourceRequest request,WebResourceError error) {
-                if (request.isForMainFrame()) showError("Не удалось подключиться к марафону. Проверьте интернет и доступность сайта.");
+                if (request.isForMainFrame()) {
+                    String reason;
+                    switch (error.getErrorCode()) {
+                        case ERROR_HOST_LOOKUP: reason = "Не удалось найти адрес сайта. Проверьте интернет и доменное имя."; break;
+                        case ERROR_CONNECT: reason = "Сервер не принимает подключение. Проверьте адрес и порт сайта."; break;
+                        case ERROR_TIMEOUT: reason = "Сервер не ответил вовремя. Повторите попытку."; break;
+                        default: reason = "Не удалось подключиться к марафону. Проверьте интернет и доступность сайта.";
+                    }
+                    showError(reason);
+                }
             }
             @Override public void onReceivedHttpError(WebView view,WebResourceRequest request,WebResourceResponse response) {
                 if (request.isForMainFrame() && response.getStatusCode() >= 400) showError("Сайт марафона временно недоступен. Попробуйте ещё раз позже.");
@@ -147,7 +156,7 @@ public class MainActivity extends ComponentActivity {
         });
     }
     private int dp(int value) { return Math.round(value*getResources().getDisplayMetrics().density); }
-    private void showError(String message) { progress.setVisibility(View.GONE);errorText.setText(message);errorPanel.setVisibility(View.VISIBLE); }
+    private void showError(String message) { progress.setVisibility(View.GONE);errorText.setText(message + "\n\n" + BuildConfig.MARATHON_URL);errorPanel.setVisibility(View.VISIBLE); }
     private void openExternal(String url) {
         if (!policy.external(url)) return;
         try { startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url))); }

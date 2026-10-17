@@ -3,10 +3,15 @@ on:
   workflow_dispatch:
     inputs:
       marathon_url:
-        description: 'HTTPS-адрес марафона, например https://vano.sbena.net/'
+        description: 'Адрес марафона, обычно https://vano.sbena.net/'
         required: true
         default: 'https://vano.sbena.net/'
         type: string
+      allow_http_debug:
+        description: 'Временно разрешить HTTP для vano.sbena.net:8081 в тестовом APK'
+        required: true
+        default: false
+        type: boolean
 permissions:
   contents: read
 jobs:
@@ -32,9 +37,10 @@ jobs:
       - name: Test and build the APK
         env:
           MARATHON_BUILD_URL: ${{ inputs.marathon_url }}
+          ALLOW_HTTP_DEBUG: ${{ inputs.allow_http_debug }}
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon --console=plain -PmarathonUrl="$MARATHON_BUILD_URL" testDebugUnitTest lintDebug assembleDebug
+          ./gradlew --no-daemon --console=plain -PmarathonUrl="$MARATHON_BUILD_URL" -PallowHttpDebug="$ALLOW_HTTP_DEBUG" testDebugUnitTest lintDebug assembleDebug
       - name: Downloadable test APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

@@ -20,7 +20,18 @@ Windows: `gradlew.bat` с теми же аргументами. В Android Studi
 задайте SDK/JDK и выполните Build APK. Результат:
 `app/build/outputs/apk/debug/app-debug.apk`.
 
-`marathonUrl` принимает только HTTPS без пароля, query и fragment. Если марафон
+Пока HTTPS ещё не подключён, можно собрать тестовый APK для текущего сервера:
+
+```sh
+./gradlew -PmarathonUrl=http://vano.sbena.net:8081/ -PallowHttpDebug=true testDebugUnitTest lintDebug assembleDebug
+```
+
+Это явное исключение только для debug-сборки и адреса `vano.sbena.net:8081`.
+HTTP передаёт данные без шифрования; для постоянного использования подключите HTTPS.
+Release-сборка с HTTP завершается ошибкой. Проверка сертификатов не отключается.
+В GitHub Actions для этого выберите HTTP-адрес и включите `allow_http_debug`.
+
+По умолчанию `marathonUrl` принимает только HTTPS без пароля, query и fragment. Если марафон
 в подпапке, укажите завершающий `/`. Gradle Wrapper закреплён на версии 8.13
 с SHA-256 дистрибутива; Android Gradle Plugin — 8.13.2. Устройства: Android 7+.
 
@@ -28,7 +39,7 @@ Windows: `gradlew.bat` с теми же аргументами. В Android Studi
 
 - Cookie WebView сохраняют существующую сессию; пароль/токен в APK не встраиваются.
 - Вход участника: кнопка Telegram, подтверждение в боте, возвращение в приложение.
-- Внутри WebView остаётся только заданный HTTPS-origin и папка сайта.
+- Внутри WebView остаётся только заданный origin и папка сайта.
 - Внешние ссылки открываются браузером/Telegram; произвольные intent/file/javascript
   ссылки блокируются. Привилегированного JavaScript bridge нет.
 - Ошибки SSL не обходятся. Для сбоя сети есть отдельный экран и повтор подключения.

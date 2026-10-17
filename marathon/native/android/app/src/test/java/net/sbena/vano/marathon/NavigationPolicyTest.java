@@ -25,4 +25,18 @@ public class NavigationPolicyTest {
         assertFalse(policy.external("file:///data/data/private"));
         assertFalse(policy.external("tg://unsafe-command"));
     }
+    @Test public void temporaryHttpIsExplicitAndRestrictedToCurrentServer() {
+        NavigationPolicy temporary = new NavigationPolicy("http://vano.sbena.net:8081/", true);
+        assertTrue(temporary.internal("http://vano.sbena.net:8081/api.php?action=profile"));
+        assertFalse(temporary.internal("http://vano.sbena.net/"));
+        assertFalse(temporary.internal("http://vano.sbena.net:8083/"));
+        assertFalse(temporary.internal("http://sub.vano.sbena.net:8081/"));
+        assertFalse(temporary.internal("https://vano.sbena.net:8081/"));
+        assertFalse(temporary.internal("http://user@vano.sbena.net:8081/"));
+        assertFalse(new NavigationPolicy("https://vano.sbena.net/", true).internal("http://vano.sbena.net:8081/"));
+        for (String address : new String[]{"http://vano.sbena.net:8083/", "http://other.test:8081/", "http://vano.sbena.net:8081/?token=secret"}) {
+            assertThrows(IllegalArgumentException.class, () -> new NavigationPolicy(address, true));
+        }
+        assertThrows(IllegalArgumentException.class, () -> new NavigationPolicy("http://vano.sbena.net:8081/"));
+    }
 }
