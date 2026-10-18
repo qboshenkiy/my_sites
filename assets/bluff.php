@@ -1,7 +1,26 @@
 <?php
 declare(strict_types=1);
 if(realpath($_SERVER['SCRIPT_FILENAME']??'')===__FILE__){http_response_code(404);exit;}
-function bluffNormal(string $s): string {return trim(preg_replace('/[^\p{L}\p{N}]+/u',' ',str_replace('ё','е',mb_strtolower($s))));}
+function bluffNormal(string $s): string {
+    if(class_exists('Normalizer'))$s=Normalizer::normalize($s,Normalizer::FORM_KC)?:$s;
+    $s=preg_replace('/\p{Cf}/u','',$s);
+    $s=strtr(mb_strtolower($s),['ё'=>'е','a'=>'а','c'=>'с','e'=>'е','o'=>'о','p'=>'р','x'=>'х','y'=>'у','k'=>'к','m'=>'м','t'=>'т','b'=>'в','h'=>'н']);
+    return trim(preg_replace('/[^\p{L}\p{N}]+/u',' ',$s));
+}
+function bluffMatchesTruth(string $answer,string $truth): bool {
+    $a=bluffNormal($answer);$b=bluffNormal($truth);
+    if($a===$b || str_replace(' ','',$a)===str_replace(' ','',$b))return true;
+    $words=fn($s)=>array_values(array_filter(explode(' ',$s),fn($w)=>!in_array($w,['это','был','была','были','его','ее','именно','ответ'],true)));
+    $aw=$words($a);$bw=$words($b);sort($aw);sort($bw);
+    if($aw===$bw)return true;
+    if(!in_array('не',$aw,true)&&count($bw)>0&&count($aw)<=count($bw)+2&&!array_diff($bw,$aw))return true;
+    // Spelling guard only. Different numbers and short names remain distinct.
+    $a=implode(' ',$aw);$b=implode(' ',$bw);$len=max(mb_strlen($a),mb_strlen($b));
+    if(min(mb_strlen($a),mb_strlen($b))<6||preg_match('/\d/u',$a.$b)||in_array('не',$aw,true))return false;
+    $x=preg_split('//u',$a,-1,PREG_SPLIT_NO_EMPTY);$y=preg_split('//u',$b,-1,PREG_SPLIT_NO_EMPTY);$row=range(0,count($y));
+    foreach($x as $i=>$letter){$next=[$i+1];foreach($y as $j=>$other)$next[]=min($next[$j]+1,$row[$j+1]+1,$row[$j]+($letter===$other?0:1));$row=$next;}
+    return end($row)<=($len>=12?2:1);
+}
 function bluffSchema(): void {
     query("CREATE TABLE IF NOT EXISTS bluff_rooms(room_id TEXT PRIMARY KEY REFERENCES rooms(id),phase TEXT NOT NULL DEFAULT 'lobby',round_no INTEGER NOT NULL DEFAULT 0,chooser TEXT,question_index INTEGER NOT NULL DEFAULT -1,deadline REAL NOT NULL DEFAULT 0,played TEXT NOT NULL DEFAULT '[]',roster TEXT NOT NULL DEFAULT '[]',choices TEXT NOT NULL DEFAULT '[]',scored INTEGER NOT NULL DEFAULT 0)");
     query('CREATE TABLE IF NOT EXISTS bluff_lies(room_id TEXT NOT NULL,round_no INTEGER NOT NULL,player_id TEXT NOT NULL REFERENCES players(id),text TEXT NOT NULL,normal TEXT NOT NULL,PRIMARY KEY(room_id,round_no,player_id))');
@@ -21,7 +40,7 @@ function bluffStartVote(array $b,array $quiz): void {
         if(!isset($groups[$l['normal']]))$groups[$l['normal']]=['id'=>bin2hex(random_bytes(8)),'text'=>$l['text'],'truth'=>false,'authors'=>[]];$groups[$l['normal']]['authors'][]=$l['player_id'];
     }
     $choices=array_merge($choices,array_values($groups));shuffle($choices);
-    query("UPDATE bluff_rooms SET phase='vote',choices=?,deadline=? WHERE room_id=?",[json_encode($choices,JSON_UNESCAPED_UNICODE),microtime(true)+30,$b['room_id']]);
+    query("UPDATE bluff_rooms SET phase='review',choices=?,deadline=0 WHERE room_id=?",[json_encode($choices,JSON_UNESCAPED_UNICODE),$b['room_id']]);
 }
 function bluffScore(array $b): void {
     if($b['scored'])return;$choices=[];foreach(json_decode($b['choices'],true) as $c)$choices[$c['id']]=$c;
@@ -49,6 +68,13 @@ function bluffHandle(string $action,array $input,array $room,array $quiz,array $
             else {$ids=array_column(query('SELECT id FROM players WHERE room_id=? ORDER BY rowid',[$id])->fetchAll(),'id');if(count($ids)<2)fail('Для игры нужны хотя бы два участника.');$round=(int)$b['round_no']+1;
                 query("UPDATE bluff_rooms SET phase='choose',round_no=?,chooser=?,roster=?,question_index=-1,deadline=?,choices='[]',scored=0 WHERE room_id=?",[$round,$ids[($round-1)%count($ids)],json_encode($ids),microtime(true)+60,$id]);}
         }elseif($command==='reveal'&&$b['phase']==='write')bluffStartVote($b,$quiz);
+        elseif($command==='start_vote'&&$b['phase']==='review')query("UPDATE bluff_rooms SET phase='vote',deadline=? WHERE room_id=?",[microtime(true)+30,$id]);
+        elseif($command==='reject_lie'&&$b['phase']==='review'){
+            $choices=json_decode($b['choices'],true);$found=false;
+            foreach($choices as $i=>$choice)if($choice['id']===($input['choice']??null)&&!$choice['truth']){unset($choices[$i]);$found=true;}
+            if(!$found)fail('Можно убрать только выдумку на этапе проверки.',409);
+            query('UPDATE bluff_rooms SET choices=? WHERE room_id=?',[json_encode(array_values($choices),JSON_UNESCAPED_UNICODE),$id]);
+        }
         elseif($command==='reveal'&&$b['phase']==='vote')bluffScore($b);
         elseif($command==='choose_random'&&$b['phase']==='choose'){$cats=bluffCategories($b,$quiz);bluffQuestion($b,$quiz,$cats[random_int(0,count($cats)-1)]);}
         elseif($command==='finish'){if($b['phase']==='vote')bluffScore($b);query("UPDATE bluff_rooms SET phase='finished' WHERE room_id=?",[$id]);}
@@ -68,7 +94,7 @@ function bluffHandle(string $action,array $input,array $room,array $quiz,array $
             if($b['phase']!=='write')fail('Приём выдумок завершён.',409);
             if(query('SELECT player_id FROM bluff_lies WHERE room_id=? AND round_no=? AND player_id=?',[$id,$b['round_no'],$player['id']])->fetchColumn())fail('Ваш вариант уже принят.',409);
             $text=cleanText($input['text']??'',120);$normal=bluffNormal($text);if($normal==='')fail('Добавьте слова или цифры в ответ.');
-            foreach(array_merge([$q['truth']],$q['aliases']??[]) as $truth)if($normal===bluffNormal($truth))return ['ok'=>true,'accepted'=>false,'matchedTruth'=>true,'message'=>'Это правильный ответ! Придумайте другой вариант, чтобы запутать остальных.'];
+            foreach(array_merge([$q['truth']],$q['aliases']??[]) as $truth)if(bluffMatchesTruth($text,$truth))return ['ok'=>true,'accepted'=>false,'matchedTruth'=>true,'message'=>'Этот вариант совпадает с правдой или очень похож на неё. Придумайте другой ложный ответ.'];
             query('INSERT INTO bluff_lies VALUES (?,?,?,?,?)',[$id,$b['round_no'],$player['id'],$text,$normal]);return ['ok'=>true,'accepted'=>true];
         }
         if($b['phase']!=='vote')fail('Голосование завершено.',409);
@@ -84,5 +110,6 @@ function bluffHandle(string $action,array $input,array $room,array $quiz,array $
     $people=query('SELECT id,name,score FROM players WHERE room_id=? ORDER BY score DESC,name',[$id])->fetchAll();$names=array_column($people,'name','id');$rank=0;$last=null;foreach($people as $i=>&$p){$p['score']=(int)$p['score'];if($p['score']!==$last)$rank=$i+1;$p['rank']=$rank;$last=$p['score'];}unset($p);
     $voterNames=[];if($revealed)foreach(query('SELECT player_id,choice_id FROM bluff_votes WHERE room_id=? AND round_no=?',[$id,$b['round_no']])->fetchAll() as $v)$voterNames[$v['choice_id']][]=$names[$v['player_id']]??'Игрок';
     if(in_array($b['phase'],['vote','results','finished'],true))foreach(json_decode($b['choices'],true) as $c){$safe=['id'=>$c['id'],'text'=>$c['text'],'own'=>$player?in_array($player['id'],$c['authors'],true):false];if($revealed){$safe['truth']=$c['truth'];$safe['authors']=array_map(fn($pid)=>$names[$pid]??'Игрок',$c['authors']);$safe['voters']=$voterNames[$c['id']]??[];}$choices[]=$safe;}
-    return ['id'=>$id,'code'=>$room['code'],'title'=>$quiz['title'],'mode'=>'bluff','status'=>$b['phase'],'round'=>(int)$b['round_no'],'index'=>(int)$b['question_index'],'total'=>count($quiz['questions']),'played'=>count(json_decode($b['played'],true)),'categories'=>bluffCategories($b,$quiz),'chooser'=>$b['chooser'],'chooserName'=>$names[$b['chooser']]??'Игрок','playing'=>$isPlaying,'playerId'=>$player['id']??null,'players'=>$people,'question'=>$question,'choices'=>$choices,'myLie'=>$mine===false?null:$mine,'myVote'=>$vote?:null,'written'=>(int)query('SELECT count(*) FROM bluff_lies WHERE room_id=? AND round_no=?',[$id,$b['round_no']])->fetchColumn(),'answered'=>(int)query('SELECT count(*) FROM bluff_votes WHERE room_id=? AND round_no=?',[$id,$b['round_no']])->fetchColumn(),'roundPlayers'=>count($roster),'remaining'=>in_array($b['phase'],['choose','write','vote'],true)?max(0,(float)$b['deadline']-microtime(true)):0,'projectorToken'=>$admin&&!$player&&!$projector?$meta['projector_token']:null];
+    $reviewChoices=$admin&&!$player&&!$projector&&$b['phase']==='review'?json_decode($b['choices'],true):[];
+    return ['reviewChoices'=>$reviewChoices,'id'=>$id,'code'=>$room['code'],'title'=>$quiz['title'],'mode'=>'bluff','status'=>$b['phase'],'round'=>(int)$b['round_no'],'index'=>(int)$b['question_index'],'total'=>count($quiz['questions']),'played'=>count(json_decode($b['played'],true)),'categories'=>bluffCategories($b,$quiz),'chooser'=>$b['chooser'],'chooserName'=>$names[$b['chooser']]??'Игрок','playing'=>$isPlaying,'playerId'=>$player['id']??null,'players'=>$people,'question'=>$question,'choices'=>$choices,'myLie'=>$mine===false?null:$mine,'myVote'=>$vote?:null,'written'=>(int)query('SELECT count(*) FROM bluff_lies WHERE room_id=? AND round_no=?',[$id,$b['round_no']])->fetchColumn(),'answered'=>(int)query('SELECT count(*) FROM bluff_votes WHERE room_id=? AND round_no=?',[$id,$b['round_no']])->fetchColumn(),'roundPlayers'=>count($roster),'remaining'=>in_array($b['phase'],['choose','write','vote'],true)?max(0,(float)$b['deadline']-microtime(true)):0,'projectorToken'=>$admin&&!$player&&!$projector?$meta['projector_token']:null];
 }

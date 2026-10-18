@@ -35,6 +35,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 
 public class MainActivity extends ComponentActivity {
+    private net.sbena.updates.AppUpdates updates;
     private WebView web;
     private ProgressBar progress;
     private LinearLayout errorPanel;
@@ -45,6 +46,7 @@ public class MainActivity extends ComponentActivity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        updates = new net.sbena.updates.AppUpdates(this, BuildConfig.VERSION_CODE);
         policy = new NavigationPolicy(BuildConfig.GAME_URL);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -77,6 +79,10 @@ public class MainActivity extends ComponentActivity {
         retry.setText("Повторить подключение");
         retry.setOnClickListener(view -> web.loadUrl(BuildConfig.GAME_URL));
         errorPanel.addView(retry);
+        Button checkUpdates = new Button(this);
+        checkUpdates.setText("Проверить обновления приложения");
+        checkUpdates.setOnClickListener(view -> updates.check(true));
+        errorPanel.addView(checkUpdates);
         errorPanel.setVisibility(View.GONE);
         content.addView(errorPanel,new FrameLayout.LayoutParams(-1,-1));
         setContentView(root);
@@ -168,7 +174,7 @@ public class MainActivity extends ComponentActivity {
     }
     @Override protected void onSaveInstanceState(Bundle state) { super.onSaveInstanceState(state);web.saveState(state);state.putString("downloadUrl",downloadUrl); }
     @Override protected void onPause() { CookieManager.getInstance().flush();web.onPause();super.onPause(); }
-    @Override protected void onResume() { super.onResume();if(web!=null)web.onResume(); }
+    @Override protected void onResume() { super.onResume();if(web!=null)web.onResume();if(updates!=null)updates.resume(); }
     @Override protected void onDestroy() { web.destroy();super.onDestroy(); }
     @Override protected void onActivityResult(int request,int result,Intent data) {
         super.onActivityResult(request,result,data);

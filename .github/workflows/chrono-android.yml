@@ -27,6 +27,14 @@ jobs:
             chrono_logos/native/android/**/*.gradle
             chrono_logos/native/android/gradle.properties
             chrono_logos/native/android/gradle/wrapper/gradle-wrapper.properties
+      - name: Restore permanent signing key
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          test -n "$ANDROID_KEYSTORE_B64" || { echo 'Configure ANDROID_KEYSTORE_B64'; exit 1; }
+          mkdir -p "$HOME/.android"
+          printf '%s' "$ANDROID_KEYSTORE_B64" | base64 --decode > "$HOME/.android/debug.keystore"
+          chmod 600 "$HOME/.android/debug.keystore"
       - name: Install Android build packages
         run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
       - name: Test and build the APK

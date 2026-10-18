@@ -59,7 +59,7 @@ with tempfile.TemporaryDirectory(prefix='pulse-bluff-') as folder:
         ps=screen.call('state',suffix='&projector='+token);assert ps['playerId'] is None and ps['question']==s['question']
         screen.call('bluff_lie',{'round':1,'index':0,'text':'test'},401)
         screen.call('control',{'room':rid,'command':'reveal'},401)
-        for text in [' НОЙ!!! ','ноах']:
+        for text in [' НОЙ!!! ','ноах','Нoй','Н\u200bой','Это Ной']:
             r=op(a,'bluff_lie',text=text);assert r['matchedTruth'] and not r['accepted']
         assert b.call('state')['written']==0 and 'matchedTruth' not in b.call('state')
         a.call('bluff_lie',{'round':1,'index':0,'text':'!!!'},400)
@@ -67,6 +67,9 @@ with tempfile.TemporaryDirectory(prefix='pulse-bluff-') as folder:
         d=join('D');d.call('bluff_lie',{'round':1,'index':0,'text':'late'},403)
         op(b,'bluff_lie',text='МОИСЕЙ!');op(c,'bluff_lie',text='Авраам')
         host.call('control',{'room':rid,'command':'reveal','round':1,'phase':'write'},409)
+        review=hs();fixtures['review']=review;assert review['status']=='review' and len(review['reviewChoices'])==3
+        assert not a.call('state')['reviewChoices'] and not screen.call('state',suffix='&projector='+token)['reviewChoices']
+        host.call('control',{'room':rid,'command':'start_vote','round':1,'phase':'review'})
         s=a.call('state');fixtures['vote']=s;assert s['status']=='vote' and len(s['choices'])==3
         assert s['choices']==a.call('state')['choices'] and s['myLie']=='Моисей'
         assert 'authors' not in str(s['choices']) and 'truth' not in str(s['choices']) and 'reference' not in s['question']
@@ -91,6 +94,8 @@ with tempfile.TemporaryDirectory(prefix='pulse-bluff-') as folder:
         b.call('bluff_select',{'round':2,'category':'География'})
         with sqlite3.connect(Path(folder)/'quiz.sqlite') as db:db.execute('UPDATE bluff_rooms SET deadline=0 WHERE room_id=?',(rid,))
         db.close()
+        s=a.call('state');assert s['status']=='review' and not s['choices']
+        host.call('control',{'room':rid,'command':'start_vote'})
         s=a.call('state');assert s['status']=='vote' and len(s['choices'])==1
         for p in players:p.call('bluff_vote',{'round':2,'index':1,'choice':s['choices'][0]['id']})
         s=hs();assert s['status']=='results' and {p['name']:p['score'] for p in s['players']}=={'A':1500,'B':2500,'C':1500,'D':1000}
@@ -105,7 +110,13 @@ with tempfile.TemporaryDirectory(prefix='pulse-bluff-') as folder:
         db.close()
         s=a.call('state');assert s['status']=='write'
         a.call('bluff_lie',{'round':1,'index':s['index'],'text':'0'});assert a.call('state')['myLie']=='0'
-        host.call('control',{'room':rid2,'command':'reveal'});assert a.call('state')['status']=='vote'
+        host.call('control',{'room':rid2,'command':'reveal'});assert a.call('state')['status']=='review'
+        review=host.call('state',suffix='&room='+rid2)
+        correct=next(c['id'] for c in review['reviewChoices'] if c['truth'])
+        lie=next(c['id'] for c in review['reviewChoices'] if not c['truth'])
+        host.call('control',{'room':rid2,'command':'reject_lie','choice':correct},409)
+        host.call('control',{'room':rid2,'command':'reject_lie','choice':lie})
+        host.call('control',{'room':rid2,'command':'start_vote'});assert len(a.call('state')['choices'])==1
         host.call('control',{'room':rid2,'command':'reveal'});assert a.call('state')['status']=='results'
         assert all(p['score']==0 for p in a.call('state')['players'])
         print('PASS: bluff editor/API and JSON, rotating category chooser, private truth/alias match, no answer leaks, merged lies and self-vote rejection, fixed scoring exactly once, late joins, timers, stale requests, projector and room isolation.')

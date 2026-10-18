@@ -14,10 +14,11 @@ android {
         applicationId 'net.sbena.vano.marathon'
         minSdk 24
         targetSdk 36
-        versionCode 2
-        versionName '1.0.1'
+        versionCode providers.gradleProperty('appVersionCode').orElse('100').get().toInteger()
+        versionName providers.gradleProperty('appVersionName').orElse('1.1.0').get()
         buildConfigField 'String', 'MARATHON_URL', groovy.json.JsonOutput.toJson(marathonUrl)
     }
+    sourceSets { main { java.srcDir '../../../../native-common/src'; res.srcDir '../../../../native-common/res' }; test.java.srcDir '../../../../native-common/tests' }
     buildFeatures { buildConfig true }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     buildTypes {
