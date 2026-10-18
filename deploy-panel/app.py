@@ -22,15 +22,17 @@ import threading
 import time
 import urllib.parse
 
-VERSION = '1.3.2'
+VERSION = '1.4.0'
 LAYOUT = {
+    'drawing': ['index.php', 'api.php', 'lib', 'assets', 'ops', '.dockerignore'],
     'pulse': ['index.php', 'api.php', 'seed.php', '.htaccess', 'assets', 'tools/check.php', 'tools/backup.php'],
     'marathon': ['index.php', 'api.php', '.htaccess', 'assets', 'lib', 'tools/bot.php', 'tools/backup.php'],
     'chrono': ['app', 'public/assets', 'public/index.php', 'public/_health.php', 'public/.htaccess',
                'public/favicon.ico', 'public/robots.txt', 'composer.json', 'composer.lock', 'spark', 'ops', '.dockerignore'],
     'self': ['app.py', 'index.html', 'VERSION', 'README.md', 'install.sh', 'config.example.json', '.gitignore'],
 }
-REQUIRED = {'pulse': ['index.php', 'api.php', 'assets/app.js'],
+REQUIRED = {'drawing': ['index.php', 'api.php', 'lib/core.php', 'lib/ai.php', 'ops/compose.yaml', 'ops/Dockerfile'],
+            'pulse': ['index.php', 'api.php', 'assets/app.js'],
             'marathon': ['index.php', 'api.php', 'lib/core.php', 'lib/telegram.php'],
             'chrono': ['app/Config/Paths.php', 'public/index.php', 'composer.lock', 'spark', 'ops/compose.yaml',
                        'ops/Dockerfile', 'ops/entrypoint.sh', 'app/Commands/DeployAdmin.php'],
@@ -94,8 +96,8 @@ def validate_project(p):
             if not isinstance(p.get('wait_health', True), bool):
                 raise ValueError('Некорректный режим проверки готовности')
         else:
-            if p['kind'] == 'chrono' and (p['compose'] != 'compose.yaml' or p.get('services') != ['web'] or p.get('profiles', [])):
-                raise ValueError('Chrono Logos использует compose.yaml, сервис web и PostgreSQL без профилей')
+            if p['kind'] in ('chrono', 'drawing') and (p['compose'] != 'compose.yaml' or p.get('services') != ['web'] or p.get('profiles', [])):
+                raise ValueError('Этот модуль использует compose.yaml, сервис web без профилей')
             if p.get('services') not in (['web'], ['web', 'bot']):
                 raise ValueError('Разрешены сервисы web и bot')
             if p.get('profiles', []) not in ([], ['telegram']):
@@ -280,7 +282,7 @@ def git_environment(p):
 
 REF_LOCK = threading.Lock()
 
-PUBLIC_ENV = {'DOMAIN', 'APP_URL', 'APP_PORT', 'APP_BIND', 'TELEGRAM_BOT_USERNAME', 'MARATHON_TIMEZONE', 'TZ', 'ADMIN_USERNAME', 'HTTPS_PROXY_PROJECT'}
+PUBLIC_ENV = {'DOMAIN', 'APP_URL', 'APP_PORT', 'APP_BIND', 'TELEGRAM_BOT_USERNAME', 'MARATHON_TIMEZONE', 'TZ', 'ADMIN_USERNAME', 'HTTPS_PROXY_PROJECT', 'OPENAI_MODEL', 'AI_DAILY_LIMIT'}
 
 
 def env_file(p):
@@ -339,6 +341,8 @@ def env_settings(p):
         defaults += ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME']
     if p['kind'] == 'chrono':
         defaults = ['APP_URL', 'HTTPS_PROXY_PROJECT', 'APP_PORT', 'APP_BIND', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME', 'ADMIN_USERNAME', 'ADMIN_PASSWORD']
+    if p['kind'] == 'drawing':
+        defaults = ['APP_URL', 'HTTPS_PROXY_PROJECT', 'APP_PORT', 'APP_BIND', 'ADMIN_PASSWORD', 'GAME_ACCESS_CODE', 'OPENAI_API_KEY', 'OPENAI_MODEL', 'AI_DAILY_LIMIT']
     fields = []
     for key in dict.fromkeys(defaults + list(values)):
         if key.startswith(('COMPOSE_', 'DOCKER_', 'GIT_', 'PYTHON')) or key in ('PATH', 'HOME'):
@@ -377,7 +381,7 @@ def prepare_chrono_https(config, p, text, log):
     """Attach to an existing Caddy proxy; preserve server files and restore on failure."""
     values = {k: v for k, v, *_ in env_records(text)}
     proxy_id = values.get('HTTPS_PROXY_PROJECT', '')
-    if p['kind'] != 'chrono':
+    if p['kind'] not in ('chrono', 'drawing'):
         return None, lambda: None
     if not proxy_id:
         if (Path(p['directory']) / 'compose.gitdeck-https.yaml').exists():
@@ -421,11 +425,17 @@ def prepare_chrono_https(config, p, text, log):
                     target.write(content)
     try:
         alias = 'gitdeck-' + p['id']
+        primary_alias = 'gitdeck-primary-' + proxy['id']
         marker = '# GitDeck ' + p['id']
         original = previous[caddy].decode('utf-8')
         block = marker + ' BEGIN\nhttps://' + url.netloc + ' {\n    encode gzip zstd\n    reverse_proxy ' + alias + ':80\n}\n' + marker + ' END'
         pattern = re.escape(marker + ' BEGIN') + r'.*?' + re.escape(marker + ' END')
         updated = re.sub(pattern, lambda _: block, original, flags=re.S) if marker + ' BEGIN' in original else original.rstrip() + '\n\n' + block + '\n'
+        # Compose adds the service-name alias "web" to every attached network,
+        # including external ones. Multiple sites therefore make "web" ambiguous.
+        # Keep the primary site's route on a dedicated, stable network alias.
+        updated = re.sub(r'(?m)^(\s*reverse_proxy\s+)(?:http://)?web:80(\s*(?:#.*)?)$',
+                         lambda match: match[1] + primary_alias + ':80' + match[2], updated)
         hook_marker = '# GitDeck bot ' + p['id']
         hook_pattern = re.escape(hook_marker + ' BEGIN') + r'.*?' + re.escape(hook_marker + ' END')
         hook_path = '/gitdeck-telegram-' + p['id']
@@ -449,6 +459,10 @@ def prepare_chrono_https(config, p, text, log):
         with caddy.open('w', encoding='utf-8', newline='\n') as target:
             target.write(updated)
         proxy_overlay = json.loads(previous[overlay]) if previous[overlay] else {'services': {'proxy': {'ports': []}}}
+        primary = proxy_overlay.setdefault('services', {}).setdefault('web', {})
+        aliases = primary.setdefault('networks', {}).setdefault('default', {}).setdefault('aliases', [])
+        if primary_alias not in aliases:
+            aliases.append(primary_alias)
         ports = proxy_overlay['services']['proxy']['ports']
         listener = str(port) + ':' + str(port)
         if port != 443 and listener not in ports:
@@ -511,6 +525,12 @@ def apply_environment(config, p, job, log):
     if env_revision(old) != payload['env_revision']:
         raise ValueError('Файл .env изменился после открытия формы. Откройте настройки заново')
     new = patch_env(old, payload['changes'])
+    if p['kind'] == 'drawing':
+        for key, minimum in [('ADMIN_PASSWORD', 12), ('GAME_ACCESS_CODE', 8)]:
+            if key in payload['changes'] and not minimum <= len(payload['changes'][key]) <= 255:
+                raise ValueError(key + ': минимум ' + str(minimum) + ' символов')
+        if 'AI_DAILY_LIMIT' in payload['changes'] and not re.fullmatch(r'[1-9][0-9]{0,2}|1000', payload['changes']['AI_DAILY_LIMIT']):
+            raise ValueError('AI_DAILY_LIMIT: от 1 до 1000 оценок')
     if p['kind'] == 'chrono':
         existing = {k: v for k, v, *_ in env_records(old)}
         for key in ('DB_DATABASE', 'DB_USERNAME', 'DB_PASSWORD'):
@@ -536,6 +556,7 @@ def apply_environment(config, p, job, log):
         services_touched = True
         start_services(p, protected_log, build=False)
         if shared_proxy:
+            compose(shared_proxy, ['up', '-d', '--no-deps', '--wait', '--wait-timeout', '180', 'web'], protected_log)
             compose(shared_proxy, ['up', '-d', '--no-deps', 'proxy'], protected_log)
             compose(shared_proxy, ['exec', '-T', 'proxy', 'caddy', 'reload', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile'], protected_log)
         services = compose(p, ['config', '--services'], protected_log).decode().splitlines()
@@ -550,6 +571,7 @@ def apply_environment(config, p, job, log):
         write_env(p, old)
         try:
             if shared_proxy and services_touched:
+                compose(shared_proxy, ['up', '-d', '--no-deps', '--wait', '--wait-timeout', '180', 'web'], protected_log)
                 compose(shared_proxy, ['up', '-d', '--no-deps', 'proxy'], protected_log)
                 compose(shared_proxy, ['exec', '-T', 'proxy', 'caddy', 'reload', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile'], protected_log)
             if services_touched:
@@ -711,7 +733,7 @@ def database_backup(p, jobdir, log):
         if not (jobdir / 'database.dump').is_file():
             raise RuntimeError('Не создана резервная копия PostgreSQL')
         return
-    tool = '/opt/pulse/backup.php' if p['kind'] == 'pulse' else '/opt/marathon/backup.php'
+    tool = '/opt/sketch/backup.php' if p['kind'] == 'drawing' else '/opt/pulse/backup.php' if p['kind'] == 'pulse' else '/opt/marathon/backup.php'
     compose(p, ['run', '--rm', '--no-deps', '--user', 'root', '-v', str(jobdir) + ':/gitdeck-backup',
                 '--entrypoint', 'php', 'web', tool, '/gitdeck-backup/data.sqlite'], log)
     if not (jobdir / 'data.sqlite').is_file():
@@ -725,7 +747,7 @@ def database_restore(p, jobdir, log):
                     'export PGPASSWORD="$POSTGRES_PASSWORD"; pg_restore -h db -U "$POSTGRES_USER" -d postgres --create --clean --if-exists --no-owner --exit-on-error /gitdeck-backup/database.dump'], log)
         return
     # SQLite backup is taken with web/bot stopped. Restore DB and remove matching WAL files.
-    location = '/var/lib/pulse/quiz.sqlite' if p['kind'] == 'pulse' else '/var/lib/marathon/marathon.sqlite'
+    location = '/var/lib/sketch/game.sqlite' if p['kind'] == 'drawing' else '/var/lib/pulse/quiz.sqlite' if p['kind'] == 'pulse' else '/var/lib/marathon/marathon.sqlite'
     php = '$p=$argv[1]; if(!copy("/gitdeck-backup/data.sqlite",$p))exit(1); foreach(["-wal","-shm"] as $s)if(is_file($p.$s))unlink($p.$s); chown($p,"www-data"); chmod($p,0660);'
     compose(p, ['run', '--rm', '--no-deps', '--user', 'root', '-v', str(jobdir) + ':/gitdeck-backup:ro',
                 '--entrypoint', 'php', 'web', '-r', php, location], log)
@@ -735,10 +757,16 @@ def bootstrap_chrono(p, source):
     """Provision only an empty directory; never adopt or overwrite an unknown site."""
     dest = Path(p['directory'])
     if dest.exists() and any(dest.iterdir()):
-        raise ValueError('Для первой установки Chrono Logos выберите пустой каталог')
+        raise ValueError('Для первой установки выберите пустой каталог')
     dest.mkdir(parents=True, exist_ok=True)
     validate_destination(dest, p['compose'])
     shutil.copy2(source / 'ops/compose.yaml', dest / p['compose'])
+    if p['kind'] == 'drawing':
+        write_env(p, patch_env('', {'APP_URL': 'https://draw.vano.sbena.net/', 'APP_PORT': '8084',
+            'APP_BIND': '0.0.0.0', 'ADMIN_PASSWORD': secrets.token_urlsafe(32),
+            'GAME_ACCESS_CODE': secrets.token_urlsafe(12), 'OPENAI_API_KEY': '',
+            'OPENAI_MODEL': 'gpt-4.1-mini', 'AI_DAILY_LIMIT': '100'}))
+        return
     write_env(p, patch_env('', {'APP_URL': 'https://vano.sbena.net/', 'APP_PORT': '8082',
         'APP_BIND': '0.0.0.0', 'DB_DATABASE': 'chrono', 'DB_USERNAME': 'chrono',
         'DB_PASSWORD': secrets.token_urlsafe(32), 'ADMIN_USERNAME': 'admin',
@@ -752,10 +780,10 @@ def deploy(config, p, job, log):
     dest = Path(p['directory'])
     sha = checkout(p, config, source, log, p['_target_ref']) if p.get('_target_ref') else checkout(p, config, source, log)
     status_update(config, job, 'preparing', sha=sha)
-    first_install = p['kind'] == 'chrono' and not (dest / p['compose']).exists()
+    first_install = p['kind'] in ('chrono', 'drawing') and not (dest / p['compose']).exists()
     if first_install:
         bootstrap_chrono(p, source)
-    if p['kind'] == 'chrono':
+    if p['kind'] in ('chrono', 'drawing'):
         log = RedactedLog(log, [v for k, v, *_ in env_records(env_text(p)) if k not in PUBLIC_ENV])
     if p['kind'] == 'self':
         run([sys.executable, '-m', 'py_compile', str(source / 'app.py')], log)

@@ -76,4 +76,7 @@ vm.runInContext(`(async () => {
   assert.equal(button.disabled,true);
   assert.ok(small.textContent.includes('compose.https.yaml'));
   console.log('PASS: HTTPS subdomain preparation, existing custom domain, missing proxy explanation');
+  openModule(null);nodes['#m-kind'].value='drawing';nodes['#m-kind'].onchange();
+  assert.equal(nodes['#m-subdir'].value,'sketch_game');assert.equal(nodes['#m-directory'].value,'/opt/sketch-game');
+  console.log('PASS: drawing module installation defaults');
 })()`, context).catch(error => { console.error(error); process.exitCode = 1; });

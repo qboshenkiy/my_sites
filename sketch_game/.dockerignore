@@ -1,0 +1,7 @@
+.git
+.env
+.env.*
+storage
+tests
+build
+*.log

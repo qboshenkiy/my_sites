@@ -522,13 +522,15 @@ class SharedHttpsTests(unittest.TestCase):
         text = self.caddy.read_text()
         self.assertEqual(text.count('https://vano.sbena.net:8083'), 1)
         self.assertEqual(text.count('handle /gitdeck-telegram-chrono-logos'), 1)
-        self.assertIn('reverse_proxy web:80', text)
+        self.assertIn('reverse_proxy gitdeck-primary-marathon:80', text)
         local = Path(self.game['directory']) / 'compose.gitdeck-https.yaml'
         self.assertIn('ports: !reset []', local.read_text())
         self.assertIn('name: glava-marathon_default', local.read_text())
         self.assertIn('TELEGRAM_WEBHOOK_URL: https://vano.sbena.net/gitdeck-telegram-chrono-logos', local.read_text())
         ports = json.loads((Path(proxy['directory']) / 'compose.gitdeck-https.yaml').read_text())['services']['proxy']['ports']
         self.assertEqual(ports, ['8083:8083'])
+        overlay = json.loads((Path(proxy['directory']) / 'compose.gitdeck-https.yaml').read_text())
+        self.assertEqual(overlay['services']['web']['networks']['default']['aliases'], ['gitdeck-primary-marathon'])
         undo()
         self.assertEqual(self.caddy.read_text(), '{$DOMAIN} {\n    reverse_proxy web:80\n}\n')
         self.assertFalse(local.exists())
@@ -549,7 +551,7 @@ class SharedHttpsTests(unittest.TestCase):
             app.prepare_chrono_https(self.config, self.game, env, io.StringIO())
         text = self.caddy.read_text()
         self.assertEqual(text.count('https://chrono.vano.sbena.net {'), 1)
-        self.assertIn('reverse_proxy web:80', text)
+        self.assertIn('reverse_proxy gitdeck-primary-marathon:80', text)
         self.assertNotIn('handle /gitdeck-telegram-', text)
         local = Path(self.game['directory']) / 'compose.gitdeck-https.yaml'
         self.assertIn('TELEGRAM_WEBHOOK_URL: https://chrono.vano.sbena.net/telegram/webhook', local.read_text())
@@ -574,12 +576,45 @@ class SharedHttpsTests(unittest.TestCase):
         self.assertFalse((Path(self.game['directory']) / 'compose.gitdeck-https.yaml').exists())
         self.assertFalse((Path(self.proxy['directory']) / 'compose.gitdeck-https.yaml').exists())
 
+    def test_unique_primary_alias_preserves_existing_proxy_settings(self):
+        file=Path(self.proxy['directory'])/'compose.gitdeck-https.yaml'
+        file.write_text(json.dumps({'services':{'proxy':{'ports':['8443:8443']},'web':{'networks':{'default':{'aliases':['existing-origin']}}}}}))
+        with patch.object(app,'compose',side_effect=self.fake_compose):
+            app.prepare_chrono_https(self.config,self.game,self.env,io.StringIO())
+            app.prepare_chrono_https(self.config,self.game,self.env,io.StringIO())
+        config=json.loads(file.read_text())
+        self.assertEqual(config['services']['web']['networks']['default']['aliases'],['existing-origin','gitdeck-primary-marathon'])
+        self.assertEqual(config['services']['proxy']['ports'],['8443:8443','8083:8083'])
+        self.assertNotIn('reverse_proxy web:80',self.caddy.read_text())
+
     def test_proxy_selection_errors_explain_how_to_fix_configuration(self):
         with self.assertRaisesRegex(ValueError, 'не найден'):
             app.prepare_chrono_https(self.config, self.game, self.env.replace('=marathon', '=missing'), io.StringIO())
         self.proxy['compose'] = 'compose.yaml'
         with self.assertRaisesRegex(ValueError, 'выберите compose.https.yaml'):
             app.prepare_chrono_https(self.config, self.game, self.env, io.StringIO())
+
+
+class DrawingTests(unittest.TestCase):
+    def test_first_install_keeps_api_key_private_and_prepares_persistent_site(self):
+        with tempfile.TemporaryDirectory() as folder:
+            dest=Path(folder)/'installed'
+            p=dict(id='sketch-game',name='Штрих',kind='drawing',directory=str(dest),repo='https://github.com/qboshenkiy/my_sites.git',branch='main',subdir='sketch_game',compose='compose.yaml',services=['web'],profiles=[])
+            app.validate_project(p)
+            source=Path(__file__).resolve().parent.parent/'sketch_game'
+            app.bootstrap_chrono(p,source)
+            values={k:v for k,v,*_ in app.env_records(app.env_text(p))}
+            self.assertEqual(values['APP_URL'],'https://draw.vano.sbena.net/')
+            self.assertGreaterEqual(len(values['ADMIN_PASSWORD']),32)
+            self.assertGreaterEqual(len(values['GAME_ACCESS_CODE']),8)
+            self.assertEqual(values['OPENAI_API_KEY'],'')
+            self.assertTrue((dest/'compose.yaml').is_file())
+            self.assertFalse(app.allowed('storage/game.sqlite',p))
+            app.write_env(p,app.patch_env(app.env_text(p),{'OPENAI_API_KEY':'private-drawing-ai-key'}))
+            fields=app.env_settings(p)['fields']
+            self.assertNotIn('private-drawing-ai-key',json.dumps(fields))
+            self.assertTrue(next(f for f in fields if f['key']=='OPENAI_API_KEY')['secret'])
+            with self.assertRaises(ValueError):app.bootstrap_chrono(p,source)
 
 
 if __name__ == '__main__':
