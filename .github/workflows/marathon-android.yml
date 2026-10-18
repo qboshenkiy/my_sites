@@ -32,6 +32,7 @@ jobs:
             marathon/native/android/**/*.gradle
             marathon/native/android/gradle.properties
             marathon/native/android/gradle/wrapper/gradle-wrapper.properties
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
       - name: Restore permanent signing key
         env:
           ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
