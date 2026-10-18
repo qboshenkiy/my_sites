@@ -79,4 +79,10 @@ vm.runInContext(`(async () => {
   openModule(null);nodes['#m-kind'].value='drawing';nodes['#m-kind'].onchange();
   assert.equal(nodes['#m-subdir'].value,'sketch_game');assert.equal(nodes['#m-directory'].value,'/opt/sketch-game');
   console.log('PASS: drawing module installation defaults');
+  state.config_revision='current-config';state.projects=[{id:'marathon',kind:'marathon',compose:'compose.https.yaml'}];
+  const writes=[];api=async(url,payload)=>{if(!payload)return {env_revision:'current-env',fields:[{key:'APP_URL',value:'https://chrono.vano.sbena.net/'},{key:'HTTPS_PROXY_PROJECT',value:''}]};writes.push(payload)};
+  await repairHttps('chrono-logos');assert.equal(writes.length,1);assert.deepEqual(writes[0].changes,{HTTPS_PROXY_PROJECT:'marathon'});assert.equal(writes[0].env_revision,'current-env');
+  state.projects=[];await assert.rejects(()=>repairHttps('chrono-logos'));assert.equal(writes.length,1);
+  console.log('PASS: HTTPS repair without opening settings or overwriting other variables');
+
 })()`, context).catch(error => { console.error(error); process.exitCode = 1; });
