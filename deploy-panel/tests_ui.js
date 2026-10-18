@@ -62,6 +62,7 @@ vm.runInContext(`(async () => {
   nodes['#env-HTTPS_PROXY_PROJECT'] = {value:''};
   nodes['#env-APP_URL'] = {value:'https://vano.sbena.net:8083/'};
   setupChronoHttpsForm();
+  assert.equal(nodes['#env-HTTPS_PROXY_PROJECT'].value, 'marathon');
   button.onclick();
   assert.equal(nodes['#env-HTTPS_PROXY_PROJECT'].value, 'marathon');
   assert.equal(nodes['#env-APP_URL'].value, 'https://chrono.vano.sbena.net/');

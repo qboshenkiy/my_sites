@@ -83,6 +83,7 @@ function setupChronoHttpsForm(){
   if(!candidates.length){section.querySelector('small').textContent='В панели нет модуля HTTPS-прокси. В настройках модуля марафона, где уже работает HTTPS, выберите compose.https.yaml. Затем откройте эту форму заново.';section.querySelector('button').disabled=true}
   for(const p of candidates){const option=document.createElement('option');option.value=p.id;option.textContent=p.name+' ('+p.id+')';select.append(option)}
   if(field.value)select.value=field.value;else if(candidates.length===1)select.value=candidates[0].id;
+  if(!field.value&&select.value)field.value=select.value;
   select.onchange=()=>{field.value=select.value};
   section.querySelector('button').onclick=()=>{if(!select.value){$('#env-error').textContent='Выберите модуль с compose.https.yaml.';return}field.value=select.value;const input=document.querySelector('#env-APP_URL');try{const url=new URL(input.value||'https://vano.sbena.net/');url.protocol='https:';if(url.port||url.hostname==='vano.sbena.net'){if(!url.hostname.startsWith('chrono.'))url.hostname='chrono.'+url.hostname;url.port=''}url.pathname='/';url.search='';url.hash='';input.value=url.href}catch(e){input.value='https://chrono.vano.sbena.net/'}$('#env-error').textContent='Нажмите «Сохранить и применить», чтобы подключить HTTPS.'};
   $('#environment-form').prepend(section);
