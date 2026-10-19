@@ -839,7 +839,7 @@ class Rooms extends BaseController
             ->table('game_room_players p')
             ->select(
                 'p.user_id, p.score, p.mistakes, '
-                . 'p.player_status, p.turn_order, '
+                . 'p.player_status, p.turn_order, p.finish_rank, p.finish_turns, '
                 . 'u.username'
             )
             ->select(
@@ -932,13 +932,14 @@ class Rooms extends BaseController
 
             $leaders = [];
             if (! $winner && ! empty($players)) {
+                $ranked = array_filter($players, static fn(array $p): bool => isset($p['finish_rank']));
                 $maxScore = max(array_map(
                     static fn(array $p): int => (int) $p['score'],
                     $players
                 ));
 
                 foreach ($players as $player) {
-                    if ((int) $player['score'] === $maxScore) {
+                    if ($ranked ? (int)($player['finish_rank'] ?? 0) === 1 : (int) $player['score'] === $maxScore) {
                         $leaders[] = $player['username'];
                     }
                 }
@@ -983,6 +984,8 @@ class Rooms extends BaseController
                             'score' => (int) $player['score'],
                             'mistakes' => (int) ($player['mistakes'] ?? 0),
                             'status' => $player['player_status'] ?? 'ACTIVE',
+                            'finishRank' => isset($player['finish_rank']) ? (int)$player['finish_rank'] : null,
+                            'finishTurns' => isset($player['finish_turns']) ? (int)$player['finish_turns'] : null,
                             'handCount' => (int) ($player['hand_count'] ?? 0),
                         ];
                     },
@@ -1089,6 +1092,7 @@ class Rooms extends BaseController
                  p.score,
                  p.mistakes,
                  p.player_status,
+                 p.finish_rank, p.finish_turns,
                  p.turn_order,
                  p.last_seen_at,
                  u.username'
@@ -1224,6 +1228,9 @@ class Rooms extends BaseController
                         'status' =>
                             $player['player_status']
                                 ?? 'ACTIVE',
+
+                        'finishRank' => isset($player['finish_rank']) ? (int)$player['finish_rank'] : null,
+                        'finishTurns' => isset($player['finish_turns']) ? (int)$player['finish_turns'] : null,
 
                         'handCount' =>
                             $handCounts[$playerId]
@@ -1787,6 +1794,9 @@ class Rooms extends BaseController
                         0,
                     'player_status' =>
                         'ACTIVE',
+                    'finish_turns' => null,
+                    'finish_rank' => null,
+                    'completed_at' => null,
                     'turn_order' =>
                         null,
                     'last_seen_at' =>
@@ -2656,8 +2666,11 @@ class Rooms extends BaseController
                         'revealed_at' => $now,
                     ]);
 
+                $mistakes++;
+                $db->table('game_room_players')
+                    ->where('room_id', $roomId)->where('user_id', $userId)
+                    ->update(['mistakes' => $mistakes]);
                 if ($gameMode === 'HARDCORE') {
-                    $mistakes++;
                     $eliminated = $mistakes >= $mistakeLimit;
 
                     $db->table('game_room_players')
@@ -2761,6 +2774,21 @@ class Rooms extends BaseController
                 /* 'SKIP': штраф просто пропускается, без последствий. */
             }
 
+            $completed = false;
+            if (in_array($gameMode, ['NORMAL', 'HARDCORE'], true) && ! $eliminated) {
+                $leftInHand = (int) $db->table('game_room_cards')
+                    ->where('room_id', $roomId)->where('owner_user_id', $userId)
+                    ->where('state', 'HAND')->countAllResults();
+                if ($leftInHand === 0) {
+                    $turnsTaken = (int) $db->table('game_room_moves')
+                        ->where('room_id', $roomId)->where('user_id', $userId)->countAllResults();
+                    $db->table('game_room_players')->where('room_id', $roomId)->where('user_id', $userId)
+                        ->update(['player_status' => 'COMPLETED', 'finish_turns' => $turnsTaken, 'completed_at' => $now]);
+                    $this->rankCompletedPlayers($roomId);
+                    $completed = true;
+                }
+            }
+
             $activePlayers = $db->query(
                 'SELECT user_id, turn_order, score '
                 . 'FROM game_room_players '
@@ -2783,49 +2811,17 @@ class Rooms extends BaseController
             $newStateVersion =
                 (int) $room['state_version'] + 1;
 
+            $completedCount = (int) $db->table('game_room_players')
+                ->where('room_id', $roomId)->where('player_status', 'COMPLETED')->countAllResults();
             $winnerUserId = null;
-            $finished = false;
-
-            /*
-             * Последний оставшийся активный игрок побеждает сразу.
-             * Раньше это было HARDCORE-специфичным (только там были
-             * выбывания), но выбывание по пустой колоде (empty_deck_behavior
-             * = GRACE) теперь возможно в любом режиме — проверка больше не
-             * гейтится по $gameMode.
-             */
-            if (count($activePlayers) <= 1) {
-                $finished = true;
-                if (count($activePlayers) === 1) {
-                    $winnerUserId =
-                        (int) $activePlayers[0]['user_id'];
-                }
-            }
-
-            /*
-             * Победа — тому, кто первым избавился от руки. Возможно только
-             * после ВЕРНОГО хода: неверный ход руку не уменьшает (сыгранная
-             * карта уходит на стол, но штрафной добор возвращает +1).
-             */
-            if (! $finished && $correct) {
-                $myHandRemaining = (int) $db->table('game_room_cards')
-                    ->where('room_id', $roomId)
-                    ->where('owner_user_id', $userId)
-                    ->where('state', 'HAND')
-                    ->countAllResults();
-
-                if ($myHandRemaining === 0) {
-                    $finished = true;
-                    $winnerUserId = $userId;
-                }
-            }
-
-            /*
-             * Защитный fallback на вырожденный случай: карт нигде не
-             * осталось, а победитель ещё не определён. Очки больше не
-             * являются критерием победы, поэтому это фиксируется как ничья.
-             */
-            if (! $finished && $deckRemaining === 0 && $handsRemaining === 0) {
-                $finished = true;
+            // A finisher becomes a spectator. Even the last active player may
+            // finish their hand; leaving/being eliminated remains a separate rule.
+            $finished = count($activePlayers) === 0
+                || (count($activePlayers) === 1 && $completedCount === 0)
+                || ($deckRemaining === 0 && $handsRemaining === 0);
+            if ($finished) {
+                $winnerUserId = $completedCount > 0 ? $this->completedWinner($roomId)
+                    : (count($activePlayers) === 1 ? (int)$activePlayers[0]['user_id'] : null);
             }
 
             if ($finished) {
@@ -2931,14 +2927,17 @@ class Rooms extends BaseController
                     'playedCardId' =>
                         (int) $currentCard['id'],
                     'finished' => $finished,
+                    'completed' => $completed,
                     'stateVersion' => $newStateVersion,
-                    'message' => $eliminated
+                    'message' => $completed
+                        ? 'Вы завершили руку! Остальные продолжают. Место определяется по числу ходов и ошибок.'
+                        : ($eliminated
                         ? 'Вы выбыли из партии: колода пуста, штраф оплатить нечем.'
                         : ($correct
                             ? 'Верно!'
                             : ($penaltyDrawn
                                 ? 'Неверно! Карта встала на своё место в хронологии, +1 карта в руку.'
-                                : 'Неверно! Карта встала на своё место в хронологии.')),
+                                : 'Неверно! Карта встала на своё место в хронологии.'))),
                     'csrfName' => csrf_token(),
                     'csrfHash' => csrf_hash(),
                 ]);
@@ -3192,6 +3191,9 @@ class Rooms extends BaseController
                     'score' => 0,
                     'mistakes' => 0,
                     'player_status' => 'ACTIVE',
+                    'finish_turns' => null,
+                    'finish_rank' => null,
+                    'completed_at' => null,
                     'turn_order' => null,
                     'last_seen_at' => $now,
                 ]);
@@ -3473,10 +3475,12 @@ class Rooms extends BaseController
             $now = date('Y-m-d H:i:s');
             $newVersion = (int) ($room['state_version'] ?? 0) + 1;
 
-            if (count($active) <= 1) {
-                $winnerId = count($active) === 1
+            $completedCount = (int) $db->table('game_room_players')
+                ->where('room_id', $roomId)->where('player_status', 'COMPLETED')->countAllResults();
+            if (count($active) === 0 || (count($active) === 1 && $completedCount === 0)) {
+                $winnerId = $completedCount > 0 ? $this->completedWinner($roomId) : (count($active) === 1
                     ? (int) $active[0]['user_id']
-                    : null;
+                    : null);
 
                 $db->table('game_rooms')
                     ->where('id', $roomId)
@@ -3629,10 +3633,33 @@ class Rooms extends BaseController
         return $room ?: null;
     }
 
+    private function rankCompletedPlayers(int $roomId): void
+    {
+        // Competition ranking: equal personal turn and mistake counts share a
+        // place. Wall-clock finish time and turn order are deliberately excluded.
+        db_connect()->query(
+            "UPDATE game_room_players p SET finish_rank = 1 + (
+                SELECT COUNT(*) FROM game_room_players other
+                WHERE other.room_id = p.room_id AND other.player_status = 'COMPLETED'
+                AND (other.finish_turns < p.finish_turns
+                    OR (other.finish_turns = p.finish_turns AND other.mistakes < p.mistakes))
+            ) WHERE p.room_id = ? AND p.player_status = 'COMPLETED'",
+            [$roomId]
+        );
+    }
+
+    private function completedWinner(int $roomId): ?int
+    {
+        $leaders = db_connect()->table('game_room_players')->select('user_id')
+            ->where('room_id', $roomId)->where('player_status', 'COMPLETED')
+            ->where('finish_rank', 1)->get()->getResultArray();
+        return count($leaders) === 1 ? (int) $leaders[0]['user_id'] : null;
+    }
+
     private function getPlayers(int $roomId): array
     {
         return db_connect()->table('game_room_players p')
-            ->select('p.user_id, p.score, p.mistakes, p.player_status, p.last_seen_at, p.joined_at, u.username')
+            ->select('p.user_id, p.score, p.mistakes, p.player_status, p.finish_rank, p.finish_turns, p.last_seen_at, p.joined_at, u.username')
             ->join('users u', 'u.id = p.user_id')
             ->where('p.room_id', $roomId)
             ->orderBy('p.joined_at', 'ASC')

@@ -92,10 +92,12 @@
 
             <?php
                 $resultPlayers = $players;
+                $rankedResults = count(array_filter($players, static fn($p) => isset($p['finish_rank']))) > 0;
                 usort(
                     $resultPlayers,
-                    static fn($a, $b) =>
-                        (int) $b['score'] <=> (int) $a['score']
+                    static fn($a, $b) => $rankedResults
+                        ? (($a['finish_rank'] ?? PHP_INT_MAX) <=> ($b['finish_rank'] ?? PHP_INT_MAX))
+                        : ((int) $b['score'] <=> (int) $a['score'])
                 );
 
                 $activeResults = array_values(array_filter(
@@ -105,10 +107,14 @@
 
                 $isTie = false;
                 if (empty($room['winner_user_id']) && count($activeResults) > 1) {
-                    $isTie = (int) $activeResults[0]['score']
-                        === (int) $activeResults[1]['score'];
+                    $isTie = $rankedResults
+                        ? count(array_filter($activeResults, static fn($p) => (int)($p['finish_rank'] ?? 0) === 1)) > 1
+                        : (int)$activeResults[0]['score'] === (int)$activeResults[1]['score'];
                 }
             ?>
+            <?php if ($rankedResults): ?>
+                <p class="muted">Места: меньше личных ходов, затем меньше ошибок. Одинаковые результаты делят место.</p>
+            <?php endif; ?>
 
             <?php if (! empty($room['winner_user_id'])): ?>
                 <?php
@@ -135,10 +141,12 @@
                 <?php foreach ($resultPlayers as $index => $player): ?>
                     <div class="room-lobby-player <?= ($player['player_status'] ?? '') === 'LEFT' ? 'is-left' : '' ?>">
                         <span>
-                            <b><?= $index + 1 ?></b>
+                            <b><?= $rankedResults ? ($player['finish_rank'] ?? '—') : $index + 1 ?></b>
                             <?= esc($player['username']) ?>
 
-                            <?php if (! empty($room['winner_user_id']) && (int) $room['winner_user_id'] === (int) $player['user_id']): ?>
+                            <?php if ($rankedResults && (int)($player['finish_rank'] ?? 0) === 1): ?>
+                                <small>Первое место</small>
+                            <?php elseif (! empty($room['winner_user_id']) && (int) $room['winner_user_id'] === (int) $player['user_id']): ?>
                                 <small>Победитель</small>
                             <?php elseif (($player['player_status'] ?? '') === 'LEFT'): ?>
                                 <small>Вышел</small>
@@ -148,9 +156,13 @@
                         </span>
 
                         <strong>
+                            <?php if (isset($player['finish_turns'])): ?>
+                                Ходов: <?= (int)$player['finish_turns'] ?> · ошибок: <?= (int)$player['mistakes'] ?>
+                            <?php else: ?>
                             <?= (int) $player['score'] ?> очк.
                             <?php if (($room['game_mode'] ?? '') === 'HARDCORE'): ?>
                                 · <?= (int) ($player['mistakes'] ?? 0) ?> ошибок
+                            <?php endif; ?>
                             <?php endif; ?>
                         </strong>
                     </div>

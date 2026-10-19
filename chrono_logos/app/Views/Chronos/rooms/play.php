@@ -17,6 +17,7 @@
     id="play-root"
     class="play-root"
     data-room-id="<?= (int) $room['id'] ?>"
+    data-user-id="<?= (int) session()->get('user_id') ?>"
     data-room-code="<?= esc($room['code'], 'attr') ?>"
     data-state-url="<?= '/rooms/state/' . rawurlencode($room['code']) ?>"
     data-place-url="/rooms/place"
@@ -287,6 +288,10 @@
         $('selection-hint').textContent = state?.canDraw ? 'Нажмите «Взять карту», затем выберите место на столе.' : active && pendingPosition !== null
             ? 'Место выбрано — подтвердите ход.'
             : active ? 'Выберите + на столе: раньше или позже.' : state?.isMyTurn ? 'Затем выберите место на столе.' : 'Можно посмотреть описание своих карт.';
+        if (myResult()?.status === 'COMPLETED') {
+            $('selection-title').textContent = `Рука завершена · место ${myResult().finishRank} пока предварительное`;
+            $('selection-hint').textContent = 'Остальные доигрывают. Итог: меньше личных ходов, затем меньше ошибок; равные результаты делят место.';
+        }
         root.classList.toggle('has-selection', active);
         root.classList.toggle('my-turn', !!state?.isMyTurn);
         root.dataset.step = !active ? 'card' : pendingPosition === null ? 'place' : 'confirm';
@@ -629,7 +634,9 @@
         if (!cards.length) {
             const empty = document.createElement('div');
             empty.className = 'hand-empty';
-            empty.textContent = state?.canDraw ? 'Вытяните карту.' : 'В руке нет карт.';
+            empty.textContent = myResult()?.status === 'COMPLETED'
+                ? 'Вы завершили руку. Остальные продолжают игру.'
+                : state?.canDraw ? 'Вытяните карту.' : 'В руке нет карт.';
             hand.replaceChildren(empty);
             return;
         }
@@ -637,6 +644,16 @@
         const scroll = hand.scrollLeft;
         hand.replaceChildren(...cards.map(card => buildHandCard(card, canPlay)));
         hand.scrollLeft = scroll;
+    }
+
+    function myResult() {
+        return state?.players?.find(player => player.id === Number(root.dataset.userId));
+    }
+
+    function playerProgress(player) {
+        return player.status === 'COMPLETED'
+            ? `Место ${player.finishRank} · ходов ${player.finishTurns} · ошибок ${player.mistakes}`
+            : `${player.score} очк. · ${player.handCount} карт`;
     }
 
     function renderPlayers() {
@@ -653,7 +670,7 @@
                 const avatar = document.createElement('span'); avatar.className = 'player-avatar'; avatar.textContent = (player.username || '?').slice(0, 1).toUpperCase();
                 const body = document.createElement('span');
                 const name = document.createElement('strong'); name.textContent = player.username;
-                const info = document.createElement('small'); info.textContent = `${player.score} очк. · ${player.handCount} карт`;
+                const info = document.createElement('small'); info.textContent = playerProgress(player);
                 body.append(name, info); chip.append(avatar, body); return chip;
             }));
             strip.scrollLeft = left; strip.dataset.state = key;
@@ -667,8 +684,8 @@
             const name = document.createElement('strong');
             name.textContent = player.username;
             const info = document.createElement('span');
-            let text = `${player.score} очк. · ${player.handCount} карт`;
-            if (state?.room?.gameMode === 'HARDCORE') {
+            let text = playerProgress(player);
+            if (state?.room?.gameMode === 'HARDCORE' && player.status !== 'COMPLETED') {
                 text += ` · ошибки ${player.mistakes}/${state.room.mistakeLimit}`;
             }
             if (player.isOnline === false && player.status === 'ACTIVE') {
@@ -798,7 +815,10 @@
         $('deck-count').textContent = data.deck?.remaining ?? 0;
         $('current-player').textContent = data.currentPlayer?.username || '—';
 
-        if (data.isMyTurn) {
+        if (myResult()?.status === 'COMPLETED') {
+            $('current-player').textContent = myResult().username;
+            $('turn-message').textContent = `Рука завершена · ходов ${myResult().finishTurns}`;
+        } else if (data.isMyTurn) {
             if (data.room.gameMode === 'BLIND' && data.canDraw) {
                 $('turn-message').textContent = 'Ваш ход — вытяните карту';
             } else {

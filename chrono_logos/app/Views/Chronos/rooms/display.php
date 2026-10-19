@@ -286,9 +286,13 @@
             `${player.score} очк. · `
             + `${player.handCount} карт`;
 
+        if (player.status === 'COMPLETED') {
+            text = `Место ${player.finishRank} · ходов ${player.finishTurns} · ошибок ${player.mistakes}`;
+        }
+
         if (
             data.room.gameMode
-            === 'HARDCORE'
+            === 'HARDCORE' && player.status !== 'COMPLETED'
         ) {
             text +=
                 ` · ошибки ${player.mistakes}`
