@@ -22,7 +22,7 @@ import threading
 import time
 import urllib.parse
 
-VERSION = '1.4.1'
+VERSION = '1.5.0'
 LAYOUT = {
     'drawing': ['index.php', 'api.php', 'lib', 'assets', 'ops', '.dockerignore'],
     'pulse': ['index.php', 'api.php', 'seed.php', '.htaccess', 'assets', 'tools/check.php', 'tools/backup.php'],
@@ -233,6 +233,8 @@ def compose(p, args, log):
         command += ['-f', 'ops/compose.runtime.yaml']
     if (Path(p['directory']) / 'compose.gitdeck-https.yaml').is_file():
         command += ['-f', 'compose.gitdeck-https.yaml']
+    if (Path(p['directory']) / 'compose.gitdeck-community.yaml').is_file():
+        command += ['-f', 'compose.gitdeck-community.yaml']
     for profile in p.get('profiles', []):
         command += ['--profile', profile]
     return run(command + args, log, cwd=p['directory'])
@@ -282,7 +284,7 @@ def git_environment(p):
 
 REF_LOCK = threading.Lock()
 
-PUBLIC_ENV = {'DOMAIN', 'APP_URL', 'APP_PORT', 'APP_BIND', 'TELEGRAM_BOT_USERNAME', 'MARATHON_TIMEZONE', 'TZ', 'ADMIN_USERNAME', 'HTTPS_PROXY_PROJECT', 'OPENAI_MODEL', 'AI_DAILY_LIMIT'}
+PUBLIC_ENV = {'DOMAIN', 'APP_URL', 'APP_PORT', 'APP_BIND', 'TELEGRAM_BOT_USERNAME', 'MARATHON_TIMEZONE', 'TZ', 'ADMIN_USERNAME', 'HTTPS_PROXY_PROJECT', 'OPENAI_MODEL', 'AI_DAILY_LIMIT', 'MARATHON_URL', 'PULSE_URL'}
 
 
 def env_file(p):
@@ -339,6 +341,8 @@ def env_settings(p):
     defaults = ['DOMAIN', 'APP_URL', 'APP_PORT', 'APP_BIND']
     if p['kind'] == 'marathon':
         defaults += ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME']
+    if p['kind'] == 'pulse':
+        defaults += ['HTTPS_PROXY_PROJECT', 'MARATHON_URL']
     if p['kind'] == 'chrono':
         defaults = ['APP_URL', 'HTTPS_PROXY_PROJECT', 'APP_PORT', 'APP_BIND', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME', 'ADMIN_USERNAME', 'ADMIN_PASSWORD']
     if p['kind'] == 'drawing':
@@ -381,7 +385,10 @@ def prepare_chrono_https(config, p, text, log):
     """Attach to an existing Caddy proxy; preserve server files and restore on failure."""
     values = {k: v for k, v, *_ in env_records(text)}
     proxy_id = values.get('HTTPS_PROXY_PROJECT', '')
-    if p['kind'] not in ('chrono', 'drawing'):
+    if p['kind'] not in ('chrono', 'drawing', 'pulse'):
+        return None, lambda: None
+    if p['kind'] == 'pulse' and not proxy_id:
+        # A Pulse instance may itself own a shared HTTPS proxy overlay.
         return None, lambda: None
     if not proxy_id:
         if (Path(p['directory']) / 'compose.gitdeck-https.yaml').exists():
@@ -390,6 +397,8 @@ def prepare_chrono_https(config, p, text, log):
     proxy = next((item for item in config['projects'] if item['id'] == proxy_id), None)
     if not proxy:
         raise ValueError('Модуль HTTPS-прокси «' + proxy_id + '» не найден. Выберите его из списка в настройках сайта')
+    if proxy['id'] == p['id']:
+        raise ValueError('Для общего прокси выберите другой модуль, например марафон')
     if proxy['kind'] not in ('marathon', 'pulse'):
         raise ValueError('HTTPS-прокси должен быть модулем марафона или Пульса')
     if proxy['compose'] != 'compose.https.yaml':
@@ -469,7 +478,8 @@ def prepare_chrono_https(config, p, text, log):
             ports.append(listener)
         overlay.write_text(json.dumps(proxy_overlay, indent=2), encoding='utf-8')
         # !reset requires Compose 2.24+; remove the old HTTP listener before Caddy claims it.
-        local.write_text('services:\n  web:\n    ports: !reset []\n    environment:\n      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}\n      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}\n      TELEGRAM_WEBHOOK_URL: ' + webhook + '\n      cookie_secure: "true"\n      cookie_samesite: None\n    networks:\n      default: {}\n      gitdeck_https:\n        aliases: [' + alias + ']\nnetworks:\n  gitdeck_https:\n    external: true\n    name: ' + network + '\n', encoding='utf-8')
+        site_env = '      QUIZ_TRUST_PROXY: "1"\n' if p['kind'] == 'pulse' else '      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}\n      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}\n      TELEGRAM_WEBHOOK_URL: ' + webhook + '\n      cookie_secure: "true"\n      cookie_samesite: None\n'
+        local.write_text('services:\n  web:\n    ports: !reset []\n    environment:\n' + site_env + '    networks:\n      default: {}\n      gitdeck_https:\n        aliases: [' + alias + ']\nnetworks:\n  gitdeck_https:\n    external: true\n    name: ' + network + '\n', encoding='utf-8')
         compose(proxy, ['exec', '-T', 'proxy', 'caddy', 'validate', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile'], log)
         return proxy, restore
     except Exception:
@@ -582,6 +592,73 @@ def apply_environment(config, p, job, log):
         except Exception as rollback_error:
             protected_log.write('\nОшибка перезапуска при возврате прежних настроек: ' + str(rollback_error) + '\n')
         raise RuntimeError('Ошибка применения настроек сайта. См. журнал задания') from None
+
+
+def connect_marathon(config, p, job, log):
+    """Connect two installed sites without copying credentials or reading results."""
+    folder = Path(config['state_dir']) / 'jobs' / job
+    payload = json.loads((folder / 'environment.json').read_text(encoding='utf-8'))
+    marathon = next(x for x in config['projects'] if x['id'] == payload['marathon'] and x['kind'] == 'marathon')
+    if p['kind'] != 'pulse' or not (Path(p['directory']) / 'assets/community.php').is_file() or not (Path(marathon['directory']) / 'lib/pulse.php').is_file():
+        raise ValueError('Сначала обновите Пульс и марафон из Git до версии с общими аккаунтами')
+    old_pulse, old_marathon = env_text(p), env_text(marathon)
+    if env_revision(old_pulse) != payload['pulse_revision'] or env_revision(old_marathon) != payload['marathon_revision']:
+        raise ValueError('Настройки сайтов изменились. Откройте подключение заново')
+    values = {k: v for k, v, *_ in env_records(old_marathon)}
+    marathon_url = values.get('APP_URL', '')
+    if not marathon_url.startswith('https://') and values.get('DOMAIN'):
+        marathon_url = 'https://' + values['DOMAIN']
+    for value in (marathon_url, payload['pulse_url']):
+        parsed = urllib.parse.urlsplit(value)
+        if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in ('', '/') or parsed.port not in (None, 443):
+            raise ValueError('Для общих аккаунтов укажите HTTPS-адреса сайтов без нестандартных портов')
+    key = secrets.token_hex(32)
+    pulse_changes = {'MARATHON_URL': marathon_url.rstrip('/'), 'APP_URL': payload['pulse_url'], 'PULSE_BRIDGE_SECRET': key}
+    if marathon['compose'] == 'compose.https.yaml':
+        pulse_changes['HTTPS_PROXY_PROJECT'] = marathon['id']
+    files = [env_file(p), env_file(marathon)]
+    for site in (p, marathon):
+        files.append(validate_destination(Path(site['directory']), 'compose.gitdeck-community.yaml'))
+    previous = {file: file.read_bytes() if file.exists() else None for file in files}
+    for i, (file, data) in enumerate(previous.items()):
+        if data is not None:
+            backup = folder / ('connection-backup-' + str(i))
+            backup.write_bytes(data); os.chmod(backup, 0o600)
+    restore_https = lambda: None
+    proxy = None
+    safe_log = RedactedLog(log, [key])
+    try:
+        status_update(config, job, 'configuring')
+        write_env(p, patch_env(old_pulse, pulse_changes))
+        write_env(marathon, patch_env(old_marathon, {'PULSE_URL': payload['pulse_url'].rstrip('/'), 'PULSE_BRIDGE_SECRET': key}))
+        for site, names in ((p, ['APP_URL','MARATHON_URL','PULSE_BRIDGE_SECRET']), (marathon, ['PULSE_URL','PULSE_BRIDGE_SECRET'])):
+            overlay = {'services': {'web': {'environment': {name: '${' + name + ':-}' for name in names}}}}
+            (Path(site['directory']) / 'compose.gitdeck-community.yaml').write_text(json.dumps(overlay), encoding='utf-8')
+        proxy, restore_https = prepare_chrono_https(config, p, env_text(p), safe_log)
+        for site in (p, marathon):
+            compose(site, ['config', '--quiet'], safe_log)
+            start_services(site, safe_log, build=False)
+        if proxy:
+            compose(proxy, ['up','-d','--no-deps','--wait','--wait-timeout','180','web'], safe_log)
+            compose(proxy, ['up','-d','--no-deps','proxy'], safe_log)
+            compose(proxy, ['exec','-T','proxy','caddy','reload','--config','/etc/caddy/Caddyfile','--adapter','caddyfile'], safe_log)
+        safe_log.write('\nАккаунты подключены. В Пульсе откройте «Участники» → «Обновить список из марафона».\n')
+        status_update(config, job, 'success')
+    except Exception:
+        restore_https()
+        for file, data in previous.items():
+            if data is None:
+                file.unlink(missing_ok=True)
+            else:
+                file.write_bytes(data)
+                if file.name == '.env': os.chmod(file, 0o600)
+        for site in (p, marathon):
+            try: start_services(site, safe_log, build=False)
+            except Exception: safe_log.write('\nНе удалось перезапустить сайт при возврате настроек. Проверьте его статус.\n')
+        if proxy:
+            try: compose(proxy, ['exec','-T','proxy','caddy','reload','--config','/etc/caddy/Caddyfile','--adapter','caddyfile'], safe_log)
+            except Exception: safe_log.write('\nПроверьте перезагрузку HTTPS-прокси после возврата настроек.\n')
+        raise RuntimeError('Не удалось подключить аккаунты. Прежние настройки восстановлены; см. журнал') from None
 
 
 def enqueue(server, p, action, ref='', payload=None):
@@ -880,6 +957,8 @@ def work(config, job):
             try:
                 if row['action'] == 'configure':
                     apply_environment(config, p, job, log)
+                elif row['action'] == 'connect_marathon':
+                    connect_marathon(config, p, job, log)
                 else:
                     deploy(config, p, job, log)
             except Exception as exc:
@@ -1066,6 +1145,20 @@ class Panel(http.server.BaseHTTPRequestHandler):
                     return self.send(202, {'job': job})
                 except (ValueError, OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
                     return self.send(400, {'error': str(exc)})
+        if self.path == '/api/connect-marathon':
+            if self.server.demo:
+                return self.send(403, {'error': 'В предпросмотре подключение отключено'})
+            with self.mutex:
+                try:
+                    p = next(x for x in self.server.config['projects'] if x['id'] == data.get('project') and x['kind'] == 'pulse')
+                    source = next(x for x in self.server.config['projects'] if x['id'] == data.get('marathon') and x['kind'] == 'marathon')
+                    url = data.get('pulse_url', '')
+                    if not isinstance(url, str) or len(url) > 250 or not re.fullmatch(r'https://[a-z0-9.-]+/?', url):
+                        raise ValueError('Укажите HTTPS-адрес Пульса, например https://pulse.vano.sbena.net/')
+                    payload = {'marathon':source['id'], 'pulse_url':url, 'pulse_revision':env_revision(env_text(p)), 'marathon_revision':env_revision(env_text(source))}
+                    return self.send(202, {'job':enqueue(self.server,p,'connect_marathon',payload=payload)})
+                except (ValueError, StopIteration, OSError, RuntimeError) as error:
+                    return self.send(400, {'error': str(error) or 'Выберите Пульс и марафон'})
         if self.path == '/api/update':
             if self.server.demo:
                 return self.send(403, {'error': 'Предпросмотр: команды на сервере отключены'})

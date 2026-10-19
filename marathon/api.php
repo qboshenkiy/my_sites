@@ -25,6 +25,7 @@ try {
     if(!extension_loaded('pdo_sqlite')||!extension_loaded('mbstring'))fail('На сервере нужны PHP-модули pdo_sqlite и mbstring.',503);
     db();$me=$uid?user($uid):null;if($me&&(!(int)$me['active']||(int)$me['session_epoch']!==(int)$epoch))$me=null;if($me&&$clientChannel==='miniapp')$GLOBALS['audit_transport']['channel']='miniapp';
     $action=$_GET['action']??'bootstrap';$input=[];
+    require __DIR__.'/lib/pulse.php';pulseHandle($action,$me?:null);
     if($_SERVER['REQUEST_METHOD']==='POST') {
         if((int)($_SERVER['CONTENT_LENGTH']??0)>100000)fail('Запрос слишком большой.',413);
         if(!hash_equals($csrf,$_SERVER['HTTP_X_CSRF_TOKEN']??''))fail('Обновите страницу и повторите.',403);

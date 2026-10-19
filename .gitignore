@@ -24,3 +24,5 @@
 *.pem
 *.key
 
+
+/storage/sessions/

@@ -116,8 +116,8 @@ app.addEventListener('click',async e=>{
     if (action==='new') editor();
     if (action==='edit') editor(id);
     if (action==='join-page') joinPage();
-    if (action==='admin') boot.admin?await dashboard():authPage();
-    if (action==='logout') { await api('logout',{}); boot.admin=false; authPage(); }
+    if (action==='admin') boot.user?await dashboard():communityAuth();
+    if (action==='logout') { await api('logout',{}); player=null;localStorage.removeItem('pulse-player');boot=await api('bootstrap'); await catalogPage(); }
     if (action==='delete') confirmDialog('Удалить опросник?','Проведённые игры и их результаты сохранятся.',async()=>{await api('delete',{id});await dashboard();});
     if (action==='launch') { const room=await api('create_room',{id}); await hostRoom(room.id); }
     if (action==='host') await hostRoom(id);
@@ -144,7 +144,7 @@ app.addEventListener('submit',async e=>{
   } catch(e) {toast(e.message);} finally {busy=false;if(submit) submit.disabled=false;}
 });
 async function init() {
-  try {boot=await api('bootstrap');if(projectorToken){projectorMode=true;page='projector';await poll();}else if(requestedCode || location.hash==='#join') joinPage(); else if(boot.admin) await dashboard(); else authPage();}
+  try {boot=await api('bootstrap');if(projectorToken){projectorMode=true;page='projector';await poll();}else if(requestedCode || location.hash==='#join') joinPage(); else await communityInit();}
   catch(e){app.innerHTML=`<div class="loading">${esc(e.message)}<br><button class="primary" onclick="location.reload()">Повторить</button></div>`;}
 }
 document.addEventListener('DOMContentLoaded',init,{once:true});

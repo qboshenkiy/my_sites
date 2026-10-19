@@ -617,5 +617,65 @@ class DrawingTests(unittest.TestCase):
             with self.assertRaises(ValueError):app.bootstrap_chrono(p,source)
 
 
+class CommunityConnectionTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+        self.root=Path(self.tmp.name)
+        self.p=dict(id='pulse',kind='pulse',directory=str(self.root/'pulse'),compose='compose.yaml',services=['web'])
+        self.m=dict(id='marathon',kind='marathon',directory=str(self.root/'marathon'),compose='compose.https.yaml',services=['web','bot'])
+        for site,file in ((self.p,'assets/community.php'),(self.m,'lib/pulse.php')):
+            dest=Path(site['directory']);(dest/file).parent.mkdir(parents=True);(dest/file).write_text('<?php')
+            (dest/'compose.yaml').write_text('services: {}')
+        (self.root/'marathon/deploy').mkdir();(self.root/'marathon/deploy/Caddyfile').write_text('{$DOMAIN} {\n reverse_proxy web:80\n}\n')
+        (self.root/'pulse/.env').write_text('APP_PORT=8082\nEXISTING=keep-me\n')
+        (self.root/'marathon/.env').write_text('APP_URL=http://vano.sbena.net:8081\nDOMAIN=vano.sbena.net\nTELEGRAM_BOT_TOKEN=keep-token\n')
+        self.config={'state_dir':str(self.root/'state'),'projects':[self.p,self.m]}
+        self.job='b'*24;self.folder=self.root/'state/jobs'/self.job;self.folder.mkdir(parents=True)
+        self.payload=dict(marathon='marathon',pulse_url='https://pulse.vano.sbena.net/',pulse_revision=app.env_revision(app.env_text(self.p)),marathon_revision=app.env_revision(app.env_text(self.m)))
+        (self.folder/'environment.json').write_text(json.dumps(self.payload))
+        with app.db_open(self.config) as db:
+            db.execute('INSERT INTO jobs(id,project,action,status,created,updated) VALUES (?,?,?,?,?,?)',(self.job,'pulse','connect_marathon','queued',time.time(),time.time()))
+
+    def compose(self,p,args,log):
+        if args==['config','--format','json']:
+            return json.dumps({'networks':{'default':{'name':'glava-marathon_default'}}}).encode()
+        return b''
+
+    def test_connects_both_sites_without_copying_database_or_exposing_secret(self):
+        output=io.StringIO()
+        with patch.object(app,'compose',side_effect=self.compose),patch.object(app,'start_services'):
+            app.connect_marathon(self.config,self.p,self.job,output)
+        p={k:v for k,v,*_ in app.env_records(app.env_text(self.p))};m={k:v for k,v,*_ in app.env_records(app.env_text(self.m))}
+        self.assertEqual(p['PULSE_BRIDGE_SECRET'],m['PULSE_BRIDGE_SECRET']);self.assertEqual(len(p['PULSE_BRIDGE_SECRET']),64)
+        self.assertEqual(p['MARATHON_URL'],'https://vano.sbena.net');self.assertEqual(m['PULSE_URL'],'https://pulse.vano.sbena.net')
+        self.assertEqual(p['EXISTING'],'keep-me');self.assertEqual(m['TELEGRAM_BOT_TOKEN'],'keep-token')
+        self.assertNotIn(p['PULSE_BRIDGE_SECRET'],output.getvalue());self.assertNotIn(p['PULSE_BRIDGE_SECRET'],json.dumps(app.env_settings(self.p)))
+        text=(self.root/'marathon/deploy/Caddyfile').read_text();self.assertIn('reverse_proxy gitdeck-primary-marathon:80',text);self.assertIn('reverse_proxy gitdeck-pulse:80',text)
+        overlay=(self.root/'pulse/compose.gitdeck-community.yaml').read_text();self.assertIn('${PULSE_BRIDGE_SECRET:-}',overlay);self.assertNotIn(p['PULSE_BRIDGE_SECRET'],overlay)
+        self.assertIn('QUIZ_TRUST_PROXY',(self.root/'pulse/compose.gitdeck-https.yaml').read_text())
+
+    def test_failure_restores_both_env_files_overlays_and_caddy(self):
+        originals={file:file.read_bytes() for file in (self.root/'pulse/.env',self.root/'marathon/.env',self.root/'marathon/deploy/Caddyfile')}
+        attempts=[]
+        def start(*args,**kwargs):
+            attempts.append(1)
+            if len(attempts)==1:raise RuntimeError('synthetic restart failure')
+        with patch.object(app,'compose',side_effect=self.compose),patch.object(app,'start_services',side_effect=start):
+            with self.assertRaisesRegex(RuntimeError,'Прежние настройки восстановлены'):
+                app.connect_marathon(self.config,self.p,self.job,io.StringIO())
+        for file,data in originals.items():self.assertEqual(file.read_bytes(),data)
+        for site in (self.p,self.m):self.assertFalse((Path(site['directory'])/'compose.gitdeck-community.yaml').exists())
+        self.assertFalse((self.root/'pulse/compose.gitdeck-https.yaml').exists())
+
+    def test_preflight_rejects_stale_settings_or_missing_updated_site(self):
+        (self.root/'pulse/.env').write_text('APP_PORT=9999\n')
+        with patch.object(app,'compose') as compose,self.assertRaisesRegex(ValueError,'изменились'):
+            app.connect_marathon(self.config,self.p,self.job,io.StringIO())
+        compose.assert_not_called()
+        (self.root/'marathon/lib/pulse.php').unlink()
+        with self.assertRaisesRegex(ValueError,'Сначала обновите'):
+            app.connect_marathon(self.config,self.p,self.job,io.StringIO())
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

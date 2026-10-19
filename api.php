@@ -4,10 +4,15 @@ ini_set('display_errors', '0');
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
 $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (getenv('QUIZ_TRUST_PROXY') === '1' && ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+$dataDir = getenv('QUIZ_DATA_DIR') ?: __DIR__.'/storage';
+if (!is_dir($dataDir.'/sessions')) mkdir($dataDir.'/sessions',0700,true);
+session_save_path($dataDir.'/sessions');
+ini_set('session.gc_maxlifetime',(string)(400*86400));
 ini_set('session.use_strict_mode','1');
-session_set_cookie_params(['httponly'=>true,'samesite'=>'Lax','secure'=>$https]);
+session_set_cookie_params(['lifetime'=>400*86400,'httponly'=>true,'samesite'=>'Lax','secure'=>$https,'path'=>'/']);
 session_start();
 $admin = !empty($_SESSION['admin']);
+$accountId=$_SESSION['pulse_uid']??null;
 $csrf = $_SESSION['csrf'] ??= bin2hex(random_bytes(24));
 session_write_close();
 function fail(string $message, int $status = 400): never { http_response_code($status); echo json_encode(['error'=>$message], JSON_UNESCAPED_UNICODE); exit; }
@@ -30,6 +35,13 @@ try {
     CREATE TABLE IF NOT EXISTS login_attempts (ip TEXT PRIMARY KEY,attempts INTEGER NOT NULL,updated_at INTEGER NOT NULL);');
     $db->exec('CREATE TABLE IF NOT EXISTS images(id TEXT PRIMARY KEY,mime TEXT NOT NULL,data BLOB NOT NULL); CREATE TABLE IF NOT EXISTS room_meta(room_id TEXT PRIMARY KEY REFERENCES rooms(id),played TEXT NOT NULL DEFAULT \'[]\',projector_token TEXT NOT NULL);');
     require __DIR__.'/seed.php';
+    require __DIR__.'/assets/community.php';communitySchema();
+    $me=$accountId?query('SELECT * FROM pulse_accounts WHERE id=? AND active=1',[$accountId])->fetch():null;
+    if($admin){
+        query("INSERT OR IGNORE INTO pulse_accounts(id,name,role,created_at) VALUES ('legacy-admin','Администратор','admin',?)",[time()]);
+        $me=query("SELECT * FROM pulse_accounts WHERE id='legacy-admin'")->fetch();
+    }
+    $admin=(bool)$me;
     $action=$_GET['action']??'bootstrap';
     $input=[];
     if ($_SERVER['REQUEST_METHOD']==='POST') {
@@ -37,7 +49,8 @@ try {
         $input=json_decode(file_get_contents('php://input'),true);
         if (!is_array($input)) fail('Некорректный запрос.');
         if (!in_array($action,['join','answer','bluff_select','bluff_lie','bluff_vote'],true) && !hash_equals($csrf,$_SERVER['HTTP_X_CSRF_TOKEN']??'')) fail('Обновите страницу и повторите.',403);
-    } elseif (!in_array($action,['bootstrap','quizzes','state','image'],true)) fail('Требуется POST.',405);
+    } elseif (!in_array($action,['bootstrap','quizzes','state','image','catalog','directory','assessments','room_participants'],true)) fail('Требуется POST.',405);
+    communityHandle($action,$input);
     if ($action==='image') {
         $img=query('SELECT * FROM images WHERE id=?',[$_GET['id']??''])->fetch(); if(!$img)fail('Изображение не найдено.',404);
         header('Content-Type: '.$img['mime']);header('X-Content-Type-Options: nosniff');header('Cache-Control: public, max-age=86400');echo $img['data'];exit;
@@ -49,7 +62,7 @@ try {
         if(!$info||strlen($bytes)>2000000||$info[0]>4096||$info[1]>4096||!in_array($info['mime'],['image/png','image/jpeg','image/webp','image/gif'],true))fail('Изображение: до 2 МБ и 4096×4096 пикселей.');
         $id=bin2hex(random_bytes(16));query('INSERT INTO images VALUES (?,?,?)',[$id,$info['mime'],$bytes]);out(['id'=>$id]);
     }
-    if ($action==='bootstrap') out(['admin'=>$admin,'configured'=>(bool)query("SELECT value FROM settings WHERE key='password'")->fetchColumn(),'csrf'=>$csrf]);
+    if ($action==='bootstrap') out(['admin'=>$admin,'user'=>communityUser($me?:null),'marathon'=>(bool)(getenv('MARATHON_URL')&&getenv('PULSE_BRIDGE_SECRET')),'configured'=>(bool)query("SELECT value FROM settings WHERE key='password'")->fetchColumn(),'csrf'=>$csrf]);
     if ($action==='setup' || $action==='login') {
         $password=$input['password']??'';
         if (!is_string($password) || strlen($password)<8 || strlen($password)>200) fail('Пароль должен содержать от 8 до 200 символов.');
@@ -71,11 +84,11 @@ try {
         }
         $db->exec('COMMIT'); session_start(); session_regenerate_id(true); $_SESSION['admin']=true; session_write_close(); out(['ok'=>true]);
     }
-    if ($action==='logout') { session_start(); $_SESSION['admin']=false; session_regenerate_id(true); session_write_close(); out(['ok'=>true]); }
+    if ($action==='logout') { session_start(); $_SESSION=['csrf'=>$csrf]; session_regenerate_id(true); session_write_close(); out(['ok'=>true]); }
     if ($action==='quizzes') {
-        hostOnly(); $quizzes=query('SELECT * FROM quizzes ORDER BY created_at DESC')->fetchAll();
+        hostOnly(); $quizzes=query('SELECT * FROM quizzes WHERE owner_id=? OR (owner_id IS NULL AND CAST(? AS INTEGER)=1) ORDER BY created_at DESC',[$me['id'],$me['role']==='admin'?1:0])->fetchAll();
         foreach ($quizzes as &$q) { $raw=json_decode($q['questions'],true);$q['questions']=$raw['questions']??$raw;$q['mode']=$raw['mode']??'classic';$q['scoring']=$raw['scoring']??'speed'; }
-        $rooms=query('SELECT id,code,status,created_at,quiz FROM rooms ORDER BY created_at DESC LIMIT 12')->fetchAll();
+        $rooms=query('SELECT id,code,status,created_at,quiz FROM rooms WHERE owner_id=? OR (owner_id IS NULL AND CAST(? AS INTEGER)=1) ORDER BY created_at DESC LIMIT 100',[$me['id'],$me['role']==='admin'?1:0])->fetchAll();
         foreach ($rooms as &$r) { $r['title']=json_decode($r['quiz'],true)['title']; unset($r['quiz']); }
         out(['quizzes'=>$quizzes,'rooms'=>$rooms]);
     }
@@ -118,24 +131,26 @@ try {
         }
         $id=$input['id']??bin2hex(random_bytes(8));
         if (!is_string($id) || !preg_match('/^[a-f0-9]{16}$/',$id)) fail('Некорректный идентификатор.');
-        query('INSERT INTO quizzes VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,description=excluded.description,questions=excluded.questions',[$id,$title,$description,json_encode(['mode'=>$mode,'scoring'=>in_array($mode,['board','bluff'],true)?'fixed':$scoring,'questions'=>$valid],JSON_UNESCAPED_UNICODE),time()]); out(['id'=>$id]);
+        $existing=query('SELECT * FROM quizzes WHERE id=?',[$id])->fetch();if($existing&&!communityOwn($existing))fail('Опросник не найден.',404);
+        query('INSERT INTO quizzes(id,title,description,questions,created_at,owner_id) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,description=excluded.description,questions=excluded.questions',[$id,$title,$description,json_encode(['mode'=>$mode,'scoring'=>in_array($mode,['board','bluff'],true)?'fixed':$scoring,'questions'=>$valid],JSON_UNESCAPED_UNICODE),time(),$me['id']]); out(['id'=>$id]);
     }
-    if ($action==='delete') { hostOnly(); query('DELETE FROM quizzes WHERE id=?',[$input['id']??'']); out(['ok'=>true]); }
+    if ($action==='delete') { hostOnly();communityQuiz((string)($input['id']??'')); query('DELETE FROM quizzes WHERE id=?',[$input['id']??'']); out(['ok'=>true]); }
     if ($action==='create_room') {
-        hostOnly(); $quiz=query('SELECT * FROM quizzes WHERE id=?',[$input['id']??''])->fetch(); if (!$quiz) fail('Опросник не найден.',404);
+        hostOnly(); $quiz=communityQuiz((string)($input['id']??''),true);
         $raw=json_decode($quiz['questions'],true);$quiz['questions']=$raw['questions']??$raw;$quiz['mode']=$raw['mode']??'classic';$quiz['scoring']=$raw['scoring']??'speed'; $id=bin2hex(random_bytes(8));
         do { $code=(string)random_int(100000,999999); } while (query('SELECT id FROM rooms WHERE code=?',[$code])->fetchColumn());
-        query('INSERT INTO rooms(id,code,quiz,status,created_at) VALUES (?,?,?,?,?)',[$id,$code,json_encode($quiz,JSON_UNESCAPED_UNICODE),'lobby',time()]);
+        query('INSERT INTO rooms(id,code,quiz,status,created_at,owner_id) VALUES (?,?,?,?,?,?)',[$id,$code,json_encode($quiz,JSON_UNESCAPED_UNICODE),'lobby',time(),$me['id']]);
         query('INSERT INTO room_meta(room_id,projector_token) VALUES (?,?)',[$id,bin2hex(random_bytes(24))]);out(['id'=>$id,'code'=>$code]);
     }
     if ($action==='join') {
-        $code=cleanText($input['code']??'',6); $name=cleanText($input['name']??'',24);
+        $code=cleanText($input['code']??'',6); $name=$me?$me['name']:cleanText($input['name']??'',24);
         $db->exec('BEGIN IMMEDIATE'); $room=query('SELECT * FROM rooms WHERE code=?',[$code])->fetch();
         if (!$room) fail('Комната с таким кодом не найдена.',404); if ($room['status']==='finished') fail('Эта игра уже завершена.');
-        if (query('SELECT id FROM players WHERE room_id=? AND name=?',[$room['id'],$name])->fetchColumn()) fail('Это имя уже занято. Выберите другое.');
+        if($me&&($existing=query('SELECT * FROM players WHERE room_id=? AND user_id=?',[$room['id'],$me['id']])->fetch())){$db->exec('COMMIT');out(['token'=>$existing['token'],'room'=>$room['id'],'name'=>$existing['name']]);}
+        if (query('SELECT id FROM players WHERE room_id=? AND name=?',[$room['id'],$name])->fetchColumn()) {if(!$me)fail('Это имя уже занято. Выберите другое.');$name.=' · '.substr($me['id'],-5);}
         if ((int)query('SELECT count(*) FROM players WHERE room_id=?',[$room['id']])->fetchColumn()>=500) fail('Комната заполнена.');
         $id=bin2hex(random_bytes(8)); $token=bin2hex(random_bytes(32));
-        query('INSERT INTO players(id,room_id,name,token) VALUES (?,?,?,?)',[$id,$room['id'],$name,$token]); $db->exec('COMMIT'); out(['token'=>$token,'room'=>$room['id'],'name'=>$name]);
+        query('INSERT INTO players(id,room_id,name,token,user_id) VALUES (?,?,?,?,?)',[$id,$room['id'],$name,$token,$me['id']??null]); $db->exec('COMMIT'); out(['token'=>$token,'room'=>$room['id'],'name'=>$name]);
     }
     if (in_array($action,['state','control','answer','bluff_select','bluff_lie','bluff_vote'],true)) {
         $db->exec('BEGIN IMMEDIATE');
@@ -147,6 +162,9 @@ try {
             $roomId=$player['room_id'];
         } else { hostOnly(); $roomId=$input['room']??$_GET['room']??''; }
         $room=query('SELECT * FROM rooms WHERE id=?',[$roomId])->fetch(); if (!$room) fail('Комната не найдена.',404);
+        if($player&&!empty($player['user_id'])&&(!$me||$player['user_id']!==$me['id']))fail('Войдите в аккаунт участника этой игры.',403);
+        if(!$player&&!$projector&&!communityOwn($room))fail('Комната не найдена.',404);
+        if($action==='control'&&($player||$projector||!communityOwn($room)))fail('Управлять игрой может только её ведущий.',403);
         $quiz=json_decode($room['quiz'],true); $index=(int)$room['current_index']; $question=$quiz['questions'][$index]??null;
         $meta=query('SELECT * FROM room_meta WHERE room_id=?',[$roomId])->fetch();
         if(!$meta){query('INSERT INTO room_meta(room_id,projector_token) VALUES (?,?)',[$roomId,bin2hex(random_bytes(24))]);$meta=query('SELECT * FROM room_meta WHERE room_id=?',[$roomId])->fetch();}
