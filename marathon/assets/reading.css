@@ -22,3 +22,5 @@
 body.miniapp{padding-top:var(--miniapp-safe-top,0px);padding-left:var(--miniapp-safe-left,0px);padding-right:var(--miniapp-safe-right,0px);padding-bottom:var(--miniapp-safe-bottom,0px)}
 .miniapp .mobile-reading-action{padding-bottom:calc(12px + var(--miniapp-safe-bottom,0px))}
 .miniapp input,.miniapp textarea,.miniapp select{font-size:16px}
+
+.pulse-integration-actions{display:grid;gap:4px;margin:10px 0}.pulse-integration-actions .nav{font-size:12px;white-space:normal;line-height:1.5}

@@ -31,7 +31,7 @@ try {
         if(!hash_equals($csrf,$_SERVER['HTTP_X_CSRF_TOKEN']??''))fail('Обновите страницу и повторите.',403);
         $input=json_decode(file_get_contents('php://input'),true);if(!is_array($input))fail('Некорректный запрос.');
     } elseif(!in_array($action,['bootstrap','overview','profile','audit','export','export_xlsx','archived_users','round_history'],true))fail('Нужен POST.',405);
-    if($action==='bootstrap')send(['user'=>$me?publicUser($me):null,'csrf'=>$csrf,'configured'=>(bool)sql("SELECT id FROM users WHERE role='admin' LIMIT 1")->fetchColumn(),'marathon'=>visibleCalendar(calendar($me&&$me['role']==='participant'?$me['id']:null),$me&&$me['role']==='admin'),'telegram'=>['configured'=>(bool)(getenv('TELEGRAM_BOT_TOKEN')&&getenv('TELEGRAM_BOT_USERNAME')),'username'=>getenv('TELEGRAM_BOT_USERNAME')?:null,'miniapp_url'=>telegramMiniAppUrl()]]);
+    if($action==='bootstrap')send(['user'=>$me?publicUser($me):null,'csrf'=>$csrf,'configured'=>(bool)sql("SELECT id FROM users WHERE role='admin' LIMIT 1")->fetchColumn(),'marathon'=>visibleCalendar(calendar($me&&$me['role']==='participant'?$me['id']:null),$me&&$me['role']==='admin'),'pulse'=>['configured'=>(bool)(getenv('PULSE_URL')&&getenv('PULSE_BRIDGE_SECRET')),'url'=>getenv('PULSE_URL')?:null],'telegram'=>['configured'=>(bool)(getenv('TELEGRAM_BOT_TOKEN')&&getenv('TELEGRAM_BOT_USERNAME')),'username'=>getenv('TELEGRAM_BOT_USERNAME')?:null,'miniapp_url'=>telegramMiniAppUrl()]]);
     if($action==='setup'||$action==='login') {
         $login=strtolower(text($input['login']??'',40));$password=text($input['password']??'',200);
         if(!preg_match('/^[a-z0-9_.-]{3,40}$/',$login)||strlen($password)<8)fail('Логин: 3–40 латинских символов. Пароль: минимум 8 символов.');

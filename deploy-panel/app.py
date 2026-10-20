@@ -22,7 +22,7 @@ import threading
 import time
 import urllib.parse
 
-VERSION = '1.5.0'
+VERSION = '1.5.1'
 LAYOUT = {
     'drawing': ['index.php', 'api.php', 'lib', 'assets', 'ops', '.dockerignore'],
     'pulse': ['index.php', 'api.php', 'seed.php', '.htaccess', 'assets', 'tools/check.php', 'tools/backup.php'],
@@ -235,9 +235,18 @@ def compose(p, args, log):
         command += ['-f', 'compose.gitdeck-https.yaml']
     if (Path(p['directory']) / 'compose.gitdeck-community.yaml').is_file():
         command += ['-f', 'compose.gitdeck-community.yaml']
+    if (Path(p['directory']) / 'compose.gitdeck-telegram.yaml').is_file():
+        command += ['-f', 'compose.gitdeck-telegram.yaml']
     for profile in p.get('profiles', []):
         command += ['--profile', profile]
     return run(command + args, log, cwd=p['directory'])
+
+
+def project_services(p):
+    services = list(p['services'])
+    if p['kind'] == 'pulse' and (Path(p['directory']) / 'compose.gitdeck-telegram.yaml').is_file() and 'bot' not in services:
+        services.append('bot')
+    return services
 
 
 def start_services(p, log, build=True):
@@ -246,7 +255,7 @@ def start_services(p, log, build=True):
     main = p.get('main_service', 'web')
     wait = ['--wait', '--wait-timeout', '180'] if p.get('wait_health', True) else []
     compose(p, ['up', '-d'] + flags + wait + [main], log)
-    extras = [s for s in p['services'] if s != main]
+    extras = [s for s in project_services(p) if s != main]
     if extras:
         compose(p, ['up', '-d'] + flags + ['--no-deps'] + extras, log)
     checks = extras + ([main] if not wait else [])
@@ -342,7 +351,7 @@ def env_settings(p):
     if p['kind'] == 'marathon':
         defaults += ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME']
     if p['kind'] == 'pulse':
-        defaults += ['HTTPS_PROXY_PROJECT', 'MARATHON_URL']
+        defaults += ['HTTPS_PROXY_PROJECT', 'MARATHON_URL', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME']
     if p['kind'] == 'chrono':
         defaults = ['APP_URL', 'HTTPS_PROXY_PROJECT', 'APP_PORT', 'APP_BIND', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME', 'ADMIN_USERNAME', 'ADMIN_PASSWORD']
     if p['kind'] == 'drawing':
@@ -661,6 +670,55 @@ def connect_marathon(config, p, job, log):
         raise RuntimeError('Не удалось подключить аккаунты. Прежние настройки восстановлены; см. журнал') from None
 
 
+def start_pulse_bot(config, p, job, log):
+    if p['kind'] != 'pulse' or not (Path(p['directory']) / 'assets/pulse-bot-worker.php').is_file():
+        raise ValueError('Сначала обновите Пульс из Git до версии с отдельным Telegram-ботом')
+    values = {k:v for k,v,*_ in env_records(env_text(p))}
+    if not re.fullmatch(r'[0-9]+:[A-Za-z0-9_-]+', values.get('TELEGRAM_BOT_TOKEN','')) or not re.fullmatch(r'[A-Za-z0-9_]{5,32}',values.get('TELEGRAM_BOT_USERNAME','')):
+        raise ValueError('В настройках Пульса задайте токен и имя нового бота без @')
+    if not values.get('MARATHON_URL') or len(values.get('PULSE_BRIDGE_SECRET','')) < 32:
+        raise ValueError('Сначала нажмите «Подключить марафон» на карточке Пульса')
+    for other in config['projects']:
+        if other['id'] != p['id'] and other['kind'] in ('marathon','chrono','drawing'):
+            other_values = {k:v for k,v,*_ in env_records(env_text(other))}
+            if other_values.get('TELEGRAM_BOT_TOKEN') == values['TELEGRAM_BOT_TOKEN']:
+                raise ValueError('Этот токен уже используется другим сайтом. Создайте отдельного нового бота для Пульса')
+    safe_log = RedactedLog(log,[values['TELEGRAM_BOT_TOKEN'],values['PULSE_BRIDGE_SECRET']])
+    file = validate_destination(Path(p['directory']), 'compose.gitdeck-telegram.yaml')
+    previous = file.read_bytes() if file.exists() else None
+    details = json.loads(compose(p,['config','--format','json'],None))
+    web = details.get('services',{}).get('web',{})
+    project_name = details.get('name','')
+    if not re.fullmatch(r'[a-zA-Z0-9_-]+',project_name):raise ValueError('Не найдено имя Docker-проекта Пульса')
+    data_dir = web.get('environment',{}).get('QUIZ_DATA_DIR','/var/lib/pulse')
+    mounts = [v for v in web.get('volumes',[]) if isinstance(v,dict) and v.get('target') == data_dir]
+    if not mounts:raise ValueError('Не найден постоянный том базы Пульса')
+    env = {key:'${'+key+':-}' for key in ['TELEGRAM_BOT_TOKEN','TELEGRAM_BOT_USERNAME','MARATHON_URL','PULSE_BRIDGE_SECRET','APP_URL']}
+    overlay = {'services':{'web':{'environment':env},'bot':{
+        'image':web.get('image') or project_name+'-web','restart':'unless-stopped','user':'www-data',
+        'command':['php','/var/www/html/assets/pulse-bot-worker.php'],'healthcheck':{'disable':True},
+        'environment':dict(env,QUIZ_DATA_DIR=data_dir),'volumes':mounts,
+        'depends_on':{'web':{'condition':'service_healthy'}},
+        'logging':{'driver':'json-file','options':{'max-size':'10m','max-file':'3'}}}}}
+    try:
+        status_update(config,job,'configuring')
+        file.write_text(json.dumps(overlay,indent=2),encoding='utf-8')
+        compose(p,['config','--quiet'],safe_log)
+        compose(p,['run','--rm','--no-deps','-T','web','php','/var/www/html/assets/pulse-bot-worker.php','--check'],safe_log)
+        start_services(p,safe_log,build=False)
+        status_update(config,job,'success')
+        safe_log.write('\nОтдельный бот Пульса запущен. На странице входа Пульса доступна кнопка «Войти через Telegram».\n')
+    except Exception:
+        if previous is None:
+            try:compose(p,['rm','-sf','bot'],safe_log)
+            except Exception:pass
+            file.unlink(missing_ok=True)
+        else:file.write_bytes(previous)
+        try:start_services(p,safe_log,build=False)
+        except Exception:safe_log.write('\nПроверьте запуск Пульса после возврата настроек.\n')
+        raise RuntimeError('Бот Пульса не запустился. Проверьте токен, имя и отсутствие webhook/другого экземпляра бота; прежние настройки запуска восстановлены') from None
+
+
 def enqueue(server, p, action, ref='', payload=None):
     job = secrets.token_hex(12)
     with db_open(server.config) as db:
@@ -886,7 +944,7 @@ def deploy(config, p, job, log):
         if p['kind'] != 'self' and not first_install:
             status_update(config, job, 'backup', sha=sha)
             stopped = True  # A partially failed stop must also be recovered.
-            compose(p, ['stop'] + p['services'], log)
+            compose(p, ['stop'] + project_services(p), log)
             if p['kind'] != 'docker':
                 database_backup(p, jobdir, log)
             else:
@@ -918,7 +976,7 @@ def deploy(config, p, job, log):
         if mutated:
             status_update(config, job, 'restoring', sha=sha)
             if p['kind'] != 'self':
-                compose(p, ['stop'] + p['services'], log)
+                compose(p, ['stop'] + project_services(p), log)
             if first_install:
                 log.write('\nПервая установка не завершена. Код, данные и настройки оставлены для повторной попытки.\n')
                 raise original
@@ -959,6 +1017,8 @@ def work(config, job):
                     apply_environment(config, p, job, log)
                 elif row['action'] == 'connect_marathon':
                     connect_marathon(config, p, job, log)
+                elif row['action'] == 'pulse_bot':
+                    start_pulse_bot(config, p, job, log)
                 else:
                     deploy(config, p, job, log)
             except Exception as exc:
@@ -1159,6 +1219,14 @@ class Panel(http.server.BaseHTTPRequestHandler):
                     return self.send(202, {'job':enqueue(self.server,p,'connect_marathon',payload=payload)})
                 except (ValueError, StopIteration, OSError, RuntimeError) as error:
                     return self.send(400, {'error': str(error) or 'Выберите Пульс и марафон'})
+        if self.path == '/api/pulse-bot':
+            if self.server.demo:return self.send(403,{'error':'В предпросмотре запуск отключён'})
+            with self.mutex:
+                try:
+                    p=next(x for x in self.server.config['projects'] if x['id']==data.get('project') and x['kind']=='pulse')
+                    return self.send(202,{'job':enqueue(self.server,p,'pulse_bot')})
+                except (StopIteration,ValueError,OSError,RuntimeError) as error:
+                    return self.send(400,{'error':str(error) or 'Выберите Пульс'})
         if self.path == '/api/update':
             if self.server.demo:
                 return self.send(403, {'error': 'Предпросмотр: команды на сервере отключены'})

@@ -48,7 +48,7 @@ try {
         if ((int)($_SERVER['CONTENT_LENGTH']??0)>(($action==='import_preview')?20000000:3000000)) fail('Слишком большой запрос.',413);
         $input=json_decode(file_get_contents('php://input'),true);
         if (!is_array($input)) fail('Некорректный запрос.');
-        if (!in_array($action,['join','answer','bluff_select','bluff_lie','bluff_vote'],true) && !hash_equals($csrf,$_SERVER['HTTP_X_CSRF_TOKEN']??'')) fail('Обновите страницу и повторите.',403);
+        if (!in_array($action,['join','answer','bluff_select','bluff_lie','bluff_vote','receive_marathon'],true) && !hash_equals($csrf,$_SERVER['HTTP_X_CSRF_TOKEN']??'')) fail('Обновите страницу и повторите.',403);
     } elseif (!in_array($action,['bootstrap','quizzes','state','image','catalog','directory','assessments','room_participants'],true)) fail('Требуется POST.',405);
     communityHandle($action,$input);
     if ($action==='image') {
@@ -62,7 +62,7 @@ try {
         if(!$info||strlen($bytes)>2000000||$info[0]>4096||$info[1]>4096||!in_array($info['mime'],['image/png','image/jpeg','image/webp','image/gif'],true))fail('Изображение: до 2 МБ и 4096×4096 пикселей.');
         $id=bin2hex(random_bytes(16));query('INSERT INTO images VALUES (?,?,?)',[$id,$info['mime'],$bytes]);out(['id'=>$id]);
     }
-    if ($action==='bootstrap') out(['admin'=>$admin,'user'=>communityUser($me?:null),'marathon'=>(bool)(getenv('MARATHON_URL')&&getenv('PULSE_BRIDGE_SECRET')),'configured'=>(bool)query("SELECT value FROM settings WHERE key='password'")->fetchColumn(),'csrf'=>$csrf]);
+    if ($action==='bootstrap') out(['admin'=>$admin,'user'=>communityUser($me?:null),'marathon'=>(bool)(getenv('MARATHON_URL')&&getenv('PULSE_BRIDGE_SECRET')),'telegram'=>['configured'=>(bool)(getenv('TELEGRAM_BOT_TOKEN')&&getenv('TELEGRAM_BOT_USERNAME')&&getenv('MARATHON_URL')&&getenv('PULSE_BRIDGE_SECRET'))],'configured'=>(bool)query("SELECT value FROM settings WHERE key='password'")->fetchColumn(),'csrf'=>$csrf]);
     if ($action==='setup' || $action==='login') {
         $password=$input['password']??'';
         if (!is_string($password) || strlen($password)<8 || strlen($password)>200) fail('Пароль должен содержать от 8 до 200 символов.');

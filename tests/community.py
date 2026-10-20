@@ -37,7 +37,7 @@ class Client:
 with tempfile.TemporaryDirectory(prefix='pulse-community-') as tmp:
     folder=Path(tmp);pulse=folder/'pulse';marathon=folder/'marathon';pulse.mkdir();marathon.mkdir()
     pulse_port,marathon_port=port(),port();purl=f'http://127.0.0.1:{pulse_port}';murl=f'http://127.0.0.1:{marathon_port}';key='test-bridge-secret-'+'a'*48
-    env=dict(os.environ,QUIZ_DATA_DIR=str(pulse),MARATHON_DATA_DIR=str(marathon),MARATHON_URL=murl,PULSE_URL=purl,PULSE_BRIDGE_SECRET=key)
+    env=dict(os.environ,QUIZ_DATA_DIR=str(pulse),MARATHON_DATA_DIR=str(marathon),MARATHON_URL=murl,PULSE_URL=purl,PULSE_BRIDGE_SECRET=key,TELEGRAM_BOT_TOKEN='999999:pulse-test-bot-token',TELEGRAM_BOT_USERNAME='pulse_fixture_bot')
     servers=[]
     try:
         for root,p in ((ROOT,pulse_port),(ROOT/'marathon',marathon_port)):
@@ -88,6 +88,10 @@ with tempfile.TemporaryDirectory(prefix='pulse-community-') as tmp:
         admin.call('sync_marathon',{})
         accounts=admin.call('directory')['users'];assert sum(u['external_id']==ext for u in accounts)==1
         admin.call('sync_marathon',{});assert len(admin.call('directory')['users'])==len(accounts)
+        pushed=source.call('pulse_export',{});assert pushed['imported']==2
+        source.call('pulse_export',{});assert len(admin.call('directory')['users'])==len(accounts)
+        guest.call('receive_marathon',{'issuer':'f'*32,'users':[]},403)
+        stranger=Client(murl);stranger.boot();stranger.call('pulse_export',{},401)
         guest.boot();guest.call('sync_marathon',{},401)
         source.call('pulse_directory',{},403)
         # Bind the authorization code to the originating Pulse browser + PKCE challenge.
@@ -100,12 +104,34 @@ with tempfile.TemporaryDirectory(prefix='pulse-community-') as tmp:
         b.call('marathon_complete',{'code':code,'state':state},403)
         source.call('pulse_exchange',{'code':code,'state':state,'verifier':'0'*64},403,{'X-Pulse-Bridge':key})
         assert 'password' not in json.dumps(admin.call('directory')) and 'telegram_id' not in json.dumps(admin.call('directory'))
+        # A separate Pulse bot confirms the Telegram identity already linked in marathon.
+        with closing(sqlite3.connect(marathon/'marathon.sqlite')) as db:db.execute('UPDATE users SET telegram_id=? WHERE id=?',('123456',ext));db.commit()
+        telegram=Client(purl);telegram.boot();request=telegram.call('pulse_telegram_request',{})
+        assert request['url'].startswith('https://t.me/pulse_fixture_bot?start=pl_')
+        code_php=r'''function query(string $sql,array $args=[]):PDOStatement{global $db;$s=$db->prepare($sql);$s->execute($args);return $s;} function fail(string $m,int $s=400):never{throw new RuntimeException($m,$s);} $db=new PDO('sqlite:'.getenv('QUIZ_DATA_DIR').'/quiz.sqlite',null,null,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC]);require $argv[1];require $argv[2];echo json_encode(pulseTelegramUpdate(json_decode(stream_get_contents(STDIN),true),'999999'));'''
+        def bot(update):
+            return json.loads(subprocess.check_output([PHP,'-r',code_php,str(ROOT/'assets/community.php'),str(ROOT/'assets/pulse-telegram.php')],env=env,input=json.dumps(update),text=True))
+        preview=bot({'update_id':9001,'message':{'from':{'id':123456},'chat':{'type':'private','id':123456},'text':'/start pl_'+request['token']}})
+        assert 'Подтвердить вход в Пульс' in json.dumps(preview,ensure_ascii=False)
+        assert telegram.call('pulse_telegram_status',{'token':request['token']})['pending']
+        def approval(update_id,sender=123456):return {'update_id':update_id,'callback_query':{'id':str(update_id),'from':{'id':sender},'message':{'chat':{'type':'private','id':sender}},'data':'pl_'+request['token']}}
+        bot(approval(9002,777777));assert telegram.call('pulse_telegram_status',{'token':request['token']})['pending']
+        bot(approval(9003));assert bot(approval(9003))==[]
+        guest.call('pulse_telegram_status',{'token':request['token']},403)
+        telegram.call('pulse_telegram_status',{'token':request['token']});signed=telegram.boot()['user']
+        assert signed['external_id']==ext and signed['role']=='participant'
+        telegram.call('pulse_telegram_status',{'token':request['token']},403)
+        retry=telegram.call('pulse_telegram_request',{});request=retry;bot(approval(9004))
+        with closing(sqlite3.connect(marathon/'marathon.sqlite')) as db:db.execute('UPDATE users SET telegram_id=NULL,session_epoch=session_epoch+1 WHERE id=?',(ext,));db.commit()
+        telegram.call('pulse_telegram_status',{'token':retry['token']},502)
+        print('PASS: push export from marathon, dedicated Pulse bot confirmation, shared identity, wrong sender/session/replay and unlink protection')
         # A session deactivated by directory sync must stop authoring immediately.
         with closing(sqlite3.connect(marathon/'marathon.sqlite')) as db:db.execute("UPDATE users SET active=0 WHERE role='admin'");db.commit()
         admin.call('sync_marathon',{});assert b.boot()['user'] is None;b.call('quizzes',status=401)
         print('PASS: idempotent marathon identity sync, no password/Telegram data, browser-bound one-use SSO and revoked account')
         if os.environ.get('COMMUNITY_UI')=='1':
-            with closing(sqlite3.connect(marathon/'marathon.sqlite')) as db:db.execute("UPDATE users SET active=1 WHERE role='admin'");db.commit()
-            subprocess.run(['node',str(ROOT/'tests/community_ui.cjs')],env=dict(env,COMMUNITY_TEST_URL=purl,COMMUNITY_MARATHON_URL=murl),check=True,timeout=90)
+            with closing(sqlite3.connect(marathon/'marathon.sqlite')) as db:
+                db.execute("UPDATE users SET active=1 WHERE role='admin'");db.execute('UPDATE users SET telegram_id=? WHERE id=?',('123456',ext));db.commit()
+            subprocess.run(['node',str(ROOT/'tests/community_ui.cjs')],env=dict(env,COMMUNITY_TEST_URL=purl,COMMUNITY_MARATHON_URL=murl,PULSE_BOT_TEST_PHP=PHP,PULSE_BOT_TEST_SCRIPT=code_php,PULSE_BOT_TEST_USER=ext),check=True,timeout=90)
     finally:
         for server in servers:server.terminate();server.wait(timeout=10)

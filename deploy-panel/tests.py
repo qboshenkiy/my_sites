@@ -676,6 +676,48 @@ class CommunityConnectionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'Сначала обновите'):
             app.connect_marathon(self.config,self.p,self.job,io.StringIO())
 
+    def prepare_bot(self):
+        (self.root/'pulse/assets/pulse-bot-worker.php').write_text('<?php')
+        app.write_env(self.p,app.patch_env(app.env_text(self.p),{'TELEGRAM_BOT_TOKEN':'999999:private-test-pulse-token','TELEGRAM_BOT_USERNAME':'pulse_fixture_bot','MARATHON_URL':'https://vano.sbena.net','PULSE_BRIDGE_SECRET':'b'*64}))
+
+    def bot_compose(self,p,args,log):
+        if args==['config','--format','json']:
+            return json.dumps({'name':'pulse','services':{'web':{'environment':{'QUIZ_DATA_DIR':'/var/lib/pulse'},'volumes':[{'type':'volume','source':'pulse_data','target':'/var/lib/pulse'}]}}}).encode()
+        return b''
+
+    def test_separate_bot_uses_existing_image_volume_no_healthcheck_and_updates_with_site(self):
+        self.prepare_bot();log=io.StringIO()
+        with patch.object(app,'compose',side_effect=self.bot_compose) as compose,patch.object(app,'start_services') as start:
+            app.start_pulse_bot(self.config,self.p,self.job,log)
+        overlay=json.loads((self.root/'pulse/compose.gitdeck-telegram.yaml').read_text())
+        bot=overlay['services']['bot']
+        self.assertEqual(bot['image'],'pulse-web');self.assertEqual(bot['healthcheck'],{'disable':True})
+        self.assertEqual(bot['volumes'][0]['source'],'pulse_data');self.assertIn('bot',app.project_services(self.p))
+        self.assertEqual(bot['environment']['TELEGRAM_BOT_TOKEN'],'${TELEGRAM_BOT_TOKEN:-}')
+        self.assertNotIn('private-test-pulse-token',json.dumps(overlay)+log.getvalue())
+        self.assertTrue(any('--check' in call.args[1] for call in compose.call_args_list))
+        start.assert_called_once()
+
+    def test_bad_bot_settings_refused_and_failed_validation_restores_overlay(self):
+        (self.root/'pulse/assets/pulse-bot-worker.php').write_text('<?php')
+        with patch.object(app,'compose') as compose,self.assertRaisesRegex(ValueError,'токен'):
+            app.start_pulse_bot(self.config,self.p,self.job,io.StringIO())
+        compose.assert_not_called();self.prepare_bot()
+        def failure(p,args,log):
+            if '--check' in args:raise RuntimeError('bad bot token')
+            return self.bot_compose(p,args,log)
+        with patch.object(app,'compose',side_effect=failure),patch.object(app,'start_services'),self.assertRaisesRegex(RuntimeError,'Бот Пульса не запустился'):
+            app.start_pulse_bot(self.config,self.p,self.job,io.StringIO())
+        self.assertFalse((self.root/'pulse/compose.gitdeck-telegram.yaml').exists())
+        self.assertNotIn('bot',app.project_services(self.p))
+
+    def test_refuses_marathon_bot_token_before_touching_containers(self):
+        self.prepare_bot()
+        app.write_env(self.m,app.patch_env(app.env_text(self.m),{'TELEGRAM_BOT_TOKEN':'999999:private-test-pulse-token'}))
+        with patch.object(app,'compose') as compose,self.assertRaisesRegex(ValueError,'отдельного нового бота'):
+            app.start_pulse_bot(self.config,self.p,self.job,io.StringIO())
+        compose.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

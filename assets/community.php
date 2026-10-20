@@ -82,6 +82,34 @@ function communityImport(array $source): array {
 }
 function communityHandle(string $action,array $input): void {
     global $db,$me,$admin;
+    if($action==='receive_marathon'){
+        $key=getenv('PULSE_BRIDGE_SECRET')?:'';
+        if(strlen($key)<32||!getenv('MARATHON_URL')||!hash_equals($key,$_SERVER['HTTP_X_PULSE_BRIDGE']??''))fail('Запрос не подтверждён.',403);
+        $db->exec('BEGIN IMMEDIATE');$result=communityImport($input);communityAudit('receive_marathon','directory',$result);$db->exec('COMMIT');out($result);
+    }
+    if(in_array($action,['pulse_telegram_request','pulse_telegram_status'],true)){
+        require_once __DIR__.'/pulse-telegram.php';pulseTelegramSchema();
+        if(!getenv('TELEGRAM_BOT_TOKEN')||!preg_match('/^[a-zA-Z0-9_]{5,32}$/',getenv('TELEGRAM_BOT_USERNAME')?:'')||!getenv('MARATHON_URL')||!getenv('PULSE_BRIDGE_SECRET'))fail('Подключите отдельного Telegram-бота Пульса в GitDeck.',503);
+        if($action==='pulse_telegram_request'){
+            session_start();$sessionHash=hash('sha256',session_id());session_write_close();
+            $token=bin2hex(random_bytes(24));$expires=time()+600;
+            query('DELETE FROM pulse_telegram_requests WHERE expires_at<? OR session_hash=?',[time(),$sessionHash]);
+            query('INSERT INTO pulse_telegram_requests(token_hash,session_hash,expires_at) VALUES (?,?,?)',[hash('sha256',$token),$sessionHash,$expires]);
+            out(['token'=>$token,'expires'=>$expires,'url'=>'https://t.me/'.getenv('TELEGRAM_BOT_USERNAME').'?start=pl_'.$token]);
+        }
+        $token=cleanText($input['token']??'',48);session_start();$sessionHash=hash('sha256',session_id());session_write_close();
+        $r=query('SELECT * FROM pulse_telegram_requests WHERE token_hash=?',[hash('sha256',$token)])->fetch();
+        if(!$r||!hash_equals($r['session_hash'],$sessionHash)||$r['expires_at']<time()||$r['consumed'])fail('Запрос истёк. Начните вход заново.',403);
+        if(!$r['user_id'])out(['pending'=>true]);
+        $identity=communityBridge('pulse_telegram_identity',['telegram_id'=>$r['telegram_id']]);
+        $db->exec('BEGIN IMMEDIATE');
+        $fresh=query('SELECT * FROM pulse_telegram_requests WHERE token_hash=?',[hash('sha256',$token)])->fetch();
+        if(!$fresh||$fresh['consumed']||$fresh['expires_at']<time())fail('Запрос уже использован или истёк.',403);
+        communityImport($identity);
+        $u=query('SELECT * FROM pulse_accounts WHERE issuer=? AND external_id=? AND active=1',[$identity['issuer'],$identity['users'][0]['id']??''])->fetch();
+        if(!$u||$u['id']!==$r['user_id'])fail('Привязка Telegram изменилась. Начните вход заново.',403);
+        query('UPDATE pulse_telegram_requests SET consumed=1,telegram_id=NULL WHERE token_hash=?',[$r['token_hash']]);$db->exec('COMMIT');communityLogin($u);out(['ok'=>true]);
+    }
     if ($action==='catalog') {
         $list=query("SELECT q.id,q.title,q.description,q.questions,q.created_at,a.name AS author FROM quizzes q LEFT JOIN pulse_accounts a ON a.id=q.owner_id WHERE q.visibility='public' ORDER BY q.created_at DESC LIMIT 500")->fetchAll();
         foreach ($list as &$q) { $raw=json_decode($q['questions'],true); $qs=$raw['questions']??$raw;$q['count']=count($qs);$q['mode']=$raw['mode']??'classic';unset($q['questions']); } unset($q);

@@ -130,3 +130,26 @@ async function communityInit(){
   }
   if(!boot.user)await catalogPage();else await dashboard();
 }
+
+const communityAuthWithoutTelegram=communityAuth;
+communityAuth=function(register=false){
+  communityAuthWithoutTelegram(register);
+  if(!boot.telegram?.configured)return;
+  const area=document.createElement('div');area.className='pulse-telegram-login';
+  area.innerHTML='<button type="button" class="primary marathon-login">➤ Войти через Telegram</button><p>Отдельный бот Пульса. Используйте Telegram, уже привязанный в марафоне.</p>';
+  document.querySelector('#account-form').before(area);area.querySelector('button').onclick=pulseTelegramLogin;
+};
+async function pulseTelegramLogin(){
+  try{
+    const request=await api('pulse_telegram_request',{});const dialog=document.createElement('dialog');
+    dialog.innerHTML=`<h2>Вход через бота Пульса</h2><p>Откройте отдельного бота Пульса и нажмите «Подтвердить вход». После подтверждения здесь откроется ваш аккаунт марафона.</p><a class="primary" href="${esc(request.url)}" target="_blank" rel="noopener noreferrer">Открыть Telegram ↗</a><p class="pulse-telegram-status" role="status">Ждём подтверждения · 10 минут</p><button class="outline" type="button">Отмена</button>`;
+    document.body.append(dialog);let timer;
+    dialog.onclose=()=>{clearTimeout(timer);dialog.remove();};dialog.querySelector('button').onclick=()=>dialog.close();dialog.showModal();
+    async function check(){
+      if(!dialog.open)return;
+      try{const result=await api('pulse_telegram_status',{token:request.token});if(result.ok){dialog.close();boot=await api('bootstrap');await dashboard();return;}timer=setTimeout(check,2000);}
+      catch(error){if(dialog.open)dialog.querySelector('.pulse-telegram-status').textContent=error.message;}
+    }
+    timer=setTimeout(check,1000);
+  }catch(error){toast(error.message);}
+}

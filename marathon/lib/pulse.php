@@ -9,17 +9,34 @@ function pulseIssuer(): string {
     return setting('pulse_issuer');
 }
 function pulseHandle(string $action,?array $me): void {
-    if (!in_array($action,['pulse_directory','pulse_exchange','pulse_authorize'],true)) return;
+    if (!in_array($action,['pulse_directory','pulse_exchange','pulse_authorize','pulse_export','pulse_telegram_identity'],true)) return;
     $key=getenv('PULSE_BRIDGE_SECRET')?:'';$url=rtrim(getenv('PULSE_URL')?:'','/');
     if(strlen($key)<32||!preg_match('~^https?://[^\s]+$~',$url))fail('Пульс ещё не подключён в GitDeck.',503);
     if($_SERVER['REQUEST_METHOD']!=='POST')fail('Нужен POST.',405);
     if((int)($_SERVER['CONTENT_LENGTH']??0)>10000)fail('Запрос слишком большой.',413);
     $input=json_decode(file_get_contents('php://input'),true);if(!is_array($input))fail('Некорректный запрос.');
-    if($action!=='pulse_authorize'&&!hash_equals($key,$_SERVER['HTTP_X_PULSE_BRIDGE']??''))fail('Запрос не подтверждён.',403);
-    if($action==='pulse_authorize'){
+    if(!in_array($action,['pulse_authorize','pulse_export'],true)&&!hash_equals($key,$_SERVER['HTTP_X_PULSE_BRIDGE']??''))fail('Запрос не подтверждён.',403);
+    if(in_array($action,['pulse_authorize','pulse_export'],true)){
         global $csrf;
         if(!$me)fail('Сначала войдите в марафон.',401);
         if(!hash_equals($csrf,$_SERVER['HTTP_X_CSRF_TOKEN']??''))fail('Обновите страницу.',403);
+    }
+    if($action==='pulse_export'){
+        guard(true);
+        $body=json_encode(['issuer'=>pulseIssuer(),'users'=>array_map('pulseIdentity',sql('SELECT id,name,role,active,deleted_at FROM users ORDER BY name')->fetchAll())],JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR);
+        $context=stream_context_create(['http'=>['method'=>'POST','header'=>"Content-Type: application/json\r\nX-Pulse-Bridge: $key\r\nConnection: close\r\n",'content'=>$body,'timeout'=>15,'ignore_errors'=>true,'follow_location'=>0],'ssl'=>['verify_peer'=>true,'verify_peer_name'=>true]]);
+        $raw=@file_get_contents($url.'/api.php?action=receive_marathon',false,$context,0,100000);
+        $response=$raw!==false?json_decode($raw,true):null;
+        if(!str_contains($http_response_header[0]??'',' 200 ')||!is_array($response)||!isset($response['imported']))fail('Пульс не принял участников. Обновите оба сайта и проверьте подключение в GitDeck.',502);
+        audit($me['id'],'pulse_export',null,'Участники переданы в Пульс',['exported'=>(int)$response['imported']]);
+        send(['imported'=>(int)$response['imported'],'url'=>$url]);
+    }
+    if($action==='pulse_telegram_identity'){
+        $id=$input['telegram_id']??'';
+        if(!is_string($id)||!preg_match('/^[0-9]{1,20}$/',$id))fail('Некорректный Telegram.',400);
+        $u=sql('SELECT * FROM users WHERE telegram_id=? AND active=1 AND deleted_at IS NULL',[$id])->fetch();
+        if(!$u)fail('Telegram не привязан к активному аккаунту марафона.',403);
+        send(['issuer'=>pulseIssuer(),'users'=>[pulseIdentity($u)]]);
     }
     sql('CREATE TABLE IF NOT EXISTS pulse_login_codes(code_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL,epoch INTEGER NOT NULL,state TEXT NOT NULL,challenge TEXT NOT NULL,expires_at INTEGER NOT NULL)');
     if($action==='pulse_directory'){
