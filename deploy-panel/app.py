@@ -8,6 +8,7 @@ import http.cookies
 import http.server
 import io
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -18,11 +19,12 @@ import sqlite3
 import subprocess
 import sys
 import tarfile
+import tempfile
 import threading
 import time
 import urllib.parse
 
-VERSION = '1.5.1'
+VERSION = '1.6.0'
 LAYOUT = {
     'drawing': ['index.php', 'api.php', 'lib', 'assets', 'ops', '.dockerignore'],
     'pulse': ['index.php', 'api.php', 'seed.php', '.htaccess', 'assets', 'tools/check.php', 'tools/backup.php'],
@@ -227,7 +229,7 @@ def run(command, log=None, cwd=None, env=None, timeout=900):
     return result.stdout
 
 
-def compose(p, args, log):
+def compose_command(p):
     command = ['docker', 'compose', '-f', p['compose']]
     if p['kind'] == 'chrono' and (Path(p['directory']) / 'ops/compose.runtime.yaml').is_file():
         command += ['-f', 'ops/compose.runtime.yaml']
@@ -239,7 +241,11 @@ def compose(p, args, log):
         command += ['-f', 'compose.gitdeck-telegram.yaml']
     for profile in p.get('profiles', []):
         command += ['--profile', profile]
-    return run(command + args, log, cwd=p['directory'])
+    return command
+
+
+def compose(p, args, log):
+    return run(compose_command(p) + args, log, cwd=p['directory'])
 
 
 def project_services(p):
@@ -1026,10 +1032,292 @@ def work(config, job):
                 status_update(config, job, 'failed', str(exc))
 
 
+def monitor_command(command, cwd=None, timeout=8, limit=1048576):
+    """Bounded, read-only CLI output. Arguments never pass through a shell."""
+    with tempfile.TemporaryFile() as output:
+        with subprocess.Popen(command, cwd=cwd, stdout=output, stderr=subprocess.STDOUT) as process:
+            try:
+                process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+                raise RuntimeError('Команда мониторинга не ответила вовремя')
+            if process.returncode:
+                raise RuntimeError('Источник недоступен: ' + Path(command[0]).name)
+        size = output.tell()
+        output.seek(max(0, size - limit))
+        return output.read(limit).decode('utf-8', errors='replace'), size > limit
+
+
+def redact_runtime(config, text):
+    # Logs may contain secrets printed by an application; never return stored credentials.
+    values = []
+    for project in config.get('projects', []):
+        if project['kind'] == 'self':
+            continue
+        try:
+            values.extend(v for k, v, *_ in env_records(env_text(project)) if k not in PUBLIC_ENV and len(v) >= 4)
+        except (OSError, ValueError):
+            continue
+    stream = io.StringIO()
+    RedactedLog(stream, values).write(text)
+    text = stream.getvalue()
+    text = re.sub(r'\b[0-9]{6,12}:[A-Za-z0-9_-]{20,}\b', '[токен скрыт]', text)
+    text = re.sub(r'(?i)(authorization\s*[:=]\s*(?:bearer\s+)?)[^\s"\']+', r'\1[секрет скрыт]', text)
+    text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', text)
+    return text
+
+
+def runtime_log(config, project_id, tail):
+    if tail not in (100, 300, 1000):
+        raise ValueError('Выберите 100, 300 или 1000 строк')
+    if project_id == '@panel':
+        command, cwd = ['journalctl', '-u', 'gitdeck.service', '-n', str(tail), '--no-pager', '-o', 'short-iso'], None
+    else:
+        project = next((p for p in config['projects'] if p['id'] == project_id), None)
+        if not project or project['kind'] == 'self':
+            raise ValueError('Выберите установленный сайт или журнал GitDeck')
+        command = compose_command(project) + ['logs', '--no-color', '--timestamps', '--tail', str(tail)]
+        cwd = project['directory']
+    output, truncated = monitor_command(command, cwd=cwd)
+    return {'log': redact_runtime(config, output), 'truncated': truncated, 'updated_at': time.time()}
+
+
+def read_proc(name, root=Path('/proc')):
+    try:
+        return (root / name).read_text(encoding='utf-8')
+    except (OSError, UnicodeError):
+        return ''
+
+
+def host_counters(root=Path('/proc')):
+    stat = read_proc('stat', root).splitlines()
+    cpu = next((list(map(int, line.split()[1:9])) for line in stat if line.startswith('cpu ')), [])
+    memory = {}
+    for line in read_proc('meminfo', root).splitlines():
+        fields = line.replace(':', '').split()
+        if len(fields) >= 2 and fields[1].isdigit():
+            memory[fields[0]] = int(fields[1]) * 1024
+    available = memory.get('MemAvailable', memory.get('MemFree', 0) + memory.get('Buffers', 0) + memory.get('Cached', 0) + memory.get('SReclaimable', 0) - memory.get('Shmem', 0))
+    network = [0, 0]
+    interfaces = 0
+    for line in read_proc('net/dev', root).splitlines():
+        if ':' not in line:
+            continue
+        interface, data = line.split(':', 1)
+        if interface.strip().startswith(('lo', 'veth', 'docker', 'br-', 'virbr')):
+            continue
+        fields = data.split()
+        if len(fields) >= 16:
+            network[0] += int(fields[0]); network[1] += int(fields[8]); interfaces += 1
+    disk_io = [0, 0]
+    devices = 0
+    for line in read_proc('diskstats', root).splitlines():
+        fields = line.split()
+        if len(fields) >= 14 and re.fullmatch(r'(?:sd[a-z]+|vd[a-z]+|xvd[a-z]+|nvme[0-9]+n[0-9]+|mmcblk[0-9]+)', fields[2]):
+            disk_io[0] += int(fields[5]) * 512; disk_io[1] += int(fields[9]) * 512; devices += 1
+    load = read_proc('loadavg', root).split()
+    uptime = read_proc('uptime', root).split()
+    return {'cpu_total': sum(cpu) if cpu else None, 'cpu_idle': sum(cpu[3:5]) if cpu else None,
+            'memory_total': memory.get('MemTotal'), 'memory_available': max(0, available) if memory else None,
+            'swap_total': memory.get('SwapTotal'), 'swap_used': memory.get('SwapTotal', 0) - memory.get('SwapFree', 0) if memory else None,
+            'network': network if interfaces else None, 'disk_io': disk_io if devices else None,
+            'load': [float(n) for n in load[:3]] if load else None, 'uptime': float(uptime[0]) if uptime else None}
+
+
+def host_disks(config, root=Path('/proc')):
+    paths = ['/'] if os.name == 'posix' else [str(Path(config['state_dir']).anchor)]
+    # Local mounted filesystems only; never walk application data or contact network mounts.
+    for line in read_proc('mounts', root).splitlines():
+        fields = line.split()
+        if len(fields) > 2 and fields[2] in ('ext4', 'ext3', 'xfs', 'btrfs', 'zfs', 'vfat', 'f2fs'):
+            paths.append(fields[1].replace('\\040', ' ').replace('\\134', '\\'))
+    disks, seen = [], set()
+    for path in paths[:24]:
+        try:
+            device = os.stat(path).st_dev
+            if device in seen:
+                continue
+            seen.add(device)
+            usage = shutil.disk_usage(path)
+            disks.append({'mount': path, 'total': usage.total, 'used': usage.used, 'free': usage.free,
+                          'percent': round(usage.used / usage.total * 100, 2) if usage.total else 0})
+        except OSError:
+            continue
+    return disks
+
+
+def metric_delta(before, after, seconds):
+    if before is None or after is None or seconds <= 0 or after < before:
+        return None
+    return round((after - before) / seconds, 2)
+
+
+def sample_metrics(current, previous, seconds, disks, stamp):
+    previous = previous or {}
+    total_delta = metric_delta(previous.get('cpu_total'), current.get('cpu_total'), 1)
+    idle_delta = metric_delta(previous.get('cpu_idle'), current.get('cpu_idle'), 1)
+    cpu = max(0, min(100, (1 - idle_delta / total_delta) * 100)) if total_delta and idle_delta is not None else None
+    total, available = current['memory_total'], current['memory_available']
+    used = max(0, total - available) if total is not None and available is not None else None
+    result = {'time': stamp, 'cpu': round(cpu, 2) if cpu is not None else None,
+              'memory_used': used, 'memory_total': total, 'memory': round(used / total * 100, 2) if total else None,
+              'swap_total': current['swap_total'], 'swap_used': current['swap_used'],
+              'disk': disks[0]['percent'] if disks else None, 'load': current['load'], 'uptime': current['uptime']}
+    for field, names in [('network', ('rx', 'tx')), ('disk_io', ('read', 'write'))]:
+        for index, name in enumerate(names):
+            before, after = previous.get(field), current.get(field)
+            result[name] = metric_delta(before[index] if before else None, after[index] if after else None, seconds)
+    return result
+
+
+def docker_snapshot():
+    raw, truncated = monitor_command(['docker', 'ps', '-a', '--format', '{{json .}}'], timeout=6)
+    if truncated:
+        raise RuntimeError('Слишком много контейнеров для одного запроса')
+    rows = [json.loads(line) for line in raw.splitlines() if line.strip()]
+    stats = {}
+    if any(row.get('State') == 'running' for row in rows):
+        raw_stats, _ = monitor_command(['docker', 'stats', '--no-stream', '--format', '{{json .}}'], timeout=6)
+        stats = {row.get('Name'): row for row in (json.loads(line) for line in raw_stats.splitlines() if line.strip())}
+    containers = []
+    for row in rows[:200]:
+        usage = stats.get(row.get('Names'), {})
+        labels = dict(item.split('=', 1) for item in row.get('Labels', '').split(',') if '=' in item)
+        containers.append({'name': row.get('Names', ''), 'image': row.get('Image', ''), 'state': row.get('State', ''),
+                           'status': row.get('Status', ''), 'ports': row.get('Ports', ''),
+                           'project': labels.get('com.docker.compose.project', ''),
+                           'service': labels.get('com.docker.compose.service', ''),
+                           'cpu': usage.get('CPUPerc'), 'memory': usage.get('MemUsage'), 'memory_percent': usage.get('MemPerc'),
+                           'network': usage.get('NetIO'), 'block_io': usage.get('BlockIO')})
+    storage, storage_error = [], None
+    try:
+        raw_storage, _ = monitor_command(['docker', 'system', 'df', '--format', '{{json .}}'], timeout=6)
+        storage = [{k: row.get(k) for k in ('Type', 'TotalCount', 'Active', 'Size', 'Reclaimable')}
+                   for row in (json.loads(line) for line in raw_storage.splitlines() if line.strip())]
+    except (OSError, RuntimeError, ValueError):
+        storage_error = 'Docker не вернул сведения о хранилище'
+    return {'containers': containers, 'storage': storage, 'storage_error': storage_error,
+            'updated_at': time.time(), 'error': None, 'truncated': len(rows) > 200}
+
+
+class ServerMonitor:
+    """One sampler per panel, independent of browsers. Persistent 30s samples, seven-day retention."""
+    def __init__(self, config, demo=False):
+        self.config, self.demo = config, demo
+        self.lock, self.stop_event = threading.RLock(), threading.Event()
+        self.current, self.previous, self.previous_time, self.persisted = {}, None, 0, 0
+        self.disks, self.error = [], None
+        self.docker = {'containers': [], 'storage': [], 'updated_at': None, 'error': 'Ожидание первого опроса Docker…'}
+        self.threads = []
+        with db_open(config) as db:
+            db.execute('CREATE TABLE IF NOT EXISTS server_samples(stamp INTEGER PRIMARY KEY,payload TEXT NOT NULL)')
+
+    def collect(self):
+        counters, disks, mono, stamp = host_counters(), host_disks(self.config), time.monotonic(), time.time()
+        sample = sample_metrics(counters, self.previous, mono - self.previous_time, disks, stamp)
+        with self.lock:
+            self.current, self.disks, self.error = sample, disks, None
+            self.previous, self.previous_time = counters, mono
+        if stamp - self.persisted >= 30:
+            with db_open(self.config) as db:
+                db.execute('INSERT OR REPLACE INTO server_samples VALUES (?,?)', (int(stamp), json.dumps(sample)))
+                db.execute('DELETE FROM server_samples WHERE stamp<?', (int(stamp - 7 * 86400),))
+            self.persisted = stamp
+
+    def loop(self):
+        while not self.stop_event.is_set():
+            try:
+                self.collect()
+            except (OSError, ValueError, sqlite3.Error):
+                with self.lock:
+                    self.error = 'Не удалось прочитать показатели сервера; повтор через 10 секунд'
+            self.stop_event.wait(10)
+
+    def docker_loop(self):
+        while not self.stop_event.is_set():
+            try:
+                snapshot = docker_snapshot()
+                with self.lock:
+                    self.docker = snapshot
+            except (OSError, RuntimeError, ValueError):
+                with self.lock:
+                    self.docker = dict(self.docker, error='Docker недоступен. Проверьте службу Docker и права GitDeck.')
+            self.stop_event.wait(30)
+
+    def start(self):
+        if self.demo:
+            return
+        for target in (self.loop, self.docker_loop):
+            thread = threading.Thread(target=target, daemon=True)
+            self.threads.append(thread); thread.start()
+
+    def close(self):
+        self.stop_event.set()
+        for thread in self.threads:
+            thread.join(timeout=1)
+
+    def view(self, period):
+        if period not in (900, 3600, 21600, 86400, 604800):
+            raise ValueError('Неизвестный период графика')
+        if self.demo:
+            return self.demo_view(period)
+        with self.lock:
+            current, disks, error = dict(self.current), list(self.disks), self.error
+        with db_open(self.config) as db:
+            # Bucket in SQL: a week never sends tens of thousands of rows to the browser.
+            bucket = max(30, period // 240)
+            history = [json.loads(r['payload']) for r in db.execute(
+                'SELECT payload FROM server_samples WHERE stamp>=? AND stamp IN '
+                '(SELECT MAX(stamp) FROM server_samples WHERE stamp>=? GROUP BY CAST(stamp / ? AS INTEGER)) ORDER BY stamp',
+                (int(time.time() - period), int(time.time() - period), bucket))]
+        if current and (not history or current['time'] > history[-1]['time']):
+            history.append(current)
+        release = {}
+        try:
+            release = dict(line.split('=', 1) for line in Path('/etc/os-release').read_text().splitlines() if '=' in line)
+        except OSError:
+            pass
+        info = {'hostname': os.uname().nodename if hasattr(os, 'uname') else os.environ.get('COMPUTERNAME', 'Сервер'),
+                'os': release.get('PRETTY_NAME', sys.platform).strip('"'),
+                'kernel': os.uname().release if hasattr(os, 'uname') else None, 'cores': os.cpu_count(),
+                'linux': Path('/proc/stat').is_file()}
+        return {'current': current, 'history': history, 'disks': disks, 'info': info, 'error': error,
+                'period': period, 'interval': 10, 'history_interval': 30, 'retention_days': 7}
+
+    def demo_view(self, period):
+        now = time.time(); gib = 1024 ** 3
+        history = []
+        for i in range(121):
+            point = {'time': now - period + i * period / 120, 'cpu': round(18 + 8 * math.sin(i / 8) + 4 * math.sin(i / 3), 2),
+                     'memory': round(47 + 2 * math.sin(i / 12), 2), 'memory_total': 4 * gib, 'disk': 38.5,
+                     'swap_total': gib, 'swap_used': 0, 'rx': 31000 + 18000 * math.sin(i / 9), 'tx': 15000 + 9000 * math.sin(i / 7),
+                     'read': 90000 + 30000 * math.sin(i / 6), 'write': 64000 + 27000 * math.sin(i / 4),
+                     'load': [.42, .35, .27], 'uptime': 3 * 86400 + 7200}
+            point['memory_used'] = int(point['memory'] / 100 * point['memory_total']); history.append(point)
+        return {'current': history[-1], 'history': history, 'period': period, 'interval': 10, 'history_interval': 30, 'retention_days': 7,
+                'disks': [{'mount': '/', 'total': 40 * gib, 'used': int(15.4 * gib), 'free': int(24.6 * gib), 'percent': 38.5}],
+                'info': {'hostname': 'ubuntu-4gb-nbg1-1', 'os': 'Ubuntu Linux · демоданные', 'kernel': 'Linux', 'cores': 2, 'linux': True}, 'error': None}
+
+    def containers(self):
+        if self.demo:
+            names = [('glava-marathon-web-1', 'glava-marathon', 'web'), ('glava-marathon-bot-1', 'glava-marathon', 'bot'),
+                     ('pulse-web-1', 'pulse', 'web'), ('chrono-logos-db-1', 'chrono-logos', 'db'), ('chrono-logos-web-1', 'chrono-logos', 'web')]
+            return {'containers': [{'name': name, 'project': project, 'service': service, 'image': project + '-' + service,
+                                    'state': 'running', 'status': 'Up 3 days (healthy)', 'ports': '', 'cpu': '0.35%',
+                                    'memory': '82MiB / 4GiB', 'memory_percent': '2.0%', 'network': '2.4MB / 1.2MB', 'block_io': '12MB / 4MB'} for name, project, service in names],
+                    'storage': [{'Type': 'Images', 'TotalCount': 8, 'Active': 5, 'Size': '2.8GB', 'Reclaimable': '480MB (17%)'},
+                                {'Type': 'Local Volumes', 'TotalCount': 5, 'Active': 5, 'Size': '240MB', 'Reclaimable': '0B (0%)'}],
+                    'updated_at': time.time(), 'error': None}
+        with self.lock:
+            return dict(self.docker)
+
+
 class Panel(http.server.BaseHTTPRequestHandler):
     sessions = {}
     attempts = []
     mutex = threading.RLock()
+    log_mutex = threading.Lock()
 
     def log_message(self, *_):
         pass
@@ -1073,6 +1361,31 @@ class Panel(http.server.BaseHTTPRequestHandler):
         session = self.session()
         if not session:
             return self.send(401, {'error': 'Войдите в панель'})
+        if url.path in ('/api/server', '/api/containers'):
+            try:
+                monitor = self.server.monitor
+                result = monitor.containers() if url.path.endswith('containers') else monitor.view(int(urllib.parse.parse_qs(url.query).get('period', ['3600'])[0]))
+                return self.send(200, result)
+            except (ValueError, TypeError):
+                return self.send(400, {'error': 'Некорректный период графика'})
+            except (OSError, sqlite3.Error, AttributeError):
+                return self.send(503, {'error': 'Мониторинг временно недоступен'})
+        if url.path == '/api/runtime-log':
+            query = urllib.parse.parse_qs(url.query)
+            if not self.log_mutex.acquire(blocking=False):
+                return self.send(409, {'error': 'Журнал уже загружается. Повторите через несколько секунд.'})
+            try:
+                tail = int(query.get('tail', ['300'])[0]); project = query.get('project', ['@panel'])[0]
+                if tail not in (100, 300, 1000) or (project != '@panel' and not any(p['id'] == project and p['kind'] != 'self' for p in self.server.config['projects'])):
+                    raise ValueError('Выберите источник журнала и количество строк')
+                result = {'log': 'Деможурнал: сервис запущен.\nINFO  Приложение готово принимать запросы.\n', 'updated_at': time.time(), 'truncated': False} if self.server.demo else runtime_log(self.server.config, project, tail)
+                return self.send(200, result)
+            except (ValueError, TypeError) as error:
+                return self.send(400, {'error': str(error)})
+            except (OSError, RuntimeError):
+                return self.send(503, {'error': 'Не удалось прочитать журнал. Проверьте наличие сервиса, Docker или journald.'})
+            finally:
+                self.log_mutex.release()
         if url.path == '/api/state':
             with db_open(self.server.config) as db:
                 jobs = [dict(r) for r in db.execute('SELECT * FROM jobs ORDER BY created DESC LIMIT 30')]
@@ -1092,7 +1405,7 @@ class Panel(http.server.BaseHTTPRequestHandler):
             with file.open('rb') as stream:
                 stream.seek(max(0, file.stat().st_size - 65536))
                 content = stream.read().decode('utf-8', errors='replace')
-            return self.send(200, {'log': content})
+            return self.send(200, {'log': redact_runtime(self.server.config, content)})
         if url.path == '/api/environment':
             project = urllib.parse.parse_qs(url.query).get('project', [''])[0]
             p = next((x for x in self.server.config['projects'] if x['id'] == project), None)
@@ -1249,8 +1562,14 @@ def serve(config, config_path, demo=False):
     db_open(config).close()
     server = http.server.ThreadingHTTPServer(('127.0.0.1', int(config.get('port', 8120))), Panel)
     server.config, server.config_path, server.demo = config, str(Path(config_path).resolve()), demo
+    server.monitor = ServerMonitor(config, demo)
+    server.monitor.start()
     print('GitDeck: http://127.0.0.1:' + str(server.server_port), flush=True)
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        server.monitor.close()
+        server.server_close()
 
 
 def main():
