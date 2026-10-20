@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/room-report.php';
+require_once __DIR__.'/forms.php';
 
 // Additive migration: quizzes, room snapshots and past answers stay in place.
 function communitySchema(): void {
@@ -28,6 +29,7 @@ function communitySchema(): void {
         $db->exec('COMMIT');
     }
     roomReportSchema();
+    formsSchema();
 }
 function communityUser(?array $row): ?array {
     if (!$row) return null;
@@ -96,6 +98,7 @@ function communityImport(array $source): array {
 function communityHandle(string $action,array $input): void {
     global $db,$me,$admin;
     roomReportHandle($action,$input);
+    formsHandle($action,$input);
     if($action==='receive_marathon'){
         $key=getenv('PULSE_BRIDGE_SECRET')?:'';
         if(strlen($key)<32||!getenv('MARATHON_URL')||!hash_equals($key,$_SERVER['HTTP_X_PULSE_BRIDGE']??''))fail('Запрос не подтверждён.',403);
@@ -177,7 +180,7 @@ function communityHandle(string $action,array $input): void {
     }
     if ($action==='assessments') {
         hostOnly();$staff=in_array($me['role'],['admin','moderator'],true);
-        $rows=$staff?query('SELECT * FROM assessments ORDER BY held_on DESC,created_at DESC')->fetchAll():query('SELECT a.* FROM assessments a JOIN assessment_scores s ON s.assessment_id=a.id WHERE s.user_id=? ORDER BY a.held_on DESC,a.created_at DESC',[$me['id']])->fetchAll();
+        $rows=$staff?query('SELECT * FROM assessments ORDER BY held_on DESC,created_at DESC')->fetchAll():query('SELECT a.* FROM assessments a JOIN assessment_scores s ON s.assessment_id=a.id WHERE s.user_id=? AND (a.source_form_id IS NULL OR EXISTS(SELECT 1 FROM pulse_forms f WHERE f.id=a.source_form_id AND f.published=1)) ORDER BY a.held_on DESC,a.created_at DESC',[$me['id']])->fetchAll();
         foreach ($rows as &$a) {
             $a['can_link']=!empty($a['source_room_id'])&&communityOwn(query('SELECT * FROM rooms WHERE id=?',[$a['source_room_id']])->fetch()?:[]);
             $scores=$staff?query('SELECT s.*,u.name FROM assessment_scores s JOIN pulse_accounts u ON u.id=s.user_id WHERE s.assessment_id=? ORDER BY u.name',[$a['id']])->fetchAll():query('SELECT s.*,u.name FROM assessment_scores s JOIN pulse_accounts u ON u.id=s.user_id WHERE s.assessment_id=? AND s.user_id=?',[$a['id'],$me['id']])->fetchAll();
@@ -195,7 +198,6 @@ function communityHandle(string $action,array $input): void {
         $scores=$input['scores']??[];if(!is_array($scores)||count($scores)>20000)fail('Слишком много результатов.');
         $db->exec('BEGIN IMMEDIATE');$old=query('SELECT * FROM assessments WHERE id=?',[$id])->fetch();
         if($old && (int)($input['revision']??0)!==(int)$old['revision'])fail('Ведомость уже изменена. Откройте её заново.',409);
-        if($old&&!empty($old['source_room_id']))fail('Баллы этой ведомости взяты из игры. Измените связи игроков на экране результатов игры.',409);
         $seen=[];
         foreach($scores as $s){$uid=$s['user_id']??'';$points=$s['points']??null;
             if(!is_string($uid)||isset($seen[$uid])||!query('SELECT id FROM pulse_accounts WHERE id=?',[$uid])->fetchColumn())fail('Некорректный участник.');$seen[$uid]=true;
@@ -203,6 +205,7 @@ function communityHandle(string $action,array $input): void {
             if(!is_string($s['note']??'')||mb_strlen($s['note']??'')>500)fail('Примечание: до 500 символов.');
         }
         query('INSERT INTO assessments(id,title,max_points,owner_id,held_on,created_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,max_points=excluded.max_points,held_on=excluded.held_on,revision=assessments.revision+1',[$id,$title,(float)$maximum,$me['id'],$date,time()]);
+        if($old&&(!empty($old['source_room_id'])||!empty($old['source_form_id'])))query('UPDATE assessments SET source_edited=1 WHERE id=?',[$id]);
         // Empty cells mean not entered, whereas a numeric zero is a real result.
         query('DELETE FROM assessment_scores WHERE assessment_id=?',[$id]);
         foreach($scores as $s)query('INSERT INTO assessment_scores VALUES (?,?,?,?,?,?)',[$id,$s['user_id'],(float)$s['points'],trim($s['note']??''),time(),$me['id']]);

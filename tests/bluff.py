@@ -85,6 +85,8 @@ with tempfile.TemporaryDirectory(prefix='pulse-bluff-') as folder:
         s=hs();assert s['status']=='results' and s['question']['truth']=='Ной'
         assert {p['name']:p['score'] for p in s['players']}=={'A':500,'B':1500,'C':500,'D':0}
         fixtures['results']=s
+        projector_result=screen.call('state',suffix='&projector='+token)
+        assert all('voters' not in choice and 'authors' not in choice and 'voterCount' in choice for choice in projector_result['choices'])
         subprocess.run(['node',str(ROOT/'tests/bluff_render.cjs')],input=json.dumps(fixtures),text=True,encoding='utf-8',check=True)
         assert set(next(x['authors'] for x in s['choices'] if x['id']==own))=={'A','B'}
         assert s['players']==hs()['players'];host.call('control',{'room':rid,'command':'reveal'},409)

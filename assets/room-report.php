@@ -3,14 +3,14 @@ declare(strict_types=1);
 
 function roomReportSchema(): void {
     global $db;
-    if(query("SELECT value FROM settings WHERE key='room_report_schema'")->fetchColumn())return;
+    if(query("SELECT value FROM settings WHERE key='room_report_schema'")->fetchColumn()==='2')return;
     $db->exec('BEGIN IMMEDIATE');
-    foreach(['assessments'=>['source_room_id'=>'TEXT','source_max_override'=>'REAL','score_basis'=>"TEXT NOT NULL DEFAULT 'manual'"], 'rooms'=>['link_revision'=>'INTEGER NOT NULL DEFAULT 0']] as $table=>$columns){
+    foreach(['assessments'=>['source_room_id'=>'TEXT','source_form_id'=>'TEXT','source_edited'=>'INTEGER NOT NULL DEFAULT 0','source_max_override'=>'REAL','score_basis'=>"TEXT NOT NULL DEFAULT 'manual'"], 'rooms'=>['link_revision'=>'INTEGER NOT NULL DEFAULT 0','control_version'=>'INTEGER NOT NULL DEFAULT 0']] as $table=>$columns){
         $existing=array_column(query('PRAGMA table_info('.$table.')')->fetchAll(),'name');
         foreach($columns as $name=>$type)if(!in_array($name,$existing,true))$db->exec("ALTER TABLE $table ADD COLUMN $name $type");
     }
     $db->exec('CREATE UNIQUE INDEX IF NOT EXISTS assessment_source_room ON assessments(source_room_id) WHERE source_room_id IS NOT NULL');
-    query("INSERT OR REPLACE INTO settings VALUES ('room_report_schema','1')");$db->exec('COMMIT');
+    query("INSERT OR REPLACE INTO settings VALUES ('room_report_schema','2')");$db->exec('COMMIT');
 }
 function roomReportMaximum(array $room): array {
     $quiz=json_decode($room['quiz'],true);$mode=$quiz['mode']??'classic';
@@ -28,6 +28,7 @@ function roomReportMaximum(array $room): array {
 function syncRoomReport(array $room,bool $setOverride=false,?float $override=null): array {
     global $me;
     $old=query('SELECT * FROM assessments WHERE source_room_id=?',[$room['id']])->fetch();
+    if($old&&!empty($old['source_edited']))return ['assessment'=>$old['id'],'warning'=>'Ведомость отредактирована вручную. Изменённые баллы и дополнительные участники сохранены.'];
     if($room['status']!=='finished')return ['assessment'=>null,'warning'=>'Ведомость появится после завершения игры.'];
     $maximum=roomReportMaximum($room);
     $manual=$setOverride?$override:($old['source_max_override']??null);

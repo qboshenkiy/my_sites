@@ -39,6 +39,7 @@ function pulseTelegramUpdate(array $update,string $botId): array {
                     if(!$fresh||$fresh['consumed']||$fresh['expires_at']<time()||$fresh['user_id'])$reply['text']='Вход уже подтверждён или запрос истёк. Вернитесь в Пульс.';
                     else{
                         communityImport($identity);$u=query('SELECT id FROM pulse_accounts WHERE issuer=? AND external_id=? AND active=1',[$identity['issuer'],$identity['users'][0]['id']])->fetch();
+                        require_once __DIR__.'/forms-bot.php';formsBotSchema();query('INSERT OR REPLACE INTO pulse_tg_accounts VALUES (?,?)',[$telegramId,$u['id']]);
                         query('UPDATE pulse_telegram_requests SET user_id=?,telegram_id=? WHERE token_hash=?',[$u['id'],$telegramId,$request['token_hash']]);
                         $reply['text']='Вход в Пульс подтверждён. Вернитесь на страницу, где начали вход — откроется ваш профиль.';
                     }

@@ -9,18 +9,20 @@ const requestedCode = url.searchParams.get('code') || '';
 const projectorToken=url.searchParams.get('projector');
 let projectorMode=false;
 let lastGameStage='';
+let gameSignature='',gamePointerHeld=false,gameRenderPending=false;
 function toast(message) { const el = document.querySelector('#toast'); el.textContent = message; el.classList.add('visible'); clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove('visible'), 4500); }
 async function api(action, data, asPlayer = false) {
   const headers = {'Content-Type':'application/json','X-CSRF-Token':boot?.csrf || ''};
   if (asPlayer && player) headers['X-Player-Token'] = player.token;
-  const response = await fetch(`api.php?action=${action}${action === 'state' && projectorMode ? '&projector='+encodeURIComponent(projectorToken) : action === 'state' && !asPlayer ? '&room=' + encodeURIComponent(activeRoom) : ''}`, {method:data ? 'POST' : 'GET',headers,body:data ? JSON.stringify(data) : undefined});
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),25000);
+  let response;try{response = await fetch(`api.php?action=${action}${action === 'state' && projectorMode ? '&projector='+encodeURIComponent(projectorToken) : action === 'state' && !asPlayer ? '&room=' + encodeURIComponent(activeRoom) : ''}`, {method:data ? 'POST' : 'GET',headers,body:data ? JSON.stringify(data) : undefined,signal:controller.signal});}catch(error){throw Error(error.name==='AbortError'?'Сервер долго не отвечает. Кнопка доступна для повторной попытки.':error.message);}finally{clearTimeout(timeout);}
   let result; try { result = await response.json(); } catch { throw new Error('Сервер недоступен. Проверьте подключение.'); }
   if (!response.ok) throw new Error(result.error || 'Не удалось выполнить действие.');
   return result;
 }
 const icon = (type) => ({grid:'▦',play:'▷',plus:'＋',arrow:'↗',bolt:'ϟ',back:'←',edit:'✎',close:'×',users:'♙'}[type] || type);
 function brand() { return '<a class="brand" href="./"><span class="brand-mark">ϟ</span>пульс<span class="brand-dot">.</span></a>'; }
-function stopPoll() { clearTimeout(pollTimer); pollGeneration++; }
+function stopPoll() { clearTimeout(pollTimer);pollTimer=null; pollGeneration++; }
 function shell(content, selected = 'quizzes') {
   app.innerHTML = `<div class="dashboard"><aside class="sidebar">${brand()}<div class="workspace"><span class="workspace-icon">И</span><div>Моё пространство<small>Панель ведущего</small></div></div><div class="nav-label">РАБОЧЕЕ ПРОСТРАНСТВО</div><button class="nav ${selected==='quizzes'?'active':''}" data-action="dashboard"><span>▦</span>Мои опросники<span class="nav-count">${library.length}</span></button><button class="nav ${selected==='sessions'?'active':''}" data-action="sessions"><span>◷</span>История игр</button><button class="nav" data-action="join-page"><span>▷</span>Присоединиться</button><div class="sidebar-tip"><span>✦</span><strong>Каждый голос важен</strong><p>Вовлекайте участников и узнавайте результаты прямо во время игры.</p><div class="tip-dots"><i></i><i></i><i></i></div></div><div class="account"><span class="avatar">А</span><div>Администратор<small>Ваше пространство</small></div><button class="icon-button" title="Выйти" data-action="logout">↪</button></div></aside><div class="main"><header class="topbar"><span>Рабочее пространство <b>/</b> ${selected==='sessions'?'История игр':'Мои опросники'}</span><div><span class="status-dot"></span> Всё готово к игре <button class="outline small" data-action="join-page">Войти как игрок ↗</button></div></header><main class="main-content">${content}</main><footer>Пульс · Учиться интереснее вместе <span>Создавайте. Играйте. Узнавайте.</span></footer></div></div>`;
 }
@@ -67,10 +69,24 @@ async function playerRoom() { stopPoll(); page='player'; state=null; await poll(
 async function poll() {
   if (!['host','player','projector'].includes(page)) return;
   const currentPage=page, generation=pollGeneration;
-  try { const next = await api('state',undefined,currentPage==='player'); if (page!==currentPage || generation!==pollGeneration) return; state=next; renderGame(); renderQr(); }
+  try { const next = await api('state',undefined,currentPage==='player'); if (page!==currentPage || generation!==pollGeneration) return; state=next; updateGameView(); }
   catch(e) { toast(e.message); }
   if (page===currentPage && generation===pollGeneration) pollTimer=setTimeout(poll,1000);
 }
+function updateGameView(){
+ if(!state||!['host','player','projector'].includes(page))return;
+ if(gamePointerHeld||busy){gameRenderPending=true;return;}
+ const signature=JSON.stringify({...state,remaining:0});
+ if(signature!==gameSignature||!app.querySelector('.game-page')){gameSignature=signature;renderGame();renderQr();}else{
+  const clock=app.querySelector('.timer,.bluff-clock');if(clock&&clock.firstChild?.nodeType===3){clock.firstChild.textContent=state.status==='results'?'✓':Math.ceil(state.remaining);clock.classList.toggle('urgent',state.remaining<6);}
+  const progress=app.querySelector('.progress>i');if(progress&&state.question)progress.style.width=(state.status==='results'?100:state.remaining/state.question.seconds*100)+'%';
+ }
+ gameRenderPending=false;
+}
+document.addEventListener('pointerdown',event=>{if(event.target.closest('.game-page button'))gamePointerHeld=true;});
+for(const name of ['pointerup','pointercancel','keyup'])document.addEventListener(name,()=>setTimeout(()=>{gamePointerHeld=false;if(gameRenderPending)updateGameView();},80));
+document.addEventListener('keydown',event=>{if(['Enter',' '].includes(event.key)&&event.target.closest('.game-page button'))gamePointerHeld=true;});
+if(typeof window!=='undefined')window.addEventListener('blur',()=>{gamePointerHeld=false;if(gameRenderPending)updateGameView();});
 function gameHeader(isHost) { if(projectorMode)return `<header class="game-header">${brand()}<strong>${esc(state.title)}</strong><span class="badge">Код ${state.code}</span><button class="outline small" data-action="fullscreen">⛶ Полный экран</button></header>`; return `<header class="game-header">${brand()}<span class="game-title">${esc(state.title)}</span><span class="badge">${state.code}</span><button class="outline small" data-action="${isHost?'dashboard':'leave'}">${isHost?'← В админку':'Выйти'}</button></header>`; }
 function renderGame() {
   if(state.mode==='bluff'&&!['lobby','finished'].includes(state.status))return renderBluffGame();
@@ -110,7 +126,7 @@ app.addEventListener('click',async e=>{
     if (action==='sessions') await dashboard('sessions');
     if(action==='add-category'){captureDraft();dialogCategory();}
     if(action==='remove-image'){captureDraft();draft.questions[button.dataset.index].image=null;drawEditor();}
-    if(action==='select-cell'){busy=true;await api('control',{room:activeRoom,command:'select',index:Number(button.dataset.index)});stopPoll();await poll();}
+    if(action==='select-cell'){busy=true;button.disabled=true;stopPoll();await api('control',{room:activeRoom,command:'select',version:state.version,index:Number(button.dataset.index)});await poll();}
     if(action==='projector'){const u=new URL(location.href);u.search='';u.searchParams.set('projector',state.projectorToken);window.open(u.href,'_blank','noopener');}
     if(action==='fullscreen')await document.documentElement.requestFullscreen();
     if (action==='new') editor();
@@ -127,10 +143,10 @@ app.addEventListener('click',async e=>{
     if (action==='remove-question') { captureDraft(); if(draft.questions.length===1) throw Error('В опроснике должен остаться хотя бы один вопрос.'); draft.questions.splice(Number(button.dataset.index),1);drawEditor(); }
     if (action==='options') { captureDraft(); const q=draft.questions[button.dataset.index]; q.options=q.options.length===4?q.options.slice(0,2):[...q.options,...Array(4-q.options.length).fill('')]; if(q.correct>=q.options.length) q.correct=0;drawEditor(); }
     if (action==='copy') { const input=document.querySelector('#invite-link'); try { await navigator.clipboard.writeText(input.value);toast('Ссылка скопирована'); } catch {input.select();toast('Ссылка выделена. Нажмите Ctrl+C, чтобы скопировать.');} }
-    if (action==='control') { busy=true; await api('control',{room:activeRoom,command:button.dataset.command,...(state?.mode==='bluff'?{round:state.round,phase:state.status}:{})}); stopPoll(); await poll(); }
+    if (action==='control') { busy=true;button.disabled=true;stopPoll();await api('control',{room:activeRoom,version:state.version,command:button.dataset.command,...(state?.mode==='bluff'?{round:state.round,phase:state.status}:{})});await poll(); }
     if (action==='end-game') confirmDialog('Завершить игру?','Участники увидят итоговую таблицу результатов.',async()=>{await api('control',{room:activeRoom,command:'finish'});stopPoll();await poll();});
     if (action==='answer') { busy=true;button.disabled=true;await api('answer',{choice:Number(button.dataset.choice),index:state.index},true);stopPoll();await poll(); }
-  } catch(e) { toast(e.message); } finally {busy=false;}
+  } catch(e) { toast(e.message); } finally {busy=false;if(['control','select-cell','answer'].includes(action)){button.disabled=false;updateGameView();if(!pollTimer)await poll();}}
 });
 app.addEventListener('change',e=>{ if(page==='editor'&&(e.target.name?.startsWith('type-')||e.target.name==='mode')) {captureDraft();drawEditor();} });
 app.addEventListener('input',e=>{if(e.target.id==='search') {const pos=e.target.selectionStart;filter=e.target.value;drawDashboard();const input=document.querySelector('#search');input.focus();input.setSelectionRange(pos,pos);} });

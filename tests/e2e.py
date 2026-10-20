@@ -86,13 +86,13 @@ with tempfile.TemporaryDirectory(prefix='pulse-test-') as tmp:
         guest.call('answer', {'choice': 0, 'index': 0})
         guest.call('answer', {'choice': 1, 'index': 0}, expected=409)
         before = guest.call('state')
-        assert before['counts'] == [] and 'points' not in before['answer'] and before['players'][0]['score'] == 0
+        assert before['status']=='results' and before['question']['correct']==0 and before['answer']['points']>0
         host.call('control', {'room': room['id'], 'command': 'reveal'})
         results = guest.call('state')
         assert results['counts'] == [1, 0] and results['question']['correct'] == 0
         score = results['players'][0]['score']
         assert 500 <= score <= 1000
-        guest.call('answer', {'choice': 0, 'index': 0}, expected=400)
+        guest.call('answer', {'choice': 0, 'index': 0}, expected=409)
         # Editing the template never changes an existing room's questions.
         host.call('save', {'id': quiz['id'], 'title': 'Изменено', 'questions': [questions[0]]})
         host.call('control', {'room': room['id'], 'command': 'next'})
@@ -102,7 +102,7 @@ with tempfile.TemporaryDirectory(prefix='pulse-test-') as tmp:
         expired = guest.call('state')
         assert expired['status'] == 'results' and expired['counts'] == [0, 1]
         assert expired['players'][0]['score'] == score
-        guest.call('answer', {'choice': 0, 'index': 1}, expected=400)
+        guest.call('answer', {'choice': 0, 'index': 1}, expected=409)
         host.call('control', {'room': room['id'], 'command': 'next'})
         assert guest.call('state')['status'] == 'finished'
         stranger.call('join', {'code': room['code'], 'name': 'Поздний'}, expected=400)

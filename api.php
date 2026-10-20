@@ -49,7 +49,7 @@ try {
         $input=json_decode(file_get_contents('php://input'),true);
         if (!is_array($input)) fail('Некорректный запрос.');
         if (!in_array($action,['join','answer','bluff_select','bluff_lie','bluff_vote','receive_marathon'],true) && !hash_equals($csrf,$_SERVER['HTTP_X_CSRF_TOKEN']??'')) fail('Обновите страницу и повторите.',403);
-    } elseif (!in_array($action,['bootstrap','quizzes','state','image','catalog','directory','assessments','room_participants'],true)) fail('Требуется POST.',405);
+    } elseif (!in_array($action,['bootstrap','quizzes','state','image','catalog','directory','assessments','room_participants','forms','form_get','form_results'],true)) fail('Требуется POST.',405);
     communityHandle($action,$input);
     if ($action==='image') {
         $img=query('SELECT * FROM images WHERE id=?',[$_GET['id']??''])->fetch(); if(!$img)fail('Изображение не найдено.',404);
@@ -165,15 +165,18 @@ try {
         if($player&&!empty($player['user_id'])&&(!$me||$player['user_id']!==$me['id']))fail('Войдите в аккаунт участника этой игры.',403);
         if(!$player&&!$projector&&!communityOwn($room))fail('Комната не найдена.',404);
         if($action==='control'&&($player||$projector||!communityOwn($room)))fail('Управлять игрой может только её ведущий.',403);
+        if($action==='control'&&isset($input['version'])&&(int)$input['version']!==(int)$room['control_version'])fail('Экран игры уже изменился. Загружено актуальное состояние.',409);
         $quiz=json_decode($room['quiz'],true); $index=(int)$room['current_index']; $question=$quiz['questions'][$index]??null;
         $meta=query('SELECT * FROM room_meta WHERE room_id=?',[$roomId])->fetch();
         if(!$meta){query('INSERT INTO room_meta(room_id,projector_token) VALUES (?,?)',[$roomId,bin2hex(random_bytes(24))]);$meta=query('SELECT * FROM room_meta WHERE room_id=?',[$roomId])->fetch();}
-        if(($quiz['mode']??'classic')==='bluff'){require __DIR__.'/assets/bluff.php';$result=bluffHandle($action,$input,$room,$quiz,$meta,$player,$projector);if($action==='control'){ $fresh=query('SELECT * FROM rooms WHERE id=?',[$roomId])->fetch();if($fresh['status']==='finished')syncRoomReport($fresh); }$db->exec('COMMIT');out($result);}
+        if(($quiz['mode']??'classic')==='bluff'){require __DIR__.'/assets/bluff.php';if($action==='control')query('UPDATE rooms SET control_version=control_version+1 WHERE id=?',[$roomId]);$result=bluffHandle($action,$input,$room,$quiz,$meta,$player,$projector);if($action==='control'){ $fresh=query('SELECT * FROM rooms WHERE id=?',[$roomId])->fetch();if($fresh['status']==='finished')syncRoomReport($fresh); }$db->exec('COMMIT');out($result);}
         if(str_starts_with($action,'bluff_'))fail('Это действие доступно только в Бредовухе.');
         $played=json_decode($meta['played'],true);$boardMode=($quiz['mode']??'classic')==='board';
-        if ($room['status']==='question' && microtime(true)>=(float)$room['deadline']) { query("UPDATE rooms SET status='results' WHERE id=?",[$roomId]); $room['status']='results'; }
+        if ($room['status']==='question' && (microtime(true)>=(float)$room['deadline']||((int)query('SELECT count(*) FROM players WHERE room_id=?',[$roomId])->fetchColumn()>0&&(int)query('SELECT count(*) FROM answers WHERE room_id=? AND question_index=?',[$roomId,$index])->fetchColumn()>=(int)query('SELECT count(*) FROM players WHERE room_id=?',[$roomId])->fetchColumn()))) { query("UPDATE rooms SET status='results',control_version=control_version+1 WHERE id=?",[$roomId]); $room['status']='results';$room['control_version']++; }
         if ($action==='control') {
             hostOnly(); $command=$input['command']??'';
+            if($command==='reveal'&&$room['status']==='results'){$db->exec('COMMIT');out(['ok'=>true]);}
+            query('UPDATE rooms SET control_version=control_version+1 WHERE id=?',[$roomId]);
             if ($command==='next') {
                 if (!in_array($room['status'],['lobby','results'],true)) fail('Сначала покажите результаты текущего вопроса.');
                 if($boardMode){query('UPDATE rooms SET status=? WHERE id=?',[count($played)>=count($quiz['questions'])?'finished':'board',$roomId]);$fresh=query('SELECT * FROM rooms WHERE id=?',[$roomId])->fetch();if($fresh['status']==='finished')syncRoomReport($fresh);$db->exec('COMMIT');out(['ok'=>true]);}
@@ -192,6 +195,7 @@ try {
             $db->exec('COMMIT'); out(['ok'=>true]);
         }
         if ($action==='answer') {
+            if((int)($input['index']??-1)===$index&&query('SELECT choice FROM answers WHERE player_id=? AND question_index=?',[$player['id'],$index])->fetch())fail('Ваш ответ уже принят.',409);
             if ($room['status']!=='question' || (int)($input['index']??-1)!==$index) fail('Время ответа истекло.');
             $choice=filter_var($input['choice']??null,FILTER_VALIDATE_INT);
             if ($choice===false || $choice===null || $choice<0 || $choice>=count($question['options'])) fail('Выберите вариант ответа.');
@@ -199,7 +203,9 @@ try {
             $maxPoints=(int)($question['points']??1000);
             $points=$question['type']==='quiz' && $choice===$question['correct'] ? (($quiz['scoring']??'speed')==='fixed'?$maxPoints:(int)round($maxPoints*(.5+.5*max(0,((float)$room['deadline']-microtime(true))/$question['seconds'])))) : 0;
             query('INSERT INTO answers VALUES (?,?,?,?,?,?)',[$player['id'],$roomId,$index,$choice,$points,microtime(true)]);
-            query('UPDATE players SET score=score+? WHERE id=?',[$points,$player['id']]); $db->exec('COMMIT'); out(['ok'=>true]);
+            query('UPDATE players SET score=score+? WHERE id=?',[$points,$player['id']]);
+            if((int)query('SELECT count(*) FROM answers WHERE room_id=? AND question_index=?',[$roomId,$index])->fetchColumn()>=(int)query('SELECT count(*) FROM players WHERE room_id=?',[$roomId])->fetchColumn())query("UPDATE rooms SET status='results',control_version=control_version+1 WHERE id=?",[$roomId]);
+            $db->exec('COMMIT'); out(['ok'=>true]);
         }
         $players=query('SELECT id,name,score FROM players WHERE room_id=? ORDER BY score DESC,name ASC',[$roomId])->fetchAll();
         $counts=$question?array_fill(0,count($question['options']),0):[];
@@ -207,7 +213,7 @@ try {
         $answer=$player?query('SELECT choice,points FROM answers WHERE player_id=? AND question_index=?',[$player['id'],$index])->fetch():null;
         $revealed=in_array($room['status'],['results','finished'],true);
         if ($question && !$revealed) unset($question['correct'],$question['reference']);
-        if ($player && !$revealed) {
+        if (($player||$projector) && !$revealed) {
             $counts=[]; if ($answer) unset($answer['points']);
             // Current-question scores would reveal correctness before the host reveals results.
             $pending=[];
@@ -219,7 +225,7 @@ try {
         $rank=0;$lastScore=null;foreach($players as $i=>&$p){if($lastScore!==$p['score'])$rank=$i+1;$p['rank']=$rank;$lastScore=$p['score'];}unset($p);
         $board=[];foreach($quiz['questions'] as $i=>$item)$board[]=['index'=>$i,'category'=>$item['category']??'Вопросы','points'=>$item['points']??1000,'played'=>in_array($i,$played,true)];
         $db->exec('COMMIT');
-        out(['id'=>$roomId,'code'=>$room['code'],'title'=>$quiz['title'],'status'=>$room['status'],'mode'=>$quiz['mode']??'classic','scoring'=>$quiz['scoring']??'speed','board'=>$board,'played'=>count($played),'projectorToken'=>$admin&&!$player&&!$projector?$meta['projector_token']:null,'index'=>$index,'total'=>count($quiz['questions']),'question'=>$question,'remaining'=>$room['status']==='question'?max(0,(float)$room['deadline']-microtime(true)):0,'players'=>$players,'counts'=>$counts,'answered'=>(int)query('SELECT count(*) FROM answers WHERE room_id=? AND question_index=?',[$roomId,$index])->fetchColumn(),'answer'=>$answer?:null,'playerId'=>$player['id']??null]);
+        out(['version'=>(int)$room['control_version'],'id'=>$roomId,'code'=>$room['code'],'title'=>$quiz['title'],'status'=>$room['status'],'mode'=>$quiz['mode']??'classic','scoring'=>$quiz['scoring']??'speed','board'=>$board,'played'=>count($played),'projectorToken'=>$admin&&!$player&&!$projector?$meta['projector_token']:null,'index'=>$index,'total'=>count($quiz['questions']),'question'=>$question,'remaining'=>$room['status']==='question'?max(0,(float)$room['deadline']-microtime(true)):0,'players'=>$players,'counts'=>$counts,'answered'=>(int)query('SELECT count(*) FROM answers WHERE room_id=? AND question_index=?',[$roomId,$index])->fetchColumn(),'answer'=>$answer?:null,'playerId'=>$player['id']??null]);
     }
     fail('Неизвестное действие.',404);
 } catch(Throwable $e) { if (isset($db) && $db->inTransaction()) $db->rollBack(); error_log((string)$e); fail('Ошибка сервера. Повторите попытку.',500); }

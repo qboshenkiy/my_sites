@@ -25,7 +25,7 @@ const fs=require('node:fs');const path=require('node:path');
   await page.locator('.report-menu-button').click();assert.equal(await page.locator('[data-action="participants"]').isVisible(),false);
   await page.click('[data-action="report-save"]');await page.waitForFunction(()=>document.querySelector('#report-save-state')?.textContent==='Ведомость сохранена');
   await page.click('[data-action="report-open-results"]');await page.waitForSelector('.assessment-list');
-  assert.match(await page.textContent('.assessment-list'),/Из прошедшей игры/);assert.match(await page.textContent('.assessment-list'),/75%/);
+  assert.match(await page.textContent('.assessment-list'),/Из игры/);assert.match(await page.textContent('.assessment-list'),/75%/);
   assert.deepEqual(errors,[]);console.log('PASS: report history, account chooser, reassignment, automatic grade sheet and 320/390/1280px layouts');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});

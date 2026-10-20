@@ -12,7 +12,7 @@ const fs=require('node:fs');const path=require('node:path');
   await page.fill('#auth-form input[name=password]','testing-admin-password');await page.click('#auth-form [type=submit]');
   await page.waitForSelector('[data-action="assessments"]');await page.click('[data-action="assessments"]');
   await page.waitForSelector('[data-action="new-assessment"]');await page.click('[data-action="new-assessment"]');
-  await page.waitForSelector('#assessment-form');
+  await page.waitForSelector('#assessment-form');await page.click('[data-grade-all]');
   await page.fill('[name=title]','Проверка ведомости с телефона');
   await page.fill('[name=held_on]','2026-10-19');
   await page.fill('#max-points','1000');
@@ -24,7 +24,7 @@ const fs=require('node:fs');const path=require('node:path');
   for(const width of [320,390,1280]){
    await page.setViewportSize({width,height:900});
    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'page overflow');
-   assert.equal(await page.locator('[data-action="assessments"]').first().isVisible(),true);
+   assert.equal(await page.locator('.report-menu-button').isVisible(),width<=760);
   }
   await page.setViewportSize({width:390,height:844});
   await page.locator('.grade-table').evaluate(table=>{table.parentElement.scrollLeft=0;});

@@ -77,7 +77,11 @@ with tempfile.TemporaryDirectory(prefix='pulse-report-') as tmp:
         save();assert db.execute('SELECT * FROM answers').fetchall()==original
         assert [row[0] for row in db.execute('SELECT score FROM players WHERE room_id=? ORDER BY name',(room['id'],))]==[750,650,0]
         grade=admin.call('assessments')['assessments'][0]
-        admin.call('save_assessment',dict(grade,scores=[]),409)
+        extra=Client(url).register('Дополнительный участник','extra_reader')
+        admin.call('save_assessment',dict(grade,scores=[*grade['scores'],{'user_id':extra,'points':0,'note':'Добавлен вручную'}]))
+        save()
+        revised=next(a for a in admin.call('assessments')['assessments'] if a['id']==report)
+        assert revised['source_edited']==1 and len(revised['scores'])==4
         foreign=readers[0].call('create_room',{'id':readers[0].call('save',fixture)['id']})
         admin.call('room_participants&room='+foreign['id'],status=404)
         admin.call('link_room_players',{'room':foreign['id'],'revision':0,'links':[]},404)
