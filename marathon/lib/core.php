@@ -30,6 +30,7 @@ function db(): PDO {
         if(!in_array('chapters_manual',$columns,true))$db->exec('ALTER TABLE reports ADD COLUMN chapters_manual INTEGER NOT NULL DEFAULT 0');
         if(!in_array('days_manual',$columns,true))$db->exec('ALTER TABLE reports ADD COLUMN days_manual INTEGER');
         if(!in_array('chapters_override',$columns,true))$db->exec('ALTER TABLE reports ADD COLUMN chapters_override INTEGER');
+        if(!in_array('reading_on',$columns,true))$db->exec('ALTER TABLE reports ADD COLUMN reading_on TEXT');
         $db->exec('CREATE TABLE IF NOT EXISTS week_plans(week INTEGER PRIMARY KEY,chapters INTEGER NOT NULL DEFAULT 7,reopened INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS reading_entries(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),week INTEGER NOT NULL,date TEXT NOT NULL,chapters INTEGER NOT NULL,title TEXT NOT NULL,note TEXT NOT NULL,actor_id TEXT NOT NULL REFERENCES users(id),source TEXT NOT NULL,created_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS migrations(version INTEGER PRIMARY KEY,created_at INTEGER NOT NULL);');
@@ -82,7 +83,7 @@ function legacyStaff(): array {
 }
 function weekResults(string $id): array {
     $c=calendar($id);$reports=sql('SELECT r.*,u.name AS editor FROM reports r JOIN users u ON u.id=r.editor_id WHERE r.user_id=?',[$id])->fetchAll();
-    $daily=sql('SELECT week,SUM(chapters) AS chapters,COUNT(DISTINCT date) AS days FROM reading_entries WHERE user_id=? GROUP BY week',[$id])->fetchAll();
+    $daily=sql('SELECT week,SUM(chapters) AS chapters,COUNT(DISTINCT date) AS days,MAX(date) AS last_date FROM reading_entries WHERE user_id=? GROUP BY week',[$id])->fetchAll();
     $rmap=[];$dmap=[];foreach($reports as $r)$rmap[(int)$r['week']]=$r;foreach($daily as $d)$dmap[(int)$d['week']]=$d;
     $completions=[];foreach(sql('SELECT * FROM week_completions WHERE user_id=?',[$id])->fetchAll() as $row)$completions[(int)$row['week']]=$row;
     $result=[];
@@ -90,18 +91,25 @@ function weekResults(string $id): array {
         $remaining=max(0,$w['goal']-$chapters);$start=new DateTimeImmutable(max($c['today'],$w['start']));$end=new DateTimeImmutable($w['end']);$daysLeft=max(0,(int)$start->diff($end)->format('%r%a')+1);
         $completed=$chapters>=$w['goal'];$completion=$completions[$n]??null;
         // Infer older completion dates without modifying or reinterpreting their chapter counts.
-        $completedOn=$completed?($completion['completed_on']??($r&&($r['chapters_manual']??0)>0?date('Y-m-d',(int)$r['updated_at']):null)):null;
+        $completedOn=$completed?($completion['completed_on']??($r&&($r['chapters_manual']??0)>0?($r['reading_on']??date('Y-m-d',(int)$r['updated_at'])):null)):null;
         if($completed&&!$completedOn){$entries=sql('SELECT date,chapters FROM reading_entries WHERE user_id=? AND week=? ORDER BY date,created_at,id',[$id,$n])->fetchAll();$sum=0;foreach($entries as $entry){$sum+=(int)$entry['chapters'];if($sum>=$w['goal']){$completedOn=$entry['date'];break;}}}
         $elapsed=max(0,(int)(new DateTimeImmutable($w['start']))->diff(new DateTimeImmutable($c['today']))->format('%r%a')+1);$plannedByToday=(int)ceil($w['goal']*min(7,$elapsed)/7);$overdueDays=max(0,(int)(new DateTimeImmutable($w['end']))->diff(new DateTimeImmutable($c['today']))->format('%r%a'));
         $repeats=weeklyRepeats($id,$n);$cycle=weeklyCycle($id,$n);
-        $finish=$completedOn??$c['today'];$previous=$n>1?($result[$n-2]['completedOn']??null):null;
-        $earlier=array_values(array_filter($repeats,fn($r)=>$r['cycle']<$cycle&&!empty($r['completedOn'])));$previous=$earlier?end($earlier)['completedOn']:$previous;
-        $durationStart=$previous&&$previous<=$finish?$previous:$w['start'];
-        $autoDays=max(1,(int)(new DateTimeImmutable($durationStart))->diff(new DateTimeImmutable($finish))->format('%r%a')+($durationStart===$previous?0:1));
+        // A duration describes saved reading, never the date of viewing it.
+        // Week 2 starts at week 2, independently of earlier completions.
+        $reportOn=$r['reading_on']??null;
+        if(!$reportOn&&((int)($r['chapters_manual']??0)>0||(int)($r['chapters_override']??0)>0))$reportOn=date('Y-m-d',(int)$r['updated_at']);
+        $recordedOn=$chapters>0?max($reportOn??'', $d['last_date']??''):null;
+        if($recordedOn==='')$recordedOn=null;
+        $finish=$completedOn??$recordedOn??$c['today'];$durationStart=$w['start'];
+        $autoDays=readingPlanDays($w,$finish);
         $actualDays=$days!==null&&(int)$days>0?(int)$days:($chapters>0?$autoDays:0);
         $late=$completed&&$completedOn&&$completedOn>$w['end'];$status=$completed?($late?'completed_late':'completed'):($c['today']<$w['start']?'upcoming':($overdueDays?'overdue':'in_progress'));
-        $result[]=array_merge($w,['cycle'=>$cycle,'nextCycle'=>nextWeeklyCycle($id,$n),'completedCycles'=>count(array_filter($repeats,fn($r)=>$r['completed']))+($completed?1:0),'repeats'=>$repeats,'deletedRepeats'=>weeklyRepeats($id,$n,true),'totalChapters'=>array_sum(array_column($repeats,'chapters'))+$chapters,'week'=>$n,'chapters'=>$chapters,'chaptersOverride'=>isset($r['chapters_override'])?(int)$r['chapters_override']:null,'chaptersDaily'=>(int)($d['chapters']??0),'days'=>$actualDays,'daysAuto'=>$autoDays,'dailyMarkedDays'=>(int)($d['days']??0),'durationFrom'=>$durationStart,'daysManual'=>$days,'completed'=>$completed,'completedOn'=>$completedOn,'completedBooks'=>$completion?json_decode($completion['plan_snapshot'],true):[],'status'=>$status,'late'=>(bool)$late,'overdueDays'=>$completed&&$completedOn?max(0,(int)(new DateTimeImmutable($w['end']))->diff(new DateTimeImmutable($completedOn))->format('%r%a')):$overdueDays,'elapsedDays'=>$elapsed,'plannedByToday'=>$plannedByToday,'behindChapters'=>max(0,$plannedByToday-$chapters),'plannedPerDay'=>round($w['goal']/7,2),'actualPerDay'=>$actualDays?round($chapters/$actualDays,2):0,'remaining'=>$remaining,'daysLeft'=>$daysLeft,'perDay'=>$remaining&&$daysLeft?(int)ceil($remaining/$daysLeft):0,'recorded'=>isset($rmap[$n])||isset($dmap[$n]),'title'=>$r['title']??'','note'=>$r['note']??'','editor'=>$r['editor']??'','legacyPages'=>(int)($r['pages']??0),'legacyMinutes'=>(int)($r['minutes']??0)]);
+        $result[]=array_merge($w,['cycle'=>$cycle,'nextCycle'=>nextWeeklyCycle($id,$n),'completedCycles'=>count(array_filter($repeats,fn($r)=>$r['completed']))+($completed?1:0),'repeats'=>$repeats,'deletedRepeats'=>weeklyRepeats($id,$n,true),'totalChapters'=>array_sum(array_column($repeats,'chapters'))+$chapters,'week'=>$n,'chapters'=>$chapters,'chaptersOverride'=>isset($r['chapters_override'])?(int)$r['chapters_override']:null,'chaptersDaily'=>(int)($d['chapters']??0),'days'=>$actualDays,'daysAuto'=>$autoDays,'dailyMarkedDays'=>(int)($d['days']??0),'durationFrom'=>$durationStart,'recordedOn'=>$completedOn??$recordedOn,'daysAtToday'=>readingPlanDays($w,$c['today']),'daysManual'=>$days,'completed'=>$completed,'completedOn'=>$completedOn,'completedBooks'=>$completion?json_decode($completion['plan_snapshot'],true):[],'status'=>$status,'late'=>(bool)$late,'overdueDays'=>$completed&&$completedOn?max(0,(int)(new DateTimeImmutable($w['end']))->diff(new DateTimeImmutable($completedOn))->format('%r%a')):$overdueDays,'elapsedDays'=>$elapsed,'plannedByToday'=>$plannedByToday,'behindChapters'=>max(0,$plannedByToday-$chapters),'plannedPerDay'=>round($w['goal']/7,2),'actualPerDay'=>$actualDays?round($chapters/$actualDays,2):0,'remaining'=>$remaining,'daysLeft'=>$daysLeft,'perDay'=>$remaining&&$daysLeft?(int)ceil($remaining/$daysLeft):0,'recorded'=>isset($rmap[$n])||isset($dmap[$n]),'title'=>$r['title']??'','note'=>$r['note']??'','editor'=>$r['editor']??'','legacyPages'=>(int)($r['pages']??0),'legacyMinutes'=>(int)($r['minutes']??0)]);
     }return $result;
+}
+function readingPlanDays(array $week,string $on): int {
+    return max(1,(int)(new DateTimeImmutable($week['start']))->diff(new DateTimeImmutable($on))->format('%r%a')+1);
 }
 function stats(string $id): array {
     $weeks=weekResults($id);$legacy=legacyStats($id);$entries=sql('SELECT e.*,u.name AS actor FROM reading_entries e JOIN users u ON u.id=e.actor_id WHERE e.user_id=? ORDER BY date DESC,created_at DESC',[$id])->fetchAll();
@@ -147,7 +155,7 @@ function addTelegramReading(string $id,int $chapters,int $updateId): array {
 function syncCompletion(string $id,int $week): void {
     $w=weekResults($id)[$week-1];
     if(!$w['completed']){sql('DELETE FROM week_completions WHERE user_id=? AND week=?',[$id,$week]);return;}
-    sql('INSERT OR IGNORE INTO week_completions(user_id,week,completed_on,plan_snapshot) VALUES (?,?,?,?)',[$id,$week,calendar($id)['today'],json_encode($w['books'],JSON_UNESCAPED_UNICODE)]);
+    sql('INSERT OR IGNORE INTO week_completions(user_id,week,completed_on,plan_snapshot) VALUES (?,?,?,?)',[$id,$week,$w['recordedOn']??calendar($id)['today'],json_encode($w['books'],JSON_UNESCAPED_UNICODE)]);
 
 }
 function assertCompletionAllowed(string $actor,int $week,?string $id=null): void {
@@ -158,21 +166,30 @@ function saveWeeklyResult(string $id,string $actor,int $week,int $total,?int $da
     $w=assertWeekEditable($week,$id);$before=auditWeekSnapshot($id,$week);
     if($total<0||$total>$w['goal'])throw new DomainException('Укажите от 0 до '.$w['goal'].' глав.');
     if($days!==null&&($days<($total?1:0)||$days>3660))throw new DomainException('Неверное количество дней.');
+    if(user($actor)['role']!=='admin'&&$days!==null&&$days!==$before['daysManual'])throw new DomainException('Менять дни вручную может только администратор.');
     if($total===$w['goal'])assertCompletionAllowed($actor,$week,$id);
     $daily=(int)(sql('SELECT SUM(chapters) FROM reading_entries WHERE user_id=? AND week=?',[$id,$week])->fetchColumn()?:0);
     sql('INSERT INTO reports(user_id,week,editor_id,updated_at,chapters_manual,days_manual,title,note) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(user_id,week) DO UPDATE SET chapters_manual=excluded.chapters_manual,days_manual=excluded.days_manual,title=excluded.title,note=excluded.note,editor_id=excluded.editor_id,updated_at=excluded.updated_at',[$id,$week,$actor,time(),max(0,$total-$daily),$days,$title,$note]);
     sql('UPDATE reports SET chapters_override=? WHERE user_id=? AND week=?',[$total,$id,$week]);
+    // Editing a comment or simply reopening the form must not re-date reading.
+    $readingOn=$total>0?($total===$before['chapters']?($before['recordedOn']??calendar($id)['today']):calendar($id)['today']):null;
+    sql('UPDATE reports SET reading_on=? WHERE user_id=? AND week=?',[$readingOn,$id,$week]);
     syncCompletion($id,$week);auditWeekChange($actor,'week_result',$id,$week,'Неделя '.$week.': ручной итог '.$total.' глав'.($days!==null?', '.$days.' дн.':''),$before);return weekResults($id)[$week-1];
 }
 function completeWeek(string $id,string $actor,int $week,?int $days): array {
     $c=calendar($id);if($week<1||$week>22||!$c['calendar'][$week-1]['canComplete'])throw new DomainException('Эта неделя ещё не началась.');
     assertCompletionAllowed($actor,$week,$id);
     $w=weekResults($id)[$week-1];if($w['completed'])return $w;
-    $before=auditWeekSnapshot($id,$week);$effectiveDays=$days??$w['daysAuto'];if($effectiveDays<1||$effectiveDays>3660)throw new DomainException('Количество дней должно быть от 1 до 3660.');
+    if(user($actor)['role']!=='admin'){
+        if($days!==null)throw new DomainException('Менять дни вручную может только администратор.');
+        $days=$w['daysManual'];
+    }
+    $before=auditWeekSnapshot($id,$week);$effectiveDays=$days??readingPlanDays($w,$c['today']);if($effectiveDays<1||$effectiveDays>3660)throw new DomainException('Количество дней должно быть от 1 до 3660.');
     $daily=(int)(sql('SELECT SUM(chapters) FROM reading_entries WHERE user_id=? AND week=?',[$id,$week])->fetchColumn()?:0);
     $title=mb_substr(planBookText($w['books']),0,200);
     sql('INSERT INTO reports(user_id,week,editor_id,updated_at,chapters_manual,days_manual,title) VALUES (?,?,?,?,?,?,?) ON CONFLICT(user_id,week) DO UPDATE SET chapters_manual=excluded.chapters_manual,days_manual=excluded.days_manual,editor_id=excluded.editor_id,updated_at=excluded.updated_at',[$id,$week,$actor,time(),max(0,$w['goal']-$daily),$days,$title]);
     sql('UPDATE reports SET chapters_override=? WHERE user_id=? AND week=?',[$w['goal'],$id,$week]);
+    sql('UPDATE reports SET reading_on=? WHERE user_id=? AND week=?',[$c['today'],$id,$week]);
     syncCompletion($id,$week);auditWeekChange($actor,'complete_week',$id,$week,'Неделя '.$week.': '.$w['goal'].' глав за '.$effectiveDays.' дн.'.($c['today']>$w['end']?' (с опозданием)':''),$before);return weekResults($id)[$week-1];
 }
 function sessionStart(): void {

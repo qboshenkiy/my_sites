@@ -9,7 +9,7 @@ function nextWeeklyCycle(string $id,int $week): int {return max(weeklyCycle($id,
 function setWeeklyCycle(string $id,int $week,int $cycle): void {sql('INSERT INTO weekly_cycle_state VALUES (?,?,?) ON CONFLICT(user_id,week) DO UPDATE SET cycle=excluded.cycle',[$id,$week,$cycle]);}
 function clearCycleData(string $id,int $week,string $actor): void {
     sql('DELETE FROM reading_entries WHERE user_id=? AND week=?',[$id,$week]);sql('DELETE FROM week_completions WHERE user_id=? AND week=?',[$id,$week]);
-    sql('UPDATE reports SET chapters_manual=0,chapters_override=NULL,days_manual=NULL,editor_id=?,updated_at=? WHERE user_id=? AND week=?',[$actor,time(),$id,$week]);
+    sql('UPDATE reports SET chapters_manual=0,chapters_override=NULL,days_manual=NULL,reading_on=NULL,editor_id=?,updated_at=? WHERE user_id=? AND week=?',[$actor,time(),$id,$week]);
     sql('DELETE FROM reports WHERE user_id=? AND week=? AND pages=0 AND minutes=0 AND books=0',[$id,$week]);
 }
 function restoreCycleData(array $snapshot): void {
@@ -59,7 +59,7 @@ function startWeeklyRepeat(string $id,string $actor,int $week,int $expected): ar
     sql('INSERT INTO weekly_repeats(user_id,week,cycle,snapshot,created_at) VALUES (?,?,?,?,?)',[$id,$week,$expected,json_encode($snapshot,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR),time()]);
     sql('DELETE FROM reading_entries WHERE user_id=? AND week=?',[$id,$week]);
     sql('DELETE FROM week_completions WHERE user_id=? AND week=?',[$id,$week]);
-    sql("UPDATE reports SET chapters_manual=0,chapters_override=NULL,days_manual=NULL,editor_id=?,updated_at=? WHERE user_id=? AND week=?",[$actor,time(),$id,$week]);
+    sql("UPDATE reports SET chapters_manual=0,chapters_override=NULL,days_manual=NULL,reading_on=NULL,editor_id=?,updated_at=? WHERE user_id=? AND week=?",[$actor,time(),$id,$week]);
     sql('DELETE FROM reports WHERE user_id=? AND week=? AND pages=0 AND minutes=0 AND books=0',[$id,$week]);
     sql('DELETE FROM telegram_reading_requests WHERE user_id=?',[$id]);sql('DELETE FROM telegram_menu_states WHERE user_id=?',[$id]);
     setWeeklyCycle($id,$week,$next);

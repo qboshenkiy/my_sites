@@ -4,7 +4,7 @@ declare(strict_types=1);
 // Persist only selected business fields: never credentials, cookies or Telegram tokens.
 function auditWeekSnapshot(string $id,int $week): array {
     $w=weekResults($id)[$week-1];
-    return array_intersect_key($w,array_flip(['week','cycle','chapters','goal','days','daysManual','completed','completedOn','status','title','note','books','totalChapters','completedCycles']));
+    return array_intersect_key($w,array_flip(['week','cycle','chapters','goal','days','daysManual','recordedOn','completed','completedOn','status','title','note','books','totalChapters','completedCycles']));
 }
 function auditUserSnapshot(array $u): array {
     return array_merge(array_intersect_key($u,array_flip(['name','role','active','login','deleted_at'])),['telegramLinked'=>!empty($u['telegram_id'])]);
@@ -35,7 +35,7 @@ function auditEvents(int $cursor=0,string $direction='b',?string $target=null,in
     return ['events'=>$rows,'newer'=>$exists('>',$first)?$first:null,'older'=>$exists('<',$last)?$last:null,'timezone'=>date_default_timezone_get()];
 }
 function auditChangeLines(array $meta): array {
-    $labels=['chapters'=>'Главы','goal'=>'План глав','days'=>'Дни','daysManual'=>'Дни вручную','completed'=>'План выполнен','completedOn'=>'Дата завершения','status'=>'Статус','title'=>'Книга / название','note'=>'Комментарий','cycle'=>'Круг','totalChapters'=>'Всего глав с повторами','completedCycles'=>'Завершено кругов','books'=>'Книги плана','name'=>'Имя','role'=>'Роль','active'=>'Активен','login'=>'Логин','deleted_at'=>'Удалён','telegramLinked'=>'Telegram привязан','reopened'=>'Неделя открыта для исправлений','round'=>'Проход марафона'];
+    $labels=['chapters'=>'Главы','goal'=>'План глав','days'=>'Дни','daysManual'=>'Дни вручную','recordedOn'=>'Дата отметки','completed'=>'План выполнен','completedOn'=>'Дата завершения','status'=>'Статус','title'=>'Книга / название','note'=>'Комментарий','cycle'=>'Круг','totalChapters'=>'Всего глав с повторами','completedCycles'=>'Завершено кругов','books'=>'Книги плана','name'=>'Имя','role'=>'Роль','active'=>'Активен','login'=>'Логин','deleted_at'=>'Удалён','telegramLinked'=>'Telegram привязан','reopened'=>'Неделя открыта для исправлений','round'=>'Проход марафона'];
     $format=static function($v,string $key):string {
         if($v===null)return $key==='daysManual'?'автоматически':'не задано';
         if(is_bool($v)||in_array($key,['active','telegramLinked'],true))return $v?'да':'нет';

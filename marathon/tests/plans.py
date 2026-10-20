@@ -17,6 +17,9 @@ from xml.etree import ElementTree as ET
 ROOT=Path(__file__).resolve().parents[1]
 PHP=shutil.which('php') or 'C:/laragon/bin/php/php-8.3.33-Win32-vs16-x64/php.exe'
 BASE='http://127.0.0.1:8104/'
+with tempfile.TemporaryDirectory(prefix='marathon-reading-days-') as days_data:
+    subprocess.run([PHP,str(ROOT/'tests/reading_days.php')],env=dict(os.environ,MARATHON_DATA_DIR=days_data),check=True)
+
 class Client:
     def __init__(self):
         self.opener=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
@@ -145,7 +148,7 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         legacy=next(r for r in archive_stats['legacy']['reports'] if r['week']==2)
         assert archive_stats['pace']['chapters']==0 and archive_stats['legacy']['pages']==50
         assert legacy['title']=='Legacy title' and legacy['note']=='Legacy note'
-        # Telegram duration is completion date minus prior completion, not message-count days.
+        # Telegram duration runs from this week start to the saved mark, regardless of prior completion.
         admin.call('complete_week',{'user':other,'week':1,'days':2})
         with sqlite3.connect(Path(folder)/'marathon.sqlite') as db:
             db.execute("UPDATE week_completions SET completed_on='2026-10-15' WHERE user_id=? AND week=1",(other,))
@@ -162,13 +165,13 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         assert admin.call('profile',suffix='&user='+other)['stats']['pace']['chapters']==0
         confirm_read(preview,2101)
         duration=admin.call('profile',suffix='&user='+other)['stats']['pace']
-        assert duration['days']==7 and duration['dailyMarkedDays']==1 and duration['durationFrom']=='2026-10-15'
+        assert duration['days']==4 and duration['dailyMarkedDays']==1 and duration['durationFrom']=='2026-10-19'
         assert duration['daysManual'] is None and duration['completedOn']=='2026-10-22'
         # A later visit must not increase a completed plan's duration.
         later=dict(env,MARATHON_TEST_TODAY='2026-10-25')
         check='require $argv[1]; echo json_encode(weekResults($argv[2])[1]);'
         frozen=json.loads(subprocess.check_output([PHP,'-r',check,str(ROOT/'lib/core.php'),other],env=later,text=True))
-        assert frozen['days']==7
+        assert frozen['days']==4
         admin.call('week_result',{'user':other,'week':2,'chapters':10,'days':5})
         assert admin.call('profile',suffix='&user='+other)['stats']['pace']['days']==5
         # A single Telegram message can cover both previous and current plans.
@@ -190,7 +193,7 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         confirm_read(accepted,2103)
         split=admin.call('profile',suffix='&user='+other)['stats']
         assert split['reports'][0]['chapters']==10 and split['reports'][0]['late']
-        assert split['pace']['chapters']==10 and split['pace']['days']==1
+        assert split['pace']['chapters']==10 and split['pace']['days']==4
         assert len(split['entries'])==2 and all(e['date']=='2026-10-22' for e in split['entries'])
         replay=json.loads(subprocess.check_output([PHP,'-r',code,str(ROOT/'lib/telegram.php')],env=env,input=json.dumps(tg),text=True))
         assert replay==[] and admin.call('profile',suffix='&user='+other)['stats']['chapters']==20
@@ -230,10 +233,13 @@ with tempfile.TemporaryDirectory(prefix='marathon-books-') as folder:
         roster=admin.call('overview')['users']
         assert {aid,uid,other}.issubset({u['id'] for u in roster})
         assert next(u for u in roster if u['id']==uid)['weekly'][0]['chapters']==10
-        reader.call('week_result',{'week':2,'chapters':6,'days':2})
+        reader.call('week_result',{'week':2,'chapters':6,'days':2},403)
+        reader.call('week_result',{'week':2,'chapters':6})
         admin.call('week_result',{'week':2,'chapters':4,'days':2})
         admin.call('update_user',{'user':uid,'role':'admin'})
         assert reader.call('profile')['stats']['pace']['chapters']==6
+        if os.environ.get('DAYS_UI')=='1':
+            subprocess.run(['node',str(ROOT/'tests/reading_days_ui.cjs')],env=dict(env,MARATHON_DAYS_URL=BASE,MARATHON_DAYS_USER=uid),check=True,timeout=60)
         exported=admin.call('export_xlsx',suffix='&week=2')
         with zipfile.ZipFile(io.BytesIO(exported)) as archive:
             sheet=archive.read('xl/worksheets/sheet1.xml').decode()
