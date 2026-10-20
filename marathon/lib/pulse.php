@@ -35,7 +35,7 @@ function pulseHandle(string $action,?array $me): void {
         $id=$input['telegram_id']??'';
         if(!is_string($id)||!preg_match('/^[0-9]{1,20}$/',$id))fail('Некорректный Telegram.',400);
         $u=sql('SELECT * FROM users WHERE telegram_id=? AND active=1 AND deleted_at IS NULL',[$id])->fetch();
-        if(!$u)fail('Telegram не привязан к активному аккаунту марафона.',403);
+        if(!$u){http_response_code(403);send(['error'=>'Telegram не привязан к активному аккаунту марафона.','code'=>'telegram_not_linked']);}
         send(['issuer'=>pulseIssuer(),'users'=>[pulseIdentity($u)]]);
     }
     sql('CREATE TABLE IF NOT EXISTS pulse_login_codes(code_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL,epoch INTEGER NOT NULL,state TEXT NOT NULL,challenge TEXT NOT NULL,expires_at INTEGER NOT NULL)');

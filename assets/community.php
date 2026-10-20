@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/room-report.php';
 
 // Additive migration: quizzes, room snapshots and past answers stay in place.
 function communitySchema(): void {
@@ -26,6 +27,7 @@ function communitySchema(): void {
         $db->exec('CREATE INDEX IF NOT EXISTS pulse_players_user ON players(user_id,room_id); CREATE UNIQUE INDEX IF NOT EXISTS pulse_room_account ON players(room_id,user_id) WHERE user_id IS NOT NULL;');
         $db->exec('COMMIT');
     }
+    roomReportSchema();
 }
 function communityUser(?array $row): ?array {
     if (!$row) return null;
@@ -58,14 +60,25 @@ function communityUrl(string $url): string {
     if (!$p || !in_array($p['scheme']??'', ['http','https'],true) || empty($p['host']) || isset($p['user']) || isset($p['pass']) || isset($p['query']) || isset($p['fragment'])) throw new RuntimeException('Неверный адрес марафона.');
     return rtrim($url,'/');
 }
-function communityBridge(string $action,array $body=[]): array {
+function communityBridge(string $action,array $body=[],bool $throw=false): array {
     $base=communityUrl(getenv('MARATHON_URL')?:''); $key=getenv('PULSE_BRIDGE_SECRET')?:'';
-    if (strlen($key)<32) fail('Связь с марафоном ещё не настроена в GitDeck.',503);
+    if (strlen($key)<32) {
+        if($throw)throw new RuntimeException('Связь с марафоном ещё не настроена в GitDeck.',503);
+        fail('Связь с марафоном ещё не настроена в GitDeck.',503);
+    }
     $context=stream_context_create(['http'=>['method'=>'POST','header'=>"Content-Type: application/json\r\nX-Pulse-Bridge: $key\r\nConnection: close\r\n",'content'=>json_encode($body),'timeout'=>12,'ignore_errors'=>true,'follow_location'=>0], 'ssl'=>['verify_peer'=>true,'verify_peer_name'=>true]]);
     $response=@file_get_contents($base.'/api.php?action='.$action,false,$context,0,3000000);
     $status=$http_response_header[0]??'';
     $data=$response!==false?json_decode($response,true):null;
-    if (!str_contains($status,' 200 ') || !is_array($data)) fail('Марафон не подтвердил запрос. Проверьте подключение сайтов в GitDeck.',502);
+    if (!str_contains($status,' 200 ') || !is_array($data)) {
+        // Only a response from the authenticated identity endpoint means an unlinked account.
+        $unlinked=$action==='pulse_telegram_identity'&&str_contains($status,' 403 ')&&
+            (($data['code']??'')==='telegram_not_linked'||($data['error']??'')==='Telegram не привязан к активному аккаунту марафона.');
+        if($throw&&$unlinked)throw new DomainException('Telegram не привязан к активному аккаунту марафона.',403);
+        $message=$unlinked?'Telegram больше не привязан к активному аккаунту марафона. Начните вход заново.':'Не удалось проверить аккаунт в марафоне. Обновите оба сайта и проверьте их подключение в GitDeck.';
+        if($throw)throw new RuntimeException($message,502);
+        fail($message,502);
+    }
     return $data;
 }
 function communityImport(array $source): array {
@@ -82,6 +95,7 @@ function communityImport(array $source): array {
 }
 function communityHandle(string $action,array $input): void {
     global $db,$me,$admin;
+    roomReportHandle($action,$input);
     if($action==='receive_marathon'){
         $key=getenv('PULSE_BRIDGE_SECRET')?:'';
         if(strlen($key)<32||!getenv('MARATHON_URL')||!hash_equals($key,$_SERVER['HTTP_X_PULSE_BRIDGE']??''))fail('Запрос не подтверждён.',403);
@@ -165,6 +179,7 @@ function communityHandle(string $action,array $input): void {
         hostOnly();$staff=in_array($me['role'],['admin','moderator'],true);
         $rows=$staff?query('SELECT * FROM assessments ORDER BY held_on DESC,created_at DESC')->fetchAll():query('SELECT a.* FROM assessments a JOIN assessment_scores s ON s.assessment_id=a.id WHERE s.user_id=? ORDER BY a.held_on DESC,a.created_at DESC',[$me['id']])->fetchAll();
         foreach ($rows as &$a) {
+            $a['can_link']=!empty($a['source_room_id'])&&communityOwn(query('SELECT * FROM rooms WHERE id=?',[$a['source_room_id']])->fetch()?:[]);
             $scores=$staff?query('SELECT s.*,u.name FROM assessment_scores s JOIN pulse_accounts u ON u.id=s.user_id WHERE s.assessment_id=? ORDER BY u.name',[$a['id']])->fetchAll():query('SELECT s.*,u.name FROM assessment_scores s JOIN pulse_accounts u ON u.id=s.user_id WHERE s.assessment_id=? AND s.user_id=?',[$a['id'],$me['id']])->fetchAll();
             foreach ($scores as &$s) {$s['percent']=round((float)$s['points']/(float)$a['max_points']*100,2);unset($s['editor_id']);}unset($s);$a['scores']=$scores;
         }unset($a);
@@ -180,6 +195,7 @@ function communityHandle(string $action,array $input): void {
         $scores=$input['scores']??[];if(!is_array($scores)||count($scores)>20000)fail('Слишком много результатов.');
         $db->exec('BEGIN IMMEDIATE');$old=query('SELECT * FROM assessments WHERE id=?',[$id])->fetch();
         if($old && (int)($input['revision']??0)!==(int)$old['revision'])fail('Ведомость уже изменена. Откройте её заново.',409);
+        if($old&&!empty($old['source_room_id']))fail('Баллы этой ведомости взяты из игры. Измените связи игроков на экране результатов игры.',409);
         $seen=[];
         foreach($scores as $s){$uid=$s['user_id']??'';$points=$s['points']??null;
             if(!is_string($uid)||isset($seen[$uid])||!query('SELECT id FROM pulse_accounts WHERE id=?',[$uid])->fetchColumn())fail('Некорректный участник.');$seen[$uid]=true;
@@ -204,10 +220,13 @@ function communityHandle(string $action,array $input): void {
         if(!$p||!communityOwn($p))fail('Участник игры не найден.',404);
         $u=query('SELECT * FROM pulse_accounts WHERE id=?',[$input['user_id']??''])->fetch();if(!$u)fail('Аккаунт не найден.',404);
         if(query('SELECT id FROM players WHERE room_id=? AND user_id=? AND id<>?',[$p['room_id'],$u['id'],$p['id']])->fetchColumn())fail('Этот аккаунт уже связан с другим участником этой игры.',409);
-        communityAudit('link_player',$p['id'],['before'=>$p['user_id'],'after'=>$u['id']]);query('UPDATE players SET user_id=? WHERE id=?',[$u['id'],$p['id']]);$db->exec('COMMIT');out(['ok'=>true]);
+        communityAudit('link_player',$p['id'],['before'=>$p['user_id'],'after'=>$u['id']]);query('UPDATE players SET user_id=? WHERE id=?',[$u['id'],$p['id']]);
+        query('UPDATE rooms SET link_revision=link_revision+1 WHERE id=?',[$p['room_id']]);
+        $report=syncRoomReport(query('SELECT * FROM rooms WHERE id=?',[$p['room_id']])->fetch());$db->exec('COMMIT');out(['ok'=>true]+$report);
     }
     if ($action==='room_participants') {
         communityStaff();$r=query('SELECT * FROM rooms WHERE id=?',[$_GET['room']??''])->fetch();if(!$r||!communityOwn($r))fail('Игра не найдена.',404);
-        out(['players'=>query('SELECT p.id,p.name,p.score,p.user_id,a.name AS account_name FROM players p LEFT JOIN pulse_accounts a ON a.id=p.user_id WHERE p.room_id=? ORDER BY p.score DESC,p.name',[$r['id']])->fetchAll()]);
+        $quiz=json_decode($r['quiz'],true);$maximum=roomReportMaximum($r);$report=query('SELECT id,max_points,source_max_override FROM assessments WHERE source_room_id=?',[$r['id']])->fetch();
+        out(['room'=>['id'=>$r['id'],'title'=>$quiz['title'],'code'=>$r['code'],'status'=>$r['status'],'created_at'=>(int)$r['created_at'],'revision'=>(int)$r['link_revision']], 'maximum'=>$maximum,'report'=>$report?:null,'players'=>query('SELECT p.id,p.name,p.score,p.user_id,a.name AS account_name FROM players p LEFT JOIN pulse_accounts a ON a.id=p.user_id WHERE p.room_id=? ORDER BY p.score DESC,p.name',[$r['id']])->fetchAll()]);
     }
 }

@@ -22,8 +22,13 @@ function pulseTelegramUpdate(array $update,string $botId): array {
         if(!$request||$request['consumed']||$request['expires_at']<time())$reply['text']='Запрос уже использован или истёк. Начните вход заново на сайте Пульса.';
         else{
             // Network work is deliberately outside the SQLite write transaction.
-            try{$identity=communityBridge('pulse_telegram_identity',['telegram_id'=>$telegramId]);}
-            catch(Throwable $error){$identity=null;$reply['text']='Этот Telegram не подтверждён марафоном. Сначала привяжите его к своему аккаунту марафона или обратитесь к администратору.';}
+            try{$identity=communityBridge('pulse_telegram_identity',['telegram_id'=>$telegramId],true);}
+            catch(Throwable $error){
+                $identity=null;
+                $reply['text']=$error instanceof DomainException&&$error->getCode()===403
+                    ?'Этот Telegram не привязан к активному аккаунту марафона. Проверьте привязку в профиле марафона или обратитесь к администратору.'
+                    :'Не удалось связаться с марафоном и проверить аккаунт. Это не означает, что Telegram не привязан. Администратору: обновите «Марафон чтения» и «Пульс» в GitDeck, затем проверьте подключение сайтов. После этого начните вход заново на сайте Пульса.';
+            }
             if($identity){
                 if(!$callback){
                     $reply['text']='Подтвердить вход в Пульс для «'.$identity['users'][0]['name'].'»?' . "\nПодтверждайте только вход, который начали сами. Пароль не нужен.";

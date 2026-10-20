@@ -88,7 +88,7 @@ try {
     if ($action==='quizzes') {
         hostOnly(); $quizzes=query('SELECT * FROM quizzes WHERE owner_id=? OR (owner_id IS NULL AND CAST(? AS INTEGER)=1) ORDER BY created_at DESC',[$me['id'],$me['role']==='admin'?1:0])->fetchAll();
         foreach ($quizzes as &$q) { $raw=json_decode($q['questions'],true);$q['questions']=$raw['questions']??$raw;$q['mode']=$raw['mode']??'classic';$q['scoring']=$raw['scoring']??'speed'; }
-        $rooms=query('SELECT id,code,status,created_at,quiz FROM rooms WHERE owner_id=? OR (owner_id IS NULL AND CAST(? AS INTEGER)=1) ORDER BY created_at DESC LIMIT 100',[$me['id'],$me['role']==='admin'?1:0])->fetchAll();
+        $rooms=query('SELECT r.id,r.code,r.status,r.created_at,r.quiz,(SELECT count(*) FROM players p WHERE p.room_id=r.id) AS player_count,(SELECT count(*) FROM players p WHERE p.room_id=r.id AND p.user_id IS NOT NULL) AS linked_count,(SELECT id FROM assessments a WHERE a.source_room_id=r.id) AS assessment_id FROM rooms r WHERE owner_id=? OR (owner_id IS NULL AND CAST(? AS INTEGER)=1) ORDER BY created_at DESC LIMIT 100',[$me['id'],$me['role']==='admin'?1:0])->fetchAll();
         foreach ($rooms as &$r) { $r['title']=json_decode($r['quiz'],true)['title']; unset($r['quiz']); }
         out(['quizzes'=>$quizzes,'rooms'=>$rooms]);
     }
@@ -168,7 +168,7 @@ try {
         $quiz=json_decode($room['quiz'],true); $index=(int)$room['current_index']; $question=$quiz['questions'][$index]??null;
         $meta=query('SELECT * FROM room_meta WHERE room_id=?',[$roomId])->fetch();
         if(!$meta){query('INSERT INTO room_meta(room_id,projector_token) VALUES (?,?)',[$roomId,bin2hex(random_bytes(24))]);$meta=query('SELECT * FROM room_meta WHERE room_id=?',[$roomId])->fetch();}
-        if(($quiz['mode']??'classic')==='bluff'){require __DIR__.'/assets/bluff.php';$result=bluffHandle($action,$input,$room,$quiz,$meta,$player,$projector);$db->exec('COMMIT');out($result);}
+        if(($quiz['mode']??'classic')==='bluff'){require __DIR__.'/assets/bluff.php';$result=bluffHandle($action,$input,$room,$quiz,$meta,$player,$projector);if($action==='control'){ $fresh=query('SELECT * FROM rooms WHERE id=?',[$roomId])->fetch();if($fresh['status']==='finished')syncRoomReport($fresh); }$db->exec('COMMIT');out($result);}
         if(str_starts_with($action,'bluff_'))fail('Это действие доступно только в Бредовухе.');
         $played=json_decode($meta['played'],true);$boardMode=($quiz['mode']??'classic')==='board';
         if ($room['status']==='question' && microtime(true)>=(float)$room['deadline']) { query("UPDATE rooms SET status='results' WHERE id=?",[$roomId]); $room['status']='results'; }
@@ -176,7 +176,7 @@ try {
             hostOnly(); $command=$input['command']??'';
             if ($command==='next') {
                 if (!in_array($room['status'],['lobby','results'],true)) fail('Сначала покажите результаты текущего вопроса.');
-                if($boardMode){query('UPDATE rooms SET status=? WHERE id=?',[count($played)>=count($quiz['questions'])?'finished':'board',$roomId]);$db->exec('COMMIT');out(['ok'=>true]);}
+                if($boardMode){query('UPDATE rooms SET status=? WHERE id=?',[count($played)>=count($quiz['questions'])?'finished':'board',$roomId]);$fresh=query('SELECT * FROM rooms WHERE id=?',[$roomId])->fetch();if($fresh['status']==='finished')syncRoomReport($fresh);$db->exec('COMMIT');out(['ok'=>true]);}
                 $index++;
                 if ($index>=count($quiz['questions'])) { query("UPDATE rooms SET status='finished' WHERE id=?",[$roomId]); }
                 else { $now=microtime(true); query("UPDATE rooms SET status='question',current_index=?,started_at=?,deadline=? WHERE id=?",[$index,$now,$now+$quiz['questions'][$index]['seconds'],$roomId]); }
@@ -188,6 +188,7 @@ try {
             } elseif ($command==='reveal' && $room['status']==='question') query("UPDATE rooms SET status='results' WHERE id=?",[$roomId]);
             elseif ($command==='finish') query("UPDATE rooms SET status='finished' WHERE id=?",[$roomId]);
             else fail('Это действие сейчас недоступно.');
+            $fresh=query('SELECT * FROM rooms WHERE id=?',[$roomId])->fetch();if($fresh['status']==='finished')syncRoomReport($fresh);
             $db->exec('COMMIT'); out(['ok'=>true]);
         }
         if ($action==='answer') {

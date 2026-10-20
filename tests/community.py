@@ -109,13 +109,19 @@ with tempfile.TemporaryDirectory(prefix='pulse-community-') as tmp:
         telegram=Client(purl);telegram.boot();request=telegram.call('pulse_telegram_request',{})
         assert request['url'].startswith('https://t.me/pulse_fixture_bot?start=pl_')
         code_php=r'''function query(string $sql,array $args=[]):PDOStatement{global $db;$s=$db->prepare($sql);$s->execute($args);return $s;} function fail(string $m,int $s=400):never{throw new RuntimeException($m,$s);} $db=new PDO('sqlite:'.getenv('QUIZ_DATA_DIR').'/quiz.sqlite',null,null,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC]);require $argv[1];require $argv[2];echo json_encode(pulseTelegramUpdate(json_decode(stream_get_contents(STDIN),true),'999999'));'''
-        def bot(update):
-            return json.loads(subprocess.check_output([PHP,'-r',code_php,str(ROOT/'assets/community.php'),str(ROOT/'assets/pulse-telegram.php')],env=env,input=json.dumps(update),text=True))
+        def bot(update,override=None):
+            return json.loads(subprocess.check_output([PHP,'-r',code_php,str(ROOT/'assets/community.php'),str(ROOT/'assets/pulse-telegram.php')],env=dict(env,**(override or {})),input=json.dumps(update),text=True))
         preview=bot({'update_id':9001,'message':{'from':{'id':123456},'chat':{'type':'private','id':123456},'text':'/start pl_'+request['token']}})
         assert 'Подтвердить вход в Пульс' in json.dumps(preview,ensure_ascii=False)
         assert telegram.call('pulse_telegram_status',{'token':request['token']})['pending']
         def approval(update_id,sender=123456):return {'update_id':update_id,'callback_query':{'id':str(update_id),'from':{'id':sender},'message':{'chat':{'type':'private','id':sender}},'data':'pl_'+request['token']}}
-        bot(approval(9002,777777));assert telegram.call('pulse_telegram_status',{'token':request['token']})['pending']
+        unlinked=bot(approval(9002,777777));assert 'не привязан к активному аккаунту' in json.dumps(unlinked,ensure_ascii=False)
+        assert telegram.call('pulse_telegram_status',{'token':request['token']})['pending']
+        # An old/wrong endpoint, a wrong shared key or an unavailable source is NOT an unlinked account.
+        for update_id,override in [(9010,{'MARATHON_URL':purl}),(9011,{'PULSE_BRIDGE_SECRET':'wrong-key-'+'z'*40}),(9012,{'MARATHON_URL':'http://127.0.0.1:1'})]:
+            unavailable=bot(approval(update_id),override);text=json.dumps(unavailable,ensure_ascii=False)
+            assert 'Не удалось связаться с марафоном' in text and 'обновите' in text
+            assert telegram.call('pulse_telegram_status',{'token':request['token']})['pending']
         bot(approval(9003));assert bot(approval(9003))==[]
         guest.call('pulse_telegram_status',{'token':request['token']},403)
         telegram.call('pulse_telegram_status',{'token':request['token']});signed=telegram.boot()['user']
@@ -124,7 +130,7 @@ with tempfile.TemporaryDirectory(prefix='pulse-community-') as tmp:
         retry=telegram.call('pulse_telegram_request',{});request=retry;bot(approval(9004))
         with closing(sqlite3.connect(marathon/'marathon.sqlite')) as db:db.execute('UPDATE users SET telegram_id=NULL,session_epoch=session_epoch+1 WHERE id=?',(ext,));db.commit()
         telegram.call('pulse_telegram_status',{'token':retry['token']},502)
-        print('PASS: push export from marathon, dedicated Pulse bot confirmation, shared identity, wrong sender/session/replay and unlink protection')
+        print('PASS: push export, dedicated bot confirmation, shared identity, wrong sender/session/replay, unlink protection and distinct bridge failure messages')
         # A session deactivated by directory sync must stop authoring immediately.
         with closing(sqlite3.connect(marathon/'marathon.sqlite')) as db:db.execute("UPDATE users SET active=0 WHERE role='admin'");db.commit()
         admin.call('sync_marathon',{});assert b.boot()['user'] is None;b.call('quizzes',status=401)
