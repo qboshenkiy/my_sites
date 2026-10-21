@@ -30,11 +30,12 @@ function formScore(array $form,array $answers,bool $allowMissing=false): array {
     if(!$allowMissing&&count($answers)!==count($questions))fail('Ответьте на все вопросы.');
     $points=0;$max=0;$valid=[];
     foreach($questions as $i=>$q){
-        $choice=$answers[$i]??null;
-        if($choice!==null&&(!is_int($choice)||!array_key_exists($choice,$q['options'])))fail('Некорректный ответ на вопрос '.($i+1).'.');
+        $choice=$answers[$i]??null;$selected=$choice===null?[]:(is_array($choice)?$choice:[$choice]);
+        if($choice!==null&&(!$selected||array_filter($selected,fn($n)=>!is_int($n)||!array_key_exists($n,$q['options']))))fail('Некорректный ответ на вопрос '.($i+1).'.');
+        $selectedUnique=array_values(array_unique($selected));sort($selectedUnique);if(count($selected)!==count($selectedUnique))fail('Некорректный ответ на вопрос '.($i+1).'.');
         if(!$allowMissing&&$choice===null)fail('Ответьте на вопрос '.($i+1).'.');
-        $valid[]=$choice;
-        if($q['type']==='quiz'){$max+=(int)$q['points'];if($choice!==null&&$choice===$q['correct'])$points+=(int)$q['points'];}
+        $valid[]=$choice===null?null:(count($selectedUnique)===1?$selectedUnique[0]:$selectedUnique);
+        if($q['type']==='quiz'){$max+=(int)$q['points'];$expected=$q['correct']??null;$expected=is_array($expected)?array_map('intval',$expected):[$expected===null?-1:(int)$expected];sort($expected);if($choice!==null&&$selectedUnique===$expected)$points+=(int)$q['points'];}
     }
     return ['answers'=>$valid,'points'=>$points,'max_points'=>$max];
 }
@@ -63,7 +64,7 @@ function formPublic(array $form,array|false $attempt): array {
     if($attempt&&$form['published'])$attempt=formAdjustedAttempt($form,$attempt);
     $quiz=json_decode($form['quiz'],true);$questions=[];
     foreach($quiz['questions'] as $i=>$q){
-        $safe=array_intersect_key($q,array_flip(['text','options','type','image','points','category']));
+        $safe=array_intersect_key($q,array_flip(['text','options','type','image','points','category','multiple']));
         if($attempt&&$form['published']){$safe['correct']=$q['correct'];$safe['reference']=$q['reference']??'';}
         $questions[]=$safe;
     }
@@ -111,7 +112,7 @@ function formsHandle(string $action,array $input): void {
         $q=communityQuiz((string)($input['quiz_id']??''));$quiz=json_decode($q['questions'],true);
         $quiz=is_array($quiz)&&isset($quiz['questions'])?$quiz:['questions'=>$quiz];
         if(($quiz['mode']??'classic')==='bluff')fail('Для самостоятельного теста нужны вопросы с вариантами ответов.');
-        foreach($quiz['questions'] as &$question){$question['points']??=1000;$question['type']??='quiz';$question['image']??=null;}unset($question);
+        foreach($quiz['questions'] as &$question){$question['points']??=1000;$question['type']??='quiz';$question['image']??=null;$question['multiple']=!empty($question['multiple'])||(is_array($question['correct']??null)&&count($question['correct'])>1);}unset($question);
         $title=cleanText($input['title']??$q['title'],100);$description=$input['description']??$q['description'];
         if(!is_string($description)||mb_strlen($description)>1000)fail('Описание: до 1000 символов.');
         $id=bin2hex(random_bytes(8));$token=bin2hex(random_bytes(16));

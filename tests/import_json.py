@@ -65,6 +65,10 @@ with tempfile.TemporaryDirectory(prefix='pulse-import-') as folder:
         question=guest.call('state')['question'];assert question['reference']=='Источник 1:1' and question['correct']==1
         native={'id':created,'title':'Native format','questions':[{'text':'Question','type':'quiz','options':['First','Second','Third'],'correct':0,'seconds':7,'reference':'Source'}]}
         flat=host.call('import_preview',{'json':json.dumps(native)})['quiz'];assert flat['mode']=='classic' and flat['questions'][0]['seconds']==7 and len(flat['questions'][0]['options'])==3 and 'id' not in flat
+        multiple={'title':'Multi answer','questions':[{'text':'Choose both','options':['A','B','C','D','E','F'],'correct':[1,4]}]}
+        multi_preview=host.call('import_preview',{'json':json.dumps(multiple)})['quiz'];assert len(multi_preview['questions'][0]['options'])==6 and multi_preview['questions'][0]['correct']==[1,4]
+        flag_multi={'title':'Flag answers','questions':[{'text':'Choose both','options':[{'id':'a','text':'A','isCorrect':True},{'id':'b','text':'B','isCorrect':False},{'id':'c','text':'C','isCorrect':True},{'id':'d','text':'D','isCorrect':False},{'id':'e','text':'E','isCorrect':False}]}]}
+        assert host.call('import_preview',{'json':json.dumps(flag_multi)})['quiz']['questions'][0]['correct']==[0,2]
         assert host.call('save',flat)['id']!=created, 'External ids must not overwrite existing quizzes'
         classic=host.call('import_preview',{**payload,'mode':'classic','seconds':30})['quiz'];assert classic['mode']=='classic' and classic['questions'][0]['seconds']==30
         flags=fixture();del flags['categories'][0]['questions'][0]['correctAnswer'];host.call('import_preview',{'json':json.dumps(flags)})

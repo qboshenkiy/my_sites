@@ -43,26 +43,23 @@ function normalizeQuizImport(string $json,array $settings=[]): array {
                 $summary[$gi]['points'][]=1000;if(!empty($q['image']))$hasImages=true;continue;
             }
             $type=$q['type']??'quiz';if(!in_array($type,['quiz','poll'],true))throw new DomainException($where.': тип quiz или poll.');
-            $options=$q['options']??null;if(!is_array($options)||!array_is_list($options)||count($options)<2||count($options)>4)throw new DomainException($where.': нужно 2–4 варианта ответа.');
+            $options=$q['options']??null;if(!is_array($options)||!array_is_list($options)||count($options)<2||count($options)>12)throw new DomainException($where.': нужно 2–12 вариантов ответа.');
             $texts=[];$ids=[];$marked=[];$hasFlags=false;
             foreach($options as $oi=>$option){
                 $object=is_array($option);$texts[]=importQuizText($object?($option['text']??''):$option,120,$where.', вариант '.($oi+1));
                 if($object&&isset($option['id'])){if(!is_string($option['id'])&&!is_int($option['id']))throw new DomainException($where.': id варианта должен быть строкой или числом.');$id=(string)$option['id'];if(isset($ids[$id]))throw new DomainException($where.': id вариантов должны быть уникальны.');$ids[$id]=$oi;}
                 if($object&&array_key_exists('isCorrect',$option)){$hasFlags=true;if(!is_bool($option['isCorrect']))throw new DomainException($where.': isCorrect должен быть true или false.');if($option['isCorrect'])$marked[]=$oi;}
             }
-            $correct=null;
+            $correct=null;$correctIndexes=[];$fromCorrect=null;$fromAnswer=null;
             if($type==='quiz'){
-                if(array_key_exists('correct',$q))$correct=importQuizNumber($q['correct'],0,count($options)-1,$where.', correct (нумерация с 0)');
+                if(array_key_exists('correct',$q)){$rawCorrect=is_array($q['correct'])?$q['correct']:[$q['correct']];if(!$rawCorrect||!array_is_list($rawCorrect))throw new DomainException($where.': correct должен быть номером или списком номеров.');$fromCorrect=array_map(fn($v)=>importQuizNumber($v,0,count($options)-1,$where.', correct (нумерация с 0)'),$rawCorrect);$fromCorrect=array_values(array_unique($fromCorrect));if(count($fromCorrect)!==count($rawCorrect))throw new DomainException($where.': correct содержит повторяющийся вариант.');sort($fromCorrect);}
                 if(array_key_exists('correctAnswer',$q)){
-                    $answer=$q['correctAnswer'];if(!is_string($answer)&&!is_int($answer))throw new DomainException($where.': correctAnswer должен указывать id или текст варианта.');
-                    $key=(string)$answer;$found=$ids[$key]??null;
-                    if($found===null&&!$ids&&is_string($answer)&&preg_match('/^[a-d]$/i',$answer))$found=ord(strtolower($answer))-97;
-                    if($found===null){$matches=array_keys($texts,$key,true);if(count($matches)===1)$found=$matches[0];}
-                    if($found===null||$found>=count($options))throw new DomainException($where.': correctAnswer не совпадает ни с одним вариантом.');
-                    if($correct!==null&&$correct!==$found)throw new DomainException($where.': correct и correctAnswer противоречат друг другу.');$correct=$found;
+                    $rawAnswers=is_array($q['correctAnswer'])?$q['correctAnswer']:[$q['correctAnswer']];if(!$rawAnswers||!array_is_list($rawAnswers))throw new DomainException($where.': correctAnswer должен быть id, текстом или списком ответов.');$fromAnswer=[];
+                    foreach($rawAnswers as $answer){if(!is_string($answer)&&!is_int($answer))throw new DomainException($where.': correctAnswer должен указывать id или текст варианта.');$key=(string)$answer;$found=$ids[$key]??null;if($found===null&&!$ids&&is_string($answer)&&preg_match('/^[a-l]$/i',$answer))$found=ord(strtolower($answer))-97;if($found===null){$matches=array_keys($texts,$key,true);if(count($matches)===1)$found=$matches[0];}if($found===null||$found>=count($options))throw new DomainException($where.': correctAnswer не совпадает ни с одним вариантом.');$fromAnswer[]=$found;}
+                    $fromAnswer=array_values(array_unique($fromAnswer));if(count($fromAnswer)!==count($rawAnswers))throw new DomainException($where.': correctAnswer содержит повторяющийся вариант.');sort($fromAnswer);
                 }
-                if($hasFlags){if(count($marked)!==1)throw new DomainException($where.': нужен ровно один isCorrect: true.');if($correct!==null&&$correct!==$marked[0])throw new DomainException($where.': correctAnswer и isCorrect противоречат друг другу.');$correct=$marked[0];}
-                if($correct===null)throw new DomainException($where.': укажите correctAnswer или isCorrect: true.');
+                if($hasFlags){if(!$marked)throw new DomainException($where.': нужен хотя бы один isCorrect: true.');sort($marked);}
+                $sets=array_values(array_filter([$fromCorrect,$fromAnswer,$hasFlags?$marked:null],fn($v)=>$v!==null));if(!$sets)throw new DomainException($where.': укажите correctAnswer или isCorrect: true.');foreach($sets as $set)if($set!==$sets[0])throw new DomainException($where.': correct, correctAnswer и isCorrect противоречат друг другу.');$correctIndexes=$sets[0];$correct=count($correctIndexes)===1?$correctIndexes[0]:$correctIndexes;
             }
             $cat=$hasCategories?$category:importQuizText($q['category']??(in_array($mode,['board','bluff'],true)?'Вопросы':''),60,$where.', категория',in_array($mode,['board','bluff'],true));
             $points=isset($q['points'])?importQuizNumber($q['points'],1,10000,$where.', баллы'):($mode==='board'?($qi+1)*$step:1000);
@@ -72,8 +69,9 @@ function normalizeQuizImport(string $json,array $settings=[]): array {
             $reference=importQuizText($q['reference']??'',200,$where.', reference',false);
             $time=importQuizNumber($q['seconds']??$seconds,5,120,$where.', время');
             if(!empty($q['image']))$hasImages=true;
-            $valid[]=['text'=>$text,'type'=>$type,'seconds'=>$time,'options'=>$texts,'correct'=>$correct,'category'=>$cat,'points'=>$points,'image'=>null,'reference'=>$reference];
-            if($mode==='bluff'){if($type!=='quiz')throw new DomainException($where.': Бредовухе нужен правильный ответ, тип poll не подходит.');$last=count($valid)-1;$valid[$last]['truth']=$texts[$correct];$valid[$last]['aliases']=[];$valid[$last]['options']=[];$valid[$last]['correct']=null;$valid[$last]['points']=1000;}
+            $valid[]=['text'=>$text,'type'=>$type,'seconds'=>$time,'options'=>$texts,'correct'=>$correct,'multiple'=>count($correctIndexes)>1,'category'=>$cat,'points'=>$points,'image'=>null,'reference'=>$reference];
+            if($mode==='bluff'&&count($correctIndexes)>1)throw new DomainException($where.': в Бредовухе укажите один правильный ответ.');
+            if($mode==='bluff'){if($type!=='quiz')throw new DomainException($where.': Бредовухе нужен правильный ответ, тип poll не подходит.');$last=count($valid)-1;$valid[$last]['truth']=$texts[$correct];$valid[$last]['aliases']=[];$valid[$last]['options']=[];$valid[$last]['correct']=null;$valid[$last]['multiple']=false;$valid[$last]['points']=1000;}
             $summary[$gi]['points'][]=$mode==='bluff'?1000:$points;
         }
     }

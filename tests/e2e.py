@@ -105,15 +105,22 @@ with tempfile.TemporaryDirectory(prefix='pulse-test-') as tmp:
         guest.call('answer', {'choice': 0, 'index': 1}, expected=409)
         host.call('control', {'room': room['id'], 'command': 'next'})
         assert guest.call('state')['status'] == 'finished'
+        assert guest.call('state')['title'] == 'E2E викторина'
+        multi=host.call('save',{'title':'Несколько верных','scoring':'fixed','questions':[{'text':'Выберите оба числа','type':'quiz','seconds':30,'options':['2','3','5','7','11','13'],'correct':[0,4],'points':1000}]})
+        room_multi=host.call('create_room',{'id':multi['id']});guest.token=guest.call('join',{'code':room_multi['code'],'name':'Анна'})['token'];stranger.token=stranger.call('join',{'code':room_multi['code'],'name':'Борис'})['token']
+        host.call('control',{'room':room_multi['id'],'command':'next'});assert guest.call('state')['question']['multiple'] is True
+        guest.call('answer',{'choices':[0,4],'index':0});stranger.call('answer',{'choices':[0],'index':0})
+        multi_result=guest.call('state');assert multi_result['status']=='results' and multi_result['question']['correct']==[0,4] and multi_result['counts']==[2,0,0,0,1,0]
+        points={p['name']:p['score'] for p in multi_result['players']};assert points['Анна']==1000 and points['Борис']==0
         stranger.call('join', {'code': room['code'], 'name': 'Поздний'}, expected=400)
         host.call('delete', {'id': quiz['id']})
-        assert guest.call('state')['title'] == 'E2E викторина'
+        assert guest.call('state')['title'] == 'Несколько верных'
         host.call('logout', {})
         host.call('quizzes', expected=401)
         host.call('login', {'password': 'wrong-pass'}, expected=401)
         host.call('login', {'password': 'test-password-123'})
-        assert len(host.call('quizzes')['rooms']) == 1
-        print('PASS: admin auth, CSRF, quiz CRUD, room snapshot, join, hidden answers, duplicate protection, scoring, polls, deadline, final results and persistence.')
+        assert len(host.call('quizzes')['rooms']) == 2
+        print('PASS: admin auth, CSRF, quiz CRUD, room snapshot, join, hidden answers, duplicate protection, multi-answer scoring, polls, deadline, final results and persistence.')
     finally:
         if server:
             server.terminate()

@@ -49,7 +49,7 @@ with tempfile.TemporaryDirectory(prefix='pulse-forms-') as tmp:
         for tg,name in [('201','Телеграм Анна'),('202','Телеграм Борис')]:
             uid=source.call('create_user',{'name':name,'role':'participant'})['id']
             with closing(sqlite3.connect(mdir/'marathon.sqlite')) as db:db.execute('UPDATE users SET telegram_id=? WHERE id=?',(tg,uid));db.commit()
-        questions=[{'text':'2 + 2?','type':'quiz','seconds':20,'options':['4','5'],'correct':0,'points':500},
+        questions=[{'text':'Какие два числа подходят?','type':'quiz','seconds':20,'options':['4','5','6','7','8'],'correct':[0,4],'points':500},
                    {'text':'Что из этого дерево?','type':'quiz','seconds':20,'options':['Дуб','Камень'],'correct':0,'points':500}]
         quiz=admin.call('save',{'title':'Самостоятельный тест','questions':questions})['id']
         def create(**changes):return admin.call('form_create',dict(quiz_id=quiz,**changes))
@@ -58,11 +58,11 @@ with tempfile.TemporaryDirectory(prefix='pulse-forms-') as tmp:
         a.call('form_results&form='+fid,status=404);guest.call('forms',status=401)
         guest.call('form_submit',{'token':token,'name':'Гость','answers':[0]},400)
         guest.call('form_submit',{'token':token,'name':'Гость','answers':[True,0]},400)
-        hidden=a.call('form_submit',{'token':token,'name':'Ignored','answers':[0,1],'points':100000})
+        hidden=a.call('form_submit',{'token':token,'name':'Ignored','answers':[[0,4],1],'points':100000})
         assert hidden['submitted'] and 'points' not in hidden['attempt'] and 'answers' not in hidden['attempt']
-        again=a.call('form_submit',{'token':token,'answers':[0,0]});assert again==hidden
+        again=a.call('form_submit',{'token':token,'answers':[[0,4],0]});assert again==hidden
         assert not a.call('assessments')['assessments']
-        guest.call('form_submit',{'token':token,'name':'Гостевой ответ','answers':[0,0]})
+        guest.call('form_submit',{'token':token,'name':'Гостевой ответ','answers':[[0,4],0]})
         admin.call('save',{'id':quiz,'title':'Изменён шаблон','questions':[questions[0]]})
         assert len(guest.call('form_get&token='+token)['questions'])==2
         admin.call('form_configure',{'form':fid,'revision':1,'active':True,'published':True})
@@ -98,13 +98,13 @@ with tempfile.TemporaryDirectory(prefix='pulse-forms-') as tmp:
             seq+=1;return dict(update_id=seq,message=dict(text=text,**{'from':dict(id=tg,first_name='TG '+str(tg))},chat=dict(id=chat or tg,type=kind,title='Группа теста')))
         def answer(tg,poll,choice):
             global seq
-            seq+=1;return dict(update_id=seq,poll_answer=dict(poll_id=poll,user=dict(id=tg,first_name='TG '+str(tg)),option_ids=[choice]))
+            seq+=1;return dict(update_id=seq,poll_answer=dict(poll_id=poll,user=dict(id=tg,first_name='TG '+str(tg)),option_ids=choice if isinstance(choice,list) else [choice]))
         admin.call('save',{'id':quiz,'title':'Telegram тест','questions':questions})
         tf=create();calls=bot(message(201,'/start ft_'+tf['token']),True)
-        sent=next(args for method,args in calls if method=='sendPoll');assert sent['type']=='regular' and not sent['is_anonymous']
+        sent=next(args for method,args in calls if method=='sendPoll');assert sent['type']=='regular' and not sent['is_anonymous'] and sent['allows_multiple_answers'] is True
         assert 'correct_option_id' not in sent and 'correct_option_ids' not in sent
         with closing(sqlite3.connect(pdir/'quiz.sqlite')) as db:poll=db.execute('SELECT current_poll_id FROM form_tg_deliveries WHERE form_id=?',(tf['id'],)).fetchone()[0]
-        update=answer(201,poll,0);bot(update,True);assert bot(update,True)==[]
+        update=answer(201,poll,[0,4]);bot(update,True);assert bot(update,True)==[]
         with closing(sqlite3.connect(pdir/'quiz.sqlite')) as db:poll2=db.execute('SELECT current_poll_id FROM form_tg_deliveries WHERE form_id=?',(tf['id'],)).fetchone()[0]
         assert poll2!=poll
         bot(answer(202,poll2,0),True)  # Cannot answer another user's private test.
@@ -123,7 +123,7 @@ with tempfile.TemporaryDirectory(prefix='pulse-forms-') as tmp:
         bot(message(101,command,-10010,'supergroup'),True)
         row=admin.call('form_results&form='+group['id'])['deliveries'][0];assert row['state']=='active' and row['position']==0
         with closing(sqlite3.connect(pdir/'quiz.sqlite')) as db:gp=db.execute('SELECT current_poll_id FROM form_tg_deliveries WHERE id=?',(connection['id'],)).fetchone()[0]
-        bot(answer(201,gp,0));bot(answer(202,gp,1))
+        bot(answer(201,gp,[0,4]));bot(answer(202,gp,[1]))
         a.call('form_telegram_command',{'form':group['id'],'delivery':row['id'],'revision':row['revision'],'command':'next'},404)
         denied=bot(callback(201,f"pg:{row['id']}:{row['revision']}:next",-10010,'supergroup'));assert 'Управлять' in json.dumps(denied,ensure_ascii=False)
         admin.call('form_telegram_command',{'form':group['id'],'delivery':row['id'],'revision':row['revision'],'command':'next'})

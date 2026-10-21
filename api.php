@@ -117,17 +117,21 @@ try {
             }
 
             $type=$q['type']??'quiz'; if (!in_array($type,['quiz','poll'],true)) fail('Неизвестный тип вопроса.');
-            $options=$q['options']??[]; if (!is_array($options) || count($options)<2 || count($options)>4) fail('Нужно 2–4 варианта ответа.');
+            $options=$q['options']??[]; if (!is_array($options) || count($options)<2 || count($options)>12) fail('Нужно 2–12 вариантов ответа.');
             $options=array_map(fn($o)=>cleanText($o,120),array_values($options));
             $seconds=filter_var($q['seconds']??20,FILTER_VALIDATE_INT); if (!$seconds || $seconds<5 || $seconds>120) fail('Время ответа: 5–120 секунд.');
-            $correct=$type==='quiz'?filter_var($q['correct']??null,FILTER_VALIDATE_INT):null;
-            if ($type==='quiz' && ($correct===false || $correct===null || $correct<0 || $correct>=count($options))) fail('Выберите правильный ответ.');
+            $correct=null;$correctIndexes=[];
+            if($type==='quiz'){
+                $raw=$q['correct']??null;$indexes=is_array($raw)&&array_is_list($raw)?$raw:[$raw];$correctIndexes=[];
+                foreach($indexes as $value){$n=filter_var($value,FILTER_VALIDATE_INT);if($n===false||$n===null||$n<0||$n>=count($options)||in_array($n,$correctIndexes,true))fail('Отметьте правильные варианты ответа.');$correctIndexes[]=$n;}
+                if(!$correctIndexes)fail('Отметьте хотя бы один правильный вариант.');sort($correctIndexes);$correct=count($correctIndexes)===1?$correctIndexes[0]:$correctIndexes;
+            }
             $points=filter_var($q['points']??1000,FILTER_VALIDATE_INT);if($points===false||$points<1||$points>10000)fail('Баллы за вопрос: 1–10000.');
             $category=$mode==='board'?cleanText($q['category']??'',60):trim((string)($q['category']??''));
             if($mode==='board'){ $cell=$category.'|'.$points;if(isset($cells[$cell]))fail('В категории не должно быть двух вопросов с одинаковыми баллами.');$cells[$cell]=true; }
             $image=$q['image']??null;if($image&&!query('SELECT id FROM images WHERE id=?',[$image])->fetchColumn())fail('Изображение не найдено.');
             $reference=$q['reference']??'';if(!is_string($reference)||mb_strlen($reference)>200)fail('Ссылка на источник: максимум 200 символов.');
-            $valid[]=['reference'=>trim($reference),'text'=>cleanText($q['text']??'',250),'type'=>$type,'seconds'=>$seconds,'options'=>$options,'correct'=>$correct,'category'=>$category,'points'=>$points,'image'=>$image];
+            $valid[]=['reference'=>trim($reference),'text'=>cleanText($q['text']??'',250),'type'=>$type,'seconds'=>$seconds,'options'=>$options,'correct'=>$correct,'multiple'=>$type==='quiz'&&count($correctIndexes??[])>1,'category'=>$category,'points'=>$points,'image'=>$image];
         }
         $id=$input['id']??bin2hex(random_bytes(8));
         if (!is_string($id) || !preg_match('/^[a-f0-9]{16}$/',$id)) fail('Некорректный идентификатор.');
@@ -197,24 +201,26 @@ try {
         if ($action==='answer') {
             if((int)($input['index']??-1)===$index&&query('SELECT choice FROM answers WHERE player_id=? AND question_index=?',[$player['id'],$index])->fetch())fail('Ваш ответ уже принят.',409);
             if ($room['status']!=='question' || (int)($input['index']??-1)!==$index) fail('Время ответа истекло.');
-            $choice=filter_var($input['choice']??null,FILTER_VALIDATE_INT);
-            if ($choice===false || $choice===null || $choice<0 || $choice>=count($question['options'])) fail('Выберите вариант ответа.');
+            $rawChoices=$input['choices']??(array_key_exists('choice',$input)?[$input['choice']]:null);if(!is_array($rawChoices)||!array_is_list($rawChoices)||!$rawChoices)fail('Выберите вариант ответа.');$choices=[];
+            foreach($rawChoices as $value){$n=filter_var($value,FILTER_VALIDATE_INT);if($n===false||$n===null||$n<0||$n>=count($question['options'])||in_array($n,$choices,true))fail('Выберите корректные варианты ответа.');$choices[]=$n;}sort($choices);
             if (query('SELECT choice FROM answers WHERE player_id=? AND question_index=?',[$player['id'],$index])->fetch()) fail('Ваш ответ уже принят.',409);
             $maxPoints=(int)($question['points']??1000);
-            $points=$question['type']==='quiz' && $choice===$question['correct'] ? (($quiz['scoring']??'speed')==='fixed'?$maxPoints:(int)round($maxPoints*(.5+.5*max(0,((float)$room['deadline']-microtime(true))/$question['seconds'])))) : 0;
-            query('INSERT INTO answers VALUES (?,?,?,?,?,?)',[$player['id'],$roomId,$index,$choice,$points,microtime(true)]);
+            $expected=$question['correct']??null;$expected=is_array($expected)?array_map('intval',$expected):[$expected===null?-1:(int)$expected];sort($expected);$isCorrect=$question['type']==='quiz'&&$choices===$expected;
+            $points=$isCorrect ? (($quiz['scoring']??'speed')==='fixed'?$maxPoints:(int)round($maxPoints*(.5+.5*max(0,((float)$room['deadline']-microtime(true))/$question['seconds'])))) : 0;
+            $storedChoice=count($choices)===1?$choices[0]:json_encode($choices);query('INSERT INTO answers VALUES (?,?,?,?,?,?)',[$player['id'],$roomId,$index,$storedChoice,$points,microtime(true)]);
             query('UPDATE players SET score=score+? WHERE id=?',[$points,$player['id']]);
             if((int)query('SELECT count(*) FROM answers WHERE room_id=? AND question_index=?',[$roomId,$index])->fetchColumn()>=(int)query('SELECT count(*) FROM players WHERE room_id=?',[$roomId])->fetchColumn())query("UPDATE rooms SET status='results',control_version=control_version+1 WHERE id=?",[$roomId]);
             $db->exec('COMMIT'); out(['ok'=>true]);
         }
         $players=query('SELECT id,name,score FROM players WHERE room_id=? ORDER BY score DESC,name ASC',[$roomId])->fetchAll();
         $counts=$question?array_fill(0,count($question['options']),0):[];
-        foreach(query('SELECT choice,count(*) AS total FROM answers WHERE room_id=? AND question_index=? GROUP BY choice',[$roomId,$index])->fetchAll() as $a) $counts[(int)$a['choice']]=(int)$a['total'];
+        foreach(query('SELECT choice FROM answers WHERE room_id=? AND question_index=?',[$roomId,$index])->fetchAll() as $a){$selected=json_decode((string)$a['choice'],true);if(!is_array($selected))$selected=[(int)$a['choice']];foreach($selected as $selectedIndex)if(isset($counts[(int)$selectedIndex]))$counts[(int)$selectedIndex]++;}
         $answer=$player?query('SELECT choice,points FROM answers WHERE player_id=? AND question_index=?',[$player['id'],$index])->fetch():null;
+        if($answer){$selected=json_decode((string)$answer['choice'],true);$answer['choices']=is_array($selected)?array_map('intval',$selected):[(int)$answer['choice']];$expected=$question['correct']??null;$expected=is_array($expected)?array_map('intval',$expected):[$expected===null?-1:(int)$expected];sort($expected);$chosen=$answer['choices'];sort($chosen);$answer['correct']=$question['type']==='quiz'&&$chosen===$expected;}
         $revealed=in_array($room['status'],['results','finished'],true);
         if ($question && !$revealed) unset($question['correct'],$question['reference']);
         if (($player||$projector) && !$revealed) {
-            $counts=[]; if ($answer) unset($answer['points']);
+            $counts=[]; if ($answer) unset($answer['points'],$answer['correct']);
             // Current-question scores would reveal correctness before the host reveals results.
             $pending=[];
             foreach(query('SELECT player_id,points FROM answers WHERE room_id=? AND question_index=?',[$roomId,$index])->fetchAll() as $a) $pending[$a['player_id']]=(int)$a['points'];

@@ -24,6 +24,7 @@ function formsBotRollback(): void {global $db;try{$db->exec('ROLLBACK');}catch(T
 function formsBotValidate(array $form): void {
     if(!getenv('TELEGRAM_BOT_TOKEN')||!getenv('TELEGRAM_BOT_USERNAME'))throw new DomainException('Подключите отдельного бота Пульса в GitDeck.');
     foreach(json_decode($form['quiz'],true)['questions'] as $q){
+        if(count($q['options'])>12)throw new DomainException('В Telegram можно добавить не более 12 вариантов ответа. Сократите список и создайте новый тест.');
         foreach($q['options'] as $option)if(mb_strlen($option)>100)throw new DomainException('В Telegram вариант ответа может содержать до 100 символов. Сократите его в опроснике и создайте новый тест.');
         if(!empty($q['image'])&&!preg_match('~^https://[^\s]+$~',getenv('APP_URL')?:''))throw new DomainException('Для изображений в Telegram задайте HTTPS-адрес Пульса в APP_URL.');
     }
@@ -97,12 +98,12 @@ function formsBotUpdate(array $update,string $botId): bool {
             $form=query('SELECT * FROM pulse_forms WHERE id=?',[$delivery['form_id']])->fetch();
             if(!$form['active'])return true;
             $q=json_decode($form['quiz'],true)['questions'][$p['question_index']];$choices=$poll['option_ids']??[];
-            if(count($choices)>1||($choices&&(!is_int($choices[0])||!isset($q['options'][$choices[0]]))))return true;
+            if(count($choices)>12||array_filter($choices,fn($n)=>!is_int($n)||!isset($q['options'][$n])))return true;
             $known=query('SELECT user_id FROM form_tg_votes WHERE delivery_id=? AND telegram_id=? LIMIT 1',[$delivery['id'],$telegram])->fetch();
             if(!$known&&(int)query('SELECT count(DISTINCT telegram_id) FROM form_tg_votes WHERE delivery_id=?',[$delivery['id']])->fetchColumn()>=500)return true;
             $uid=$known?$known['user_id']:(formsBotIdentity($telegram)['id']??null);
             $db->exec('BEGIN IMMEDIATE');$fresh=query('SELECT closed FROM form_tg_polls WHERE poll_id=?',[$p['poll_id']])->fetchColumn();
-            if(!$fresh)query('INSERT INTO form_tg_votes VALUES (?,?,?,?,?,?) ON CONFLICT(delivery_id,telegram_id,question_index) DO UPDATE SET choice=excluded.choice',[$delivery['id'],$telegram,$p['question_index'],$choices[0]??null,mb_substr($name,0,80),$uid]);
+            if(!$fresh)query('INSERT INTO form_tg_votes VALUES (?,?,?,?,?,?) ON CONFLICT(delivery_id,telegram_id,question_index) DO UPDATE SET choice=excluded.choice',[$delivery['id'],$telegram,$p['question_index'],count($choices)>1?json_encode($choices):($choices[0]??null),mb_substr($name,0,80),$uid]);
             if(!$fresh&&$choices&&$delivery['kind']==='private')formsBotQueue($delivery,'next');
             $db->exec('COMMIT');
         }elseif($isRetry){
@@ -156,8 +157,9 @@ function formsBotSendReview(array $form,string $chat,?array $attempt=null): void
     $text=$form['title']."\n".($attempt?'Ваш результат: '.$attempt['points'].' / '.$attempt['max_points'].' баллов.':"Правильные ответы:");
     foreach(json_decode($form['quiz'],true)['questions'] as $i=>$q){
         if($q['type']!=='quiz')continue;
-        $row="\n\n".($i+1).'. '.$q['text']."\nПравильно: ".$q['options'][$q['correct']];
-        if($attempt)$row.="\nВаш ответ: ".(isset($answers[$i])?$q['options'][$answers[$i]]:'Нет ответа');
+        $correct=$q['correct']??null;$correct=is_array($correct)?array_map('intval',$correct):[$correct===null?-1:(int)$correct];
+        $row="\n\n".($i+1).'. '.$q['text']."\nПравильно: ".implode(', ',array_map(fn($n)=>$q['options'][$n]??'', $correct));
+        if($attempt){$selected=$answers[$i]??null;$selected=$selected===null?[]:(is_array($selected)?$selected:[$selected]);$row.="\nВаш ответ: ".($selected?implode(', ',array_map(fn($n)=>$q['options'][(int)$n]??'', $selected)):'Нет ответа');}
         if(!empty($q['reference']))$row.="\n".$q['reference'];
         if(mb_strlen($text.$row)>3500){$chunks[]=$text;$text='';}$text.=$row;
     }
@@ -168,7 +170,7 @@ function formsBotFinish(array $delivery,array $form): void {
     foreach($voters as $v){
         if($form['require_account']&&!$v['user_id'])continue;
         $choices=array_fill(0,count(json_decode($form['quiz'],true)['questions']),null);
-        foreach(query('SELECT question_index,choice FROM form_tg_votes WHERE delivery_id=? AND telegram_id=?',[$delivery['id'],$v['telegram_id']])->fetchAll() as $vote)$choices[$vote['question_index']]=$vote['choice']===null?null:(int)$vote['choice'];
+        foreach(query('SELECT question_index,choice FROM form_tg_votes WHERE delivery_id=? AND telegram_id=?',[$delivery['id'],$v['telegram_id']])->fetchAll() as $vote){$decoded=json_decode((string)$vote['choice'],true);$answer=is_array($decoded)?array_map('intval',$decoded):($vote['choice']===null?null:(int)$vote['choice']);$q=json_decode($form['quiz'],true)['questions'][$vote['question_index']];if(is_array($q['correct']??null)&&$answer!==null&&!is_array($answer))$answer=[$answer];$choices[$vote['question_index']]=$answer;}
         formStoreAttempt($form,$v['user_id'],'t:'.hash('sha256',$v['telegram_id']),$v['name'],$choices,'telegram_'.$delivery['kind'],true);
     }
 }
@@ -194,7 +196,7 @@ function formsBotTick(): void {
             if(!$form['active'])throw new DomainException('Приём ответов теста закрыт на сайте.');
             $q=$quiz['questions'][$next];if(!empty($q['image']))formsBotCall('sendPhoto',['chat_id'=>$d['chat_id'],'photo'=>rtrim(getenv('APP_URL')?:'','/').'/api.php?action=image&id='.$q['image']]);
             $args=['chat_id'=>$d['chat_id'],'question'=>($next+1).'/'.count($quiz['questions']).' · '.$q['text'],
-                'options'=>array_map(fn($text)=>['text'=>$text],$q['options']),'type'=>'regular','is_anonymous'=>false,'allows_multiple_answers'=>false,'allows_revoting'=>false,'hide_results_until_closes'=>true];
+                'options'=>array_map(fn($text)=>['text'=>$text],$q['options']),'type'=>'regular','is_anonymous'=>false,'allows_multiple_answers'=>count(is_array($q['correct']??null)?$q['correct']:[])>1,'allows_revoting'=>false,'hide_results_until_closes'=>true];
             if($d['kind']==='group')$args['reply_markup']=['inline_keyboard'=>[[['text'=>'Следующий вопрос →','callback_data'=>'pg:'.$d['id'].':'.$d['revision'].':next'],['text'=>'Завершить','callback_data'=>'pg:'.$d['id'].':'.$d['revision'].':finish']]]];
             $sent=formsBotCall('sendPoll',$args);if(!isset($sent['poll']['id'],$sent['message_id']))throw new RuntimeException('Не подтверждена отправка опроса.');
             $db->exec('BEGIN IMMEDIATE');query('INSERT INTO form_tg_polls VALUES (?,?,?,?,0)',[(string)$sent['poll']['id'],$d['id'],$next,(int)$sent['message_id']]);
