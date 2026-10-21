@@ -88,7 +88,9 @@ with tempfile.TemporaryDirectory(prefix='pulse-forms-') as tmp:
         require $argv[1];require $argv[2];require $argv[3];communitySchema();pulseTelegramSchema();formsBotSchema();$input=json_decode(stream_get_contents(STDIN),true);$calls=[];
         $pulseFormBotTransport=function($m,$a)use(&$calls,$input){$calls[]=[$m,$a];if(($input['fail_method']??'')===$m)throw new RuntimeException('synthetic network failure');
         if($m==='getChatMember')return ['status'=>(string)$a['user_id']==='101'?'creator':'member'];
-        if($m==='sendPoll'){$n=(int)(query("SELECT value FROM settings WHERE key='fake_poll_seq'")->fetchColumn()?:0)+1;query("INSERT OR REPLACE INTO settings VALUES ('fake_poll_seq',?)",[(string)$n]);return ['poll'=>['id'=>'poll-'.$n],'message_id'=>$n];}return [];};
+        if($m==='sendPoll'){$n=(int)(query("SELECT value FROM settings WHERE key='fake_poll_seq'")->fetchColumn()?:0)+1;query("INSERT OR REPLACE INTO settings VALUES ('fake_poll_seq',?)",[(string)$n]);return ['poll'=>['id'=>'poll-'.$n],'message_id'=>$n];}
+        if($m==='sendMessage'){$n=(int)(query("SELECT value FROM settings WHERE key='fake_message_seq'")->fetchColumn()?:0)+1;query("INSERT OR REPLACE INTO settings VALUES ('fake_message_seq',?)",[(string)$n]);return ['message_id'=>$n];}
+        if($m==='editMessageText')return ['message_id'=>$a['message_id']];return [];};
         if(isset($input['update']))formsBotUpdate($input['update'],'999999');if(!empty($input['tick']))formsBotTick();echo json_encode($calls,JSON_UNESCAPED_UNICODE);'''
         def bot(update=None,tick=False,fail=None):
             return json.loads(subprocess.check_output([PHP,'-r',code_php,str(ROOT/'assets/community.php'),str(ROOT/'assets/pulse-telegram.php'),str(ROOT/'assets/forms-bot.php')],env=env,input=json.dumps(dict(update=update,tick=tick,fail_method=fail)),text=True,encoding='utf-8'))
@@ -110,9 +112,9 @@ with tempfile.TemporaryDirectory(prefix='pulse-forms-') as tmp:
         bot(answer(202,poll2,0),True)  # Cannot answer another user's private test.
         bot(answer(201,poll2,1),True)
         data=admin.call('form_results&form='+tf['id']);assert len(data['attempts'])==1 and data['attempts'][0]['percent']==50
-        def callback(tg,data,chat=None,kind='private'):
+        def callback(tg,data,chat=None,kind='private',message_id=None):
             global seq
-            seq+=1;return dict(update_id=seq,callback_query=dict(id=str(seq),**{'from':dict(id=tg,first_name='TG')},message=dict(chat=dict(id=chat or tg,type=kind)),data=data))
+            seq+=1;return dict(update_id=seq,callback_query=dict(id=str(seq),**{'from':dict(id=tg,first_name='TG')},message=dict(message_id=message_id,chat=dict(id=chat or tg,type=kind)),data=data))
         hidden=bot(callback(201,'pr:'+tf['id']));assert 'ещё не открыл' in json.dumps(hidden,ensure_ascii=False)
         admin.call('form_configure',{'form':tf['id'],'revision':1,'active':True,'published':True})
         review=bot(callback(201,'pr:'+tf['id']));assert '500' in json.dumps(review) and 'Правильно' in json.dumps(review,ensure_ascii=False)
@@ -122,15 +124,23 @@ with tempfile.TemporaryDirectory(prefix='pulse-forms-') as tmp:
         denied=bot(message(201,command,-10010,'supergroup'));assert 'только администратор' in json.dumps(denied,ensure_ascii=False)
         bot(message(101,command,-10010,'supergroup'),True)
         row=admin.call('form_results&form='+group['id'])['deliveries'][0];assert row['state']=='active' and row['position']==0
-        with closing(sqlite3.connect(pdir/'quiz.sqlite')) as db:gp=db.execute('SELECT current_poll_id FROM form_tg_deliveries WHERE id=?',(connection['id'],)).fetchone()[0]
-        bot(answer(201,gp,[0,4]));bot(answer(202,gp,[1]))
+        with closing(sqlite3.connect(pdir/'quiz.sqlite')) as db:gp,gmid=db.execute('SELECT current_poll_id,current_message_id FROM form_tg_deliveries WHERE id=?',(connection['id'],)).fetchone()
+        assert gp is None
+        # A player's selections are staged privately; group state reveals no option or identity.
+        for option in (0,4):bot(callback(201,f"fa:{connection['id']}:1:0:{option}",-10010,'supergroup',gmid))
+        with closing(sqlite3.connect(pdir/'quiz.sqlite')) as db:assert db.execute('SELECT count(*) FROM form_tg_votes WHERE delivery_id=?',(connection['id'],)).fetchone()[0]==0
+        assert 'никто не видит' not in json.dumps(bot(callback(201,f"fs:{connection['id']}:1:0",-10010,'supergroup',gmid)),ensure_ascii=False).lower()
+        bot(callback(202,f"fa:{connection['id']}:1:0:1",-10010,'supergroup',gmid));bot(callback(202,f"fs:{connection['id']}:1:0",-10010,'supergroup',gmid))
         a.call('form_telegram_command',{'form':group['id'],'delivery':row['id'],'revision':row['revision'],'command':'next'},404)
         denied=bot(callback(201,f"pg:{row['id']}:{row['revision']}:next",-10010,'supergroup'));assert 'Управлять' in json.dumps(denied,ensure_ascii=False)
         admin.call('form_telegram_command',{'form':group['id'],'delivery':row['id'],'revision':row['revision'],'command':'next'})
         admin.call('form_telegram_command',{'form':group['id'],'delivery':row['id'],'revision':row['revision'],'command':'next'},409)
-        bot(tick=True)
-        with closing(sqlite3.connect(pdir/'quiz.sqlite')) as db:gp2=db.execute('SELECT current_poll_id FROM form_tg_deliveries WHERE id=?',(connection['id'],)).fetchone()[0]
-        bot(answer(202,gp,0));bot(answer(201,gp2,0)) # Old closed poll cannot change the result.
+        edits=[args for method,args in bot(tick=True) if method=='editMessageText']
+        with closing(sqlite3.connect(pdir/'quiz.sqlite')) as db:gp2,gmid2=db.execute('SELECT current_poll_id,current_message_id FROM form_tg_deliveries WHERE id=?',(connection['id'],)).fetchone()
+        assert gp2 is None and gmid2==gmid
+        assert edits and edits[-1]['message_id']==gmid
+        for tg,option in ((201,0),(202,1)):
+            bot(callback(tg,f"fa:{connection['id']}:2:1:{option}",-10010,'supergroup',gmid));bot(callback(tg,f"fs:{connection['id']}:2:1",-10010,'supergroup',gmid))
         row=admin.call('form_results&form='+group['id'])['deliveries'][0]
         admin.call('form_telegram_command',{'form':group['id'],'delivery':row['id'],'revision':row['revision'],'command':'finish'});bot(tick=True)
         data=admin.call('form_results&form='+group['id']);assert sorted(a['points'] for a in data['attempts'])==[0,1000]
@@ -139,12 +149,12 @@ with tempfile.TemporaryDirectory(prefix='pulse-forms-') as tmp:
         admin.call('form_configure',{'form':group['id'],'revision':1,'active':True,'published':True})
         admin.call('form_telegram_command',{'form':group['id'],'delivery':row['id'],'revision':row['revision'],'command':'review'})
         assert any('Правильные ответы' in args.get('text','') for method,args in bot(tick=True))
-        failed=create();connection=admin.call('form_telegram_create',{'form':failed['id']});bot(message(101,connection['command'],-10011,'supergroup'),True,'sendPoll')
+        failed=create();connection=admin.call('form_telegram_create',{'form':failed['id']});bot(message(101,connection['command'],-10011,'supergroup'));bot(tick=True,fail='sendMessage')
         row=admin.call('form_results&form='+failed['id'])['deliveries'][0];assert row['state']=='error'
         assert bot(tick=True)==[]
         admin.call('form_telegram_command',{'form':failed['id'],'delivery':row['id'],'revision':row['revision'],'command':'retry'});bot(tick=True)
         assert admin.call('form_results&form='+failed['id'])['deliveries'][0]['state']=='active'
-        print('PASS: group admin binding/control, web next/finish, stale commands, closed polls, partial attempts, release-gated review and explicit retry after failure')
+        print('PASS: group answers remain hidden, one editable message, admin controls, delayed review and retry after failure')
         if os.environ.get('FORMS_UI')=='1':
             subprocess.run(['node',str(ROOT/'tests/forms_ui.cjs')],env=dict(env,FORMS_TEST_URL=purl,FORMS_QUIZ_ID=quiz,FORMS_USER_A=ua,FORMS_USER_B=ub),check=True,timeout=100)
     finally:
