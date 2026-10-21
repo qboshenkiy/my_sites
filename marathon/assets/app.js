@@ -7,8 +7,10 @@ const date=d=>new Date(d+'T12:00:00').toLocaleDateString('ru-RU',{day:'numeric',
 function toast(message){const el=document.querySelector('#toast');el.textContent=message;el.classList.add('show');clearTimeout(toast.timer);toast.timer=setTimeout(()=>el.classList.remove('show'),5000);}
 async function api(action,data,params=''){
  const response=await fetch(`api.php?action=${action}${params}`,{method:data?'POST':'GET',headers:{'Content-Type':'application/json','X-CSRF-Token':boot?.csrf||'','X-Marathon-MiniApp':window.marathonMiniApp?'1':'0'},body:data?JSON.stringify(data):undefined});
- let result;try{result=await response.json();}catch{throw Error('Сервер недоступен. Повторите попытку.');}if(!response.ok)throw Error(result.error||'Не удалось выполнить действие.');return result;
+ let result;try{result=await response.json();}catch{if(response.status>=500)reportSiteLog('client_error',{message:'Сервер вернул ошибку '+response.status,source:action,status:response.status});throw Error('Сервер недоступен. Повторите попытку.');}if(!response.ok){if(response.status>=500)reportSiteLog('client_error',{message:'Сервер вернул ошибку '+response.status,source:action,status:response.status});throw Error(result.error||'Не удалось выполнить действие.');}return result;
 }
+function reportSiteLog(event,details={}){if(!boot?.csrf)return;try{fetch('api.php?action=client_log',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':boot.csrf,'X-Marathon-MiniApp':window.marathonMiniApp?'1':'0'},body:JSON.stringify({event,page:location.pathname,...details}),keepalive:true}).catch(()=>{});}catch{}}
+function installSiteLogs(){if(window.__marathonLogsInstalled)return;window.__marathonLogsInstalled=true;window.addEventListener('error',e=>reportSiteLog('client_error',{message:e.message||'Ошибка JavaScript',source:(e.filename||'').split('/').pop(),line:e.lineno||0}));window.addEventListener('unhandledrejection',e=>reportSiteLog('client_error',{message:String(e.reason?.message||e.reason||'Необработанная ошибка Promise')}));try{if(!sessionStorage.getItem('marathon-visit-logged')){sessionStorage.setItem('marathon-visit-logged','1');reportSiteLog('visit');}}catch{reportSiteLog('visit');}}
 function brand(){return '<a class="brand" href="./"><span class="brand-mark">▤</span>глава<span>.</span></a>';}
 function isStaff(){return boot.user?.role!=='participant';}
 function initial(name){return esc(name.slice(0,1).toUpperCase());}
@@ -94,5 +96,5 @@ document.addEventListener('submit',async e=>{
   if(e.target.id==='edit-user-form'){const id=profileData.user.id;await api('update_user',{...values,user:id});document.querySelector('dialog')?.close();await profile(id);toast('Аккаунт обновлён.');}
  }catch(e){toast(e.message);}finally{busy=false;b.disabled=false;}
 });
-async function init(){try{boot=await api('bootstrap');if(window.marathonMiniApp){await window.marathonMiniApp.authenticate(api);boot=await api('bootstrap');}boot.user?await home():loginPage();}catch(e){app.innerHTML=`<div class="loading">${esc(e.message)}${window.marathonMiniApp?'<p><a class="outline" href="./">Открыть обычный сайт</a></p>':''}<br><button class="primary" onclick="location.reload()">Повторить</button></div>`;}}
+async function init(){try{boot=await api('bootstrap');if(window.marathonMiniApp){await window.marathonMiniApp.authenticate(api);boot=await api('bootstrap');}installSiteLogs();boot.user?await home():loginPage();}catch(e){installSiteLogs();app.innerHTML=`<div class="loading">${esc(e.message)}${window.marathonMiniApp?'<p><a class="outline" href="./">Открыть обычный сайт</a></p>':''}<br><button class="primary" onclick="location.reload()">Повторить</button></div>`;}}
 document.addEventListener('DOMContentLoaded',init,{once:true});

@@ -112,6 +112,7 @@ class Filters extends BaseFilters
                     'telegram/app',
                     'telegram/login',
                     'telegram/webhook',
+                    'diagnostics/client-error',
                 ],
             ],
         ],

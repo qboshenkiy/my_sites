@@ -131,6 +131,7 @@ class Auth extends BaseController
             'logged_in' => true,
             'role_code' => $user['role_code'] ?? 'USER',
         ]);
+        error_log('[site-event] ' . json_encode(['site'=>'chrono-logos','event'=>'login_success','at'=>gmdate(DATE_ATOM),'user_id'=>(string)$user['id'],'name'=>(string)$user['username'],'role'=>(string)($user['role_code']??'USER')], JSON_UNESCAPED_UNICODE|JSON_INVALID_UTF8_SUBSTITUTE));
 
         $redirectUrl =
             '/dashboard';
@@ -319,6 +320,7 @@ class Auth extends BaseController
             'logged_in' => true,
             'role_code' => $roleCode,
         ]);
+        error_log('[site-event] ' . json_encode(['site'=>'chrono-logos','event'=>'register_success','at'=>gmdate(DATE_ATOM),'user_id'=>(string)$userId,'name'=>(string)$username,'role'=>(string)$roleCode], JSON_UNESCAPED_UNICODE|JSON_INVALID_UTF8_SUBSTITUTE));
 
         $redirectUrl =
             '/dashboard';

@@ -215,5 +215,6 @@ document.addEventListener('submit', async function (event) {
 <?= $this->renderSection('scripts') ?>
 
 <?= view('partials/telegram-assets') ?>
+    <?= view('partials/site-observability') ?>
 </body>
 </html>

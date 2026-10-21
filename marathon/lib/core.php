@@ -206,7 +206,13 @@ function sessionStart(): void {
     // Browsers cap persistent cookies; renew the deadline on every visit.
     setcookie(session_name(),session_id(),['expires'=>time()+$lifetime]+$options);
 }
-
+function marathonLogEvent(string $event,array $details=[]): void {
+    $row=['site'=>'marathon','event'=>$event,'at'=>gmdate(DATE_ATOM)];
+    foreach(['user_id','name','role','channel','page','message','source','line','status','action','error','request_id'] as $key)if(isset($details[$key])){
+        $value=is_scalar($details[$key])?(string)$details[$key]:'';$value=preg_replace('~https?://\S+~i','[url]',$value);$value=preg_replace('/(password|token|secret)\s*[:=]\s*[^\s,;]+/i','$1=[hidden]',$value);$row[$key]=mb_substr($value,0,$key==='message'?400:160);
+    }
+    error_log('[site-event] '.json_encode($row,JSON_UNESCAPED_UNICODE|JSON_INVALID_UTF8_SUBSTITUTE));
+}
 require_once __DIR__.'/rounds.php';
 require_once __DIR__.'/audit.php';
 

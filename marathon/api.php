@@ -20,7 +20,7 @@ function assertInputRound(string $id,array $input): void {
     if($week>=1&&$week<=22){$cycle=weekResults($id)[$week-1]['cycle'];if(($cycle>1&&!isset($input['cycle']))||(isset($input['cycle'])&&(int)$input['cycle']!==$cycle))fail('Круг недели изменился. Обновите страницу.',409);}
     if(($current>1&&!isset($input['round']))||(isset($input['round'])&&(int)$input['round']!==$current))fail('Круг изменился. Обновите страницу и проверьте план.',409);
 }
-function loginAs(string $id,string $channel='site'): void { sessionStart();session_regenerate_id(true);$_SESSION['uid']=$id;$_SESSION['channel']=$channel;$_SESSION['epoch']=(int)user($id)['session_epoch'];$_SESSION['csrf']=bin2hex(random_bytes(24));session_write_close(); }
+function loginAs(string $id,string $channel='site'): void { $u=user($id);sessionStart();session_regenerate_id(true);$_SESSION['uid']=$id;$_SESSION['channel']=$channel;$_SESSION['epoch']=(int)$u['session_epoch'];$_SESSION['csrf']=bin2hex(random_bytes(24));session_write_close();marathonLogEvent('login_success',['user_id'=>$u['id'],'name'=>$u['name'],'role'=>$u['role'],'channel'=>$channel]); }
 try {
     if(!extension_loaded('pdo_sqlite')||!extension_loaded('mbstring'))fail('На сервере нужны PHP-модули pdo_sqlite и mbstring.',503);
     db();$me=$uid?user($uid):null;if($me&&(!(int)$me['active']||(int)$me['session_epoch']!==(int)$epoch))$me=null;if($me&&$clientChannel==='miniapp')$GLOBALS['audit_transport']['channel']='miniapp';
@@ -31,6 +31,12 @@ try {
         if(!hash_equals($csrf,$_SERVER['HTTP_X_CSRF_TOKEN']??''))fail('Обновите страницу и повторите.',403);
         $input=json_decode(file_get_contents('php://input'),true);if(!is_array($input))fail('Некорректный запрос.');
     } elseif(!in_array($action,['bootstrap','overview','profile','audit','export','export_xlsx','archived_users','round_history'],true))fail('Нужен POST.',405);
+    if($action==='client_log'){
+        $event=$input['event']??'';if(!in_array($event,['visit','client_error'],true))fail('Неизвестный тип журнала.');
+        $details=['page'=>parse_url((string)($input['page']??''),PHP_URL_PATH)?:'','channel'=>$clientChannel];if($me){$details['user_id']=$me['id'];$details['name']=$me['name'];$details['role']=$me['role'];}
+        if($event==='client_error'){$details['message']=$input['message']??'Ошибка браузера';$details['source']=basename((string)($input['source']??''));$details['line']=filter_var($input['line']??0,FILTER_VALIDATE_INT)?:0;$details['status']=filter_var($input['status']??0,FILTER_VALIDATE_INT)?:0;}
+        marathonLogEvent($event,$details);send(['ok'=>true]);
+    }
     if($action==='bootstrap')send(['user'=>$me?publicUser($me):null,'csrf'=>$csrf,'configured'=>(bool)sql("SELECT id FROM users WHERE role='admin' LIMIT 1")->fetchColumn(),'marathon'=>visibleCalendar(calendar($me&&$me['role']==='participant'?$me['id']:null),$me&&$me['role']==='admin'),'pulse'=>['configured'=>(bool)(getenv('PULSE_URL')&&getenv('PULSE_BRIDGE_SECRET')),'url'=>getenv('PULSE_URL')?:null],'telegram'=>['configured'=>(bool)(getenv('TELEGRAM_BOT_TOKEN')&&getenv('TELEGRAM_BOT_USERNAME')),'username'=>getenv('TELEGRAM_BOT_USERNAME')?:null,'miniapp_url'=>telegramMiniAppUrl()]]);
     if($action==='setup'||$action==='login') {
         $login=strtolower(text($input['login']??'',40));$password=text($input['password']??'',200);
@@ -227,4 +233,4 @@ try {
         foreach(staff() as $u){$name=preg_match('/^[=+@-]/',$u['name'])?"'".$u['name']:$u['name'];fputcsv($f,[$name,$u['pages'],$u['minutes'],$u['books'],$u['recorded'],$u['telegram_id']?'Да':'Нет'],';', '"','');}exit;
     }
     fail('Действие не найдено.',404);
-} catch(DomainException $e){fail($e->getMessage());}catch(Throwable $e){error_log($e->getMessage());fail('Ошибка сервера. Проверьте подключение и повторите.',500);}
+} catch(DomainException $e){fail($e->getMessage());}catch(Throwable $e){marathonLogEvent('server_error',['action'=>$action??'unknown','error'=>get_class($e),'message'=>$e->getMessage(),'request_id'=>$GLOBALS['audit_transport']['request_id']??'']);fail('Ошибка сервера. Проверьте подключение и повторите.',500);}

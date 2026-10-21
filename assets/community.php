@@ -46,7 +46,7 @@ function communityAudit(string $event,string $target,array $details=[]): void {
 }
 function communityLogin(array $user): void {
     session_start(); session_regenerate_id(true); $_SESSION['pulse_uid']=$user['id'];
-    $_SESSION['admin']=false; $_SESSION['csrf']=bin2hex(random_bytes(24)); session_write_close();
+    $_SESSION['admin']=false; $_SESSION['csrf']=bin2hex(random_bytes(24)); session_write_close();pulseLogEvent('login_success',['name'=>$user['name'],'role'=>$user['role'],'action'=>'community']);
 }
 function communityOwn(array $row): bool {
     global $me;

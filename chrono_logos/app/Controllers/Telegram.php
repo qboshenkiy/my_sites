@@ -46,6 +46,7 @@ class Telegram extends BaseController
         }
         session()->regenerate(true);
         session()->set(['user_id' => $user['id'], 'username' => $user['username'], 'logged_in' => true, 'role_code' => $user['role_code']]);
+        error_log('[site-event] ' . json_encode(['site'=>'chrono-logos','event'=>'login_success','at'=>gmdate(DATE_ATOM),'channel'=>'telegram','user_id'=>(string)$user['id'],'name'=>(string)$user['username'],'role'=>(string)$user['role_code']], JSON_UNESCAPED_UNICODE|JSON_INVALID_UTF8_SUBSTITUTE));
         $code = (string)session()->get('pending_room_code');
         session()->remove('pending_room_code');
         return $this->reply(['redirect' => preg_match('/^[A-Z0-9]{4,12}$/D', $code) ? '/rooms/invite/' . $code : '/rooms']);

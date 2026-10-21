@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require __DIR__.'/lib/core.php';require __DIR__.'/lib/ai.php';
 $action=$_GET['action']??'state';
+function sketchLogEvent(string $event,array $details=[]): void {$row=['site'=>'sketch','event'=>$event,'at'=>gmdate(DATE_ATOM)];foreach(['player_id','name','role','page','message','source','line','status','action','error'] as $key)if(isset($details[$key])){$value=is_scalar($details[$key])?(string)$details[$key]:'';$value=preg_replace('~https?://\S+~i','[url]',$value);$value=preg_replace('/(password|token|secret)\s*[:=]\s*[^\s,;]+/i','$1=[hidden]',$value);$row[$key]=mb_substr($value,0,$key==='message'?400:160);}error_log('[site-event] '.json_encode($row,JSON_UNESCAPED_UNICODE|JSON_INVALID_UTF8_SUBSTITUTE));}
 sql("UPDATE rounds SET status='open' WHERE status='processing' AND judged<?",[time()-180]);
 try {
     if($action==='health')result(['ok'=>true]);
@@ -19,16 +20,17 @@ try {
     if((int)($_SERVER['CONTENT_LENGTH']??0)>1600000)result(['error'=>'Рисунок слишком большой'],413);
     $raw=file_get_contents('php://input',false,null,0,1600001);if(strlen($raw)>1600000)result(['error'=>'Рисунок слишком большой'],413);
     $input=json_decode($raw,true,32,JSON_THROW_ON_ERROR);if(!is_array($input))result(['error'=>'Некорректный запрос'],400);
+    if($action==='client_log'){$event=$input['event']??'';if(!in_array($event,['visit','client_error'],true))result(['error'=>'Неизвестный тип журнала'],400);$details=['page'=>parse_url((string)($input['page']??''),PHP_URL_PATH)?:''];if(!empty($_SESSION['uid']))$details['player_id']=(string)$_SESSION['uid'];if(!empty($_SESSION['admin']))$details['role']='admin';if($event==='client_error'){$details['message']=$input['message']??'Ошибка браузера';$details['source']=basename((string)($input['source']??''));$details['line']=filter_var($input['line']??0,FILTER_VALIDATE_INT)?:0;$details['status']=filter_var($input['status']??0,FILTER_VALIDATE_INT)?:0;}sketchLogEvent($event,$details);result(['ok'=>true]);}
     if($action==='join'){
         throttle('login:'.hash('sha256',$_SERVER['REMOTE_ADDR']??''),30,300);
         $code=getenv('GAME_ACCESS_CODE')?:'';$name=text($input['name']??'',40);
         if(strlen($code)<8||!hash_equals($code,(string)($input['code']??''))||$name==='')result(['error'=>'Проверьте имя и код игры'],401);
-        session_regenerate_id(true);sql('INSERT INTO players(name) VALUES (?)',[$name]);$_SESSION['uid']=(int)$db->lastInsertId();$_SESSION['access']=hash('sha256',$code);result(['ok'=>true]);
+        session_regenerate_id(true);sql('INSERT INTO players(name) VALUES (?)',[$name]);$_SESSION['uid']=(int)$db->lastInsertId();$_SESSION['access']=hash('sha256',$code);sketchLogEvent('player_join',['player_id'=>(string)$_SESSION['uid'],'name'=>$name]);result(['ok'=>true]);
     }
     if($action==='admin_login'){
         throttle('admin-login',10,300);$password=getenv('ADMIN_PASSWORD')?:'';
         if(strlen($password)<12||!hash_equals($password,(string)($input['password']??'')))result(['error'=>'Неверный пароль'],401);
-        session_regenerate_id(true);$_SESSION['admin']=hash('sha256',$password);result(['ok'=>true]);
+        session_regenerate_id(true);$_SESSION['admin']=hash('sha256',$password);sketchLogEvent('login_success',['role'=>'admin']);result(['ok'=>true]);
     }
     if($action==='logout'){$_SESSION=[];session_regenerate_id(true);result(['ok'=>true]);}
     if(in_array($action,['category_save','category_delete','category_import'],true)){
@@ -78,4 +80,4 @@ try {
         $statement->execute([$evaluation['stars'],$evaluation['guess'],$evaluation['feedback'],$thumbnail,$round['id']]);result($evaluation);
     }catch(Throwable $error){sql("UPDATE rounds SET status='open' WHERE id=?",[$round['id']]);throw $error;}
 }catch(DomainException $error){result(['error'=>$error->getMessage()],422);}
-catch(Throwable $error){if($db->inTransaction())$db->rollBack();error_log('Sketch request failed: '.get_class($error));result(['error'=>'Не удалось выполнить действие. Повторите позже.'],500);}
+catch(Throwable $error){if($db->inTransaction())$db->rollBack();sketchLogEvent('server_error',['action'=>$action,'error'=>get_class($error),'message'=>$error->getMessage()]);result(['error'=>'Не удалось выполнить действие. Повторите позже.'],500);}

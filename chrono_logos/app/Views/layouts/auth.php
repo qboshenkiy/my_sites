@@ -31,5 +31,6 @@
 <?= $this->renderSection('scripts') ?>
 
 <?= view('partials/telegram-assets') ?>
+<?= view('partials/site-observability') ?>
 </body>
 </html>

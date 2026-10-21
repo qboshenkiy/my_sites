@@ -17,9 +17,11 @@ async function api(action, data, asPlayer = false) {
   const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),25000);
   let response;try{response = await fetch(`api.php?action=${action}${action === 'state' && projectorMode ? '&projector='+encodeURIComponent(projectorToken) : action === 'state' && !asPlayer ? '&room=' + encodeURIComponent(activeRoom) : ''}`, {method:data ? 'POST' : 'GET',headers,body:data ? JSON.stringify(data) : undefined,signal:controller.signal});}catch(error){throw Error(error.name==='AbortError'?'Сервер долго не отвечает. Кнопка доступна для повторной попытки.':error.message);}finally{clearTimeout(timeout);}
   let result; try { result = await response.json(); } catch { throw new Error('Сервер недоступен. Проверьте подключение.'); }
-  if (!response.ok) throw new Error(result.error || 'Не удалось выполнить действие.');
+  if (!response.ok) {if(response.status>=500)reportSiteLog('client_error',{message:'Сервер вернул ошибку '+response.status,source:action,status:response.status});throw new Error(result.error || 'Не удалось выполнить действие.');}
   return result;
 }
+function reportSiteLog(event,details={}){if(!boot?.csrf)return;try{fetch('api.php?action=client_log',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':boot.csrf},body:JSON.stringify({event,page:location.pathname,...details}),keepalive:true}).catch(()=>{});}catch{}}
+function installSiteLogs(){if(window.__pulseLogsInstalled)return;window.__pulseLogsInstalled=true;window.addEventListener('error',e=>reportSiteLog('client_error',{message:e.message||'Ошибка JavaScript',source:(e.filename||'').split('/').pop(),line:e.lineno||0}));window.addEventListener('unhandledrejection',e=>reportSiteLog('client_error',{message:String(e.reason?.message||e.reason||'Необработанная ошибка Promise')}));try{if(!sessionStorage.getItem('pulse-visit-logged')){sessionStorage.setItem('pulse-visit-logged','1');reportSiteLog('visit');}}catch{reportSiteLog('visit');}}
 const icon = (type) => ({grid:'▦',play:'▷',plus:'＋',arrow:'↗',bolt:'ϟ',back:'←',edit:'✎',close:'×',users:'♙'}[type] || type);
 function brand() { return '<a class="brand" href="./"><span class="brand-mark">ϟ</span>пульс<span class="brand-dot">.</span></a>'; }
 function stopPoll() { clearTimeout(pollTimer);pollTimer=null; pollGeneration++; }
@@ -163,7 +165,7 @@ app.addEventListener('submit',async e=>{
   } catch(e) {toast(e.message);} finally {busy=false;if(submit) submit.disabled=false;}
 });
 async function init() {
-  try {boot=await api('bootstrap');if(projectorToken){projectorMode=true;page='projector';await poll();}else if(requestedCode || location.hash==='#join') joinPage(); else await communityInit();}
+  try {boot=await api('bootstrap');installSiteLogs();if(projectorToken){projectorMode=true;page='projector';await poll();}else if(requestedCode || location.hash==='#join') joinPage(); else await communityInit();}
   catch(e){app.innerHTML=`<div class="loading">${esc(e.message)}<br><button class="primary" onclick="location.reload()">Повторить</button></div>`;}
 }
 document.addEventListener('DOMContentLoaded',init,{once:true});

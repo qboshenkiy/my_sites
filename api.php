@@ -17,6 +17,17 @@ $csrf = $_SESSION['csrf'] ??= bin2hex(random_bytes(24));
 session_write_close();
 function fail(string $message, int $status = 400): never { http_response_code($status); echo json_encode(['error'=>$message], JSON_UNESCAPED_UNICODE); exit; }
 function out(array $data): never { echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR); exit; }
+function pulseLogEvent(string $event,array $details=[]): void {
+    global $me;
+    $row=['site'=>'pulse','event'=>$event,'at'=>gmdate(DATE_ATOM),'actor_id'=>$me['id']??null,'role'=>$me['role']??null];
+    foreach(['name','page','message','source','line','status','action','error','request_id','player_id','room_code'] as $key)if(isset($details[$key])){
+        $value=is_scalar($details[$key])?(string)$details[$key]:'';
+        $value=preg_replace('~https?://\S+~i','[url]',$value);
+        $value=preg_replace('/(password|token|secret)\s*[:=]\s*[^\s,;]+/i','$1=[hidden]',$value);
+        $row[$key]=mb_substr($value,0,$key==='message'?400:160);
+    }
+    error_log('[site-event] '.json_encode($row,JSON_UNESCAPED_UNICODE|JSON_INVALID_UTF8_SUBSTITUTE));
+}
 function query(string $sql, array $args=[]): PDOStatement { global $db; $s=$db->prepare($sql); $s->execute($args); return $s; }
 function hostOnly(): void { global $admin; if (!$admin) fail('Войдите в админку.',401); }
 function cleanText(mixed $text, int $max): string { if (!is_string($text)) fail('Некорректный текст.'); $text=trim($text); if ($text==='' || mb_strlen($text)>$max) fail('Заполните текст (до '.$max.' символов).'); return $text; }
@@ -82,7 +93,13 @@ try {
             }
             query('DELETE FROM login_attempts WHERE ip=?',[$ip]);
         }
-        $db->exec('COMMIT'); session_start(); session_regenerate_id(true); $_SESSION['admin']=true; session_write_close(); out(['ok'=>true]);
+        $db->exec('COMMIT'); session_start(); session_regenerate_id(true); $_SESSION['admin']=true; session_write_close();pulseLogEvent($action==='setup'?'admin_setup':'login_success',['name'=>'Администратор']);out(['ok'=>true]);
+    }
+    if($action==='client_log'){
+        $event=$input['event']??'';if(!in_array($event,['visit','client_error'],true))fail('Неизвестный тип журнала.');
+        $details=['page'=>parse_url((string)($input['page']??''),PHP_URL_PATH)?:''];
+        if($event==='client_error'){$details['message']=$input['message']??'Ошибка браузера';$details['source']=basename((string)($input['source']??''));$details['line']=filter_var($input['line']??0,FILTER_VALIDATE_INT)?:0;$details['status']=filter_var($input['status']??0,FILTER_VALIDATE_INT)?:0;}
+        if($me){$details['name']=$me['name'];}pulseLogEvent($event,$details);out(['ok'=>true]);
     }
     if ($action==='logout') { session_start(); $_SESSION=['csrf'=>$csrf]; session_regenerate_id(true); session_write_close(); out(['ok'=>true]); }
     if ($action==='quizzes') {
@@ -154,7 +171,7 @@ try {
         if (query('SELECT id FROM players WHERE room_id=? AND name=?',[$room['id'],$name])->fetchColumn()) {if(!$me)fail('Это имя уже занято. Выберите другое.');$name.=' · '.substr($me['id'],-5);}
         if ((int)query('SELECT count(*) FROM players WHERE room_id=?',[$room['id']])->fetchColumn()>=500) fail('Комната заполнена.');
         $id=bin2hex(random_bytes(8)); $token=bin2hex(random_bytes(32));
-        query('INSERT INTO players(id,room_id,name,token,user_id) VALUES (?,?,?,?,?)',[$id,$room['id'],$name,$token,$me['id']??null]); $db->exec('COMMIT'); out(['token'=>$token,'room'=>$room['id'],'name'=>$name]);
+        query('INSERT INTO players(id,room_id,name,token,user_id) VALUES (?,?,?,?,?)',[$id,$room['id'],$name,$token,$me['id']??null]); $db->exec('COMMIT');pulseLogEvent('game_join',['name'=>$name,'player_id'=>$id,'room_code'=>$room['code']]);out(['token'=>$token,'room'=>$room['id'],'name'=>$name]);
     }
     if (in_array($action,['state','control','answer','bluff_select','bluff_lie','bluff_vote'],true)) {
         $db->exec('BEGIN IMMEDIATE');
@@ -234,4 +251,4 @@ try {
         out(['version'=>(int)$room['control_version'],'id'=>$roomId,'code'=>$room['code'],'title'=>$quiz['title'],'status'=>$room['status'],'mode'=>$quiz['mode']??'classic','scoring'=>$quiz['scoring']??'speed','board'=>$board,'played'=>count($played),'projectorToken'=>$admin&&!$player&&!$projector?$meta['projector_token']:null,'index'=>$index,'total'=>count($quiz['questions']),'question'=>$question,'remaining'=>$room['status']==='question'?max(0,(float)$room['deadline']-microtime(true)):0,'players'=>$players,'counts'=>$counts,'answered'=>(int)query('SELECT count(*) FROM answers WHERE room_id=? AND question_index=?',[$roomId,$index])->fetchColumn(),'answer'=>$answer?:null,'playerId'=>$player['id']??null]);
     }
     fail('Неизвестное действие.',404);
-} catch(Throwable $e) { if (isset($db) && $db->inTransaction()) $db->rollBack(); error_log((string)$e); fail('Ошибка сервера. Повторите попытку.',500); }
+} catch(Throwable $e) { if (isset($db) && $db->inTransaction()) $db->rollBack(); pulseLogEvent('server_error',['action'=>$action??'unknown','error'=>get_class($e),'message'=>$e->getMessage(),'request_id'=>bin2hex(random_bytes(6))]); fail('Ошибка сервера. Повторите попытку.',500); }
