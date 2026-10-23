@@ -51,6 +51,21 @@
       ]
     },
     {
+      "id": "vano-remote",
+      "name": "Vano Remote",
+      "kind": "remote",
+      "repo": "https://github.com/qboshenkiy/my_sites.git",
+      "branch": "main",
+      "subdir": "vano_remote",
+      "ssh_key": "",
+      "directory": "/opt/vano-remote",
+      "compose": "compose.yaml",
+      "profiles": [],
+      "services": [
+        "web"
+      ]
+    },
+    {
       "id": "gitdeck",
       "name": "GitDeck — панель обновлений",
       "kind": "self",

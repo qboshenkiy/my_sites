@@ -85,4 +85,22 @@ vm.runInContext(`(async () => {
   state.projects=[];await assert.rejects(()=>repairHttps('chrono-logos'));assert.equal(writes.length,1);
   console.log('PASS: HTTPS repair without opening settings or overwriting other variables');
 
+  openModule(null);nodes['#m-kind'].value='remote';nodes['#m-kind'].onchange();
+  assert.equal(nodes['#m-name'].value,'Vano Remote');
+  assert.equal(nodes['#m-id'].value,'vano-remote');
+  assert.equal(nodes['#m-subdir'].value,'vano_remote');
+  assert.equal(nodes['#m-directory'].value,'/opt/vano-remote');
+  assert.equal(nodes['#m-services'].value,'web');
+  openModule({...project,id:'vano-remote',kind:'remote',subdir:''});
+  assert.equal(nodes['#m-subdir'].value,'vano_remote');
+  envProject={id:'vano-remote',kind:'remote'};
+  state.projects=[{id:'marathon',kind:'marathon',compose:'compose.https.yaml'}];
+  section.querySelector=s=>({select,button,small,p:{}}[s]);
+  nodes['#env-HTTPS_PROXY_PROJECT'].value='';
+  nodes['#env-APP_URL'].value='https://vano.sbena.net/';
+  setupChronoHttpsForm();button.onclick();
+  assert.equal(nodes['#env-APP_URL'].value,'https://connect.vano.sbena.net/');
+  assert.equal(nodes['#env-HTTPS_PROXY_PROJECT'].value,'marathon');
+  console.log('PASS: Vano Remote module defaults and HTTPS connection domain');
+
 })()`, context).catch(error => { console.error(error); process.exitCode = 1; });

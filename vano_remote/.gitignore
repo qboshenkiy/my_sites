@@ -1,0 +1,10 @@
+data/
+*.key
+pairing.json
+local.properties
+.gradle/
+**/build/
+__pycache__/
+.venv/
+dist/
+*.spec

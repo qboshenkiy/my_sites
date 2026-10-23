@@ -1,0 +1,10 @@
+# Add this site block to your EXISTING Caddy configuration.
+# For a Docker-based Caddy, use compose.proxy.yaml and its shared network.
+connect.vano.sbena.net {
+    reverse_proxy vano-remote-relay:8080
+}
+
+# If Caddy is installed directly on the Ubuntu host instead, use:
+# connect.vano.sbena.net {
+#     reverse_proxy 127.0.0.1:21120
+# }

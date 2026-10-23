@@ -1,0 +1,24 @@
+services:
+  relay:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    ports:
+      - "127.0.0.1:21120:8080"
+    volumes:
+      - relay-data:/data
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"
+volumes:
+  relay-data:

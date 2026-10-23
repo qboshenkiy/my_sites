@@ -9,3 +9,4 @@ dist
 __pycache__
 marathon
 deploy-panel
+vano_remote

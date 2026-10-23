@@ -1,0 +1,13 @@
+# Optional overlay when the HTTPS proxy is another Docker container.
+# Set PROXY_NETWORK to that proxy's existing network name in .env.
+services:
+  relay:
+    networks:
+      default: {}
+      proxy:
+        aliases:
+          - vano-remote-relay
+networks:
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK:?Set PROXY_NETWORK in .env}

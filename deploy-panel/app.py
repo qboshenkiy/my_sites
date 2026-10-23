@@ -24,8 +24,9 @@ import threading
 import time
 import urllib.parse
 
-VERSION = '1.6.0'
+VERSION = '1.7.0'
 LAYOUT = {
+    'remote': ['server', 'ops', '.dockerignore'],
     'drawing': ['index.php', 'api.php', 'lib', 'assets', 'ops', '.dockerignore'],
     'pulse': ['index.php', 'api.php', 'seed.php', '.htaccess', 'assets', 'tools/check.php', 'tools/backup.php'],
     'marathon': ['index.php', 'api.php', '.htaccess', 'assets', 'lib', 'tools/bot.php', 'tools/backup.php'],
@@ -33,7 +34,8 @@ LAYOUT = {
                'public/favicon.ico', 'public/robots.txt', 'composer.json', 'composer.lock', 'spark', 'ops', '.dockerignore'],
     'self': ['app.py', 'index.html', 'VERSION', 'README.md', 'install.sh', 'config.example.json', '.gitignore'],
 }
-REQUIRED = {'drawing': ['index.php', 'api.php', 'lib/core.php', 'lib/ai.php', 'ops/compose.yaml', 'ops/Dockerfile'],
+REQUIRED = {'remote': ['server/app.py', 'server/requirements.txt', 'server/Dockerfile', 'ops/compose.yaml'],
+            'drawing': ['index.php', 'api.php', 'lib/core.php', 'lib/ai.php', 'ops/compose.yaml', 'ops/Dockerfile'],
             'pulse': ['index.php', 'api.php', 'assets/app.js'],
             'marathon': ['index.php', 'api.php', 'lib/core.php', 'lib/telegram.php'],
             'chrono': ['app/Config/Paths.php', 'public/index.php', 'composer.lock', 'spark', 'ops/compose.yaml',
@@ -98,7 +100,7 @@ def validate_project(p):
             if not isinstance(p.get('wait_health', True), bool):
                 raise ValueError('Некорректный режим проверки готовности')
         else:
-            if p['kind'] in ('chrono', 'drawing') and (p['compose'] != 'compose.yaml' or p.get('services') != ['web'] or p.get('profiles', [])):
+            if p['kind'] in ('chrono', 'drawing', 'remote') and (p['compose'] != 'compose.yaml' or p.get('services') != ['web'] or p.get('profiles', [])):
                 raise ValueError('Этот модуль использует compose.yaml, сервис web без профилей')
             if p.get('services') not in (['web'], ['web', 'bot']):
                 raise ValueError('Разрешены сервисы web и bot')
@@ -362,6 +364,8 @@ def env_settings(p):
         defaults = ['APP_URL', 'HTTPS_PROXY_PROJECT', 'APP_PORT', 'APP_BIND', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME', 'ADMIN_USERNAME', 'ADMIN_PASSWORD']
     if p['kind'] == 'drawing':
         defaults = ['APP_URL', 'HTTPS_PROXY_PROJECT', 'APP_PORT', 'APP_BIND', 'ADMIN_PASSWORD', 'GAME_ACCESS_CODE', 'OPENAI_API_KEY', 'OPENAI_MODEL', 'AI_DAILY_LIMIT']
+    if p['kind'] == 'remote':
+        defaults = ['APP_URL', 'HTTPS_PROXY_PROJECT', 'APP_PORT', 'APP_BIND']
     fields = []
     for key in dict.fromkeys(defaults + list(values)):
         if key.startswith(('COMPOSE_', 'DOCKER_', 'GIT_', 'PYTHON')) or key in ('PATH', 'HOME'):
@@ -400,7 +404,7 @@ def prepare_chrono_https(config, p, text, log):
     """Attach to an existing Caddy proxy; preserve server files and restore on failure."""
     values = {k: v for k, v, *_ in env_records(text)}
     proxy_id = values.get('HTTPS_PROXY_PROJECT', '')
-    if p['kind'] not in ('chrono', 'drawing', 'pulse'):
+    if p['kind'] not in ('chrono', 'drawing', 'pulse', 'remote'):
         return None, lambda: None
     if p['kind'] == 'pulse' and not proxy_id:
         # A Pulse instance may itself own a shared HTTPS proxy overlay.
@@ -425,6 +429,8 @@ def prepare_chrono_https(config, p, text, log):
             or url.port == 80):
         raise ValueError('Укажите HTTPS-адрес сайта, например https://chrono.vano.sbena.net/')
     port = url.port or 443
+    if p['kind'] == 'remote' and port != 443:
+        raise ValueError('Для Vano Remote используйте HTTPS-поддомен на стандартном порту 443')
     if port == 443 and url.hostname == proxy_values.get('DOMAIN', '').lower():
         raise ValueError('Этот домен уже используется основным сайтом. Для игры задайте отдельный поддомен, например https://chrono.vano.sbena.net/')
     # Full Compose output includes the OTHER project's bot token. Never log it.
@@ -452,7 +458,8 @@ def prepare_chrono_https(config, p, text, log):
         primary_alias = 'gitdeck-primary-' + proxy['id']
         marker = '# GitDeck ' + p['id']
         original = previous[caddy].decode('utf-8')
-        block = marker + ' BEGIN\nhttps://' + url.netloc + ' {\n    encode gzip zstd\n    reverse_proxy ' + alias + ':80\n}\n' + marker + ' END'
+        upstream_port = '8080' if p['kind'] == 'remote' else '80'
+        block = marker + ' BEGIN\nhttps://' + url.netloc + ' {\n    encode gzip zstd\n    reverse_proxy ' + alias + ':' + upstream_port + '\n}\n' + marker + ' END'
         pattern = re.escape(marker + ' BEGIN') + r'.*?' + re.escape(marker + ' END')
         updated = re.sub(pattern, lambda _: block, original, flags=re.S) if marker + ' BEGIN' in original else original.rstrip() + '\n\n' + block + '\n'
         # Compose adds the service-name alias "web" to every attached network,
@@ -494,7 +501,8 @@ def prepare_chrono_https(config, p, text, log):
         overlay.write_text(json.dumps(proxy_overlay, indent=2), encoding='utf-8')
         # !reset requires Compose 2.24+; remove the old HTTP listener before Caddy claims it.
         site_env = '      QUIZ_TRUST_PROXY: "1"\n' if p['kind'] == 'pulse' else '      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}\n      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}\n      TELEGRAM_WEBHOOK_URL: ' + webhook + '\n      cookie_secure: "true"\n      cookie_samesite: None\n'
-        local.write_text('services:\n  web:\n    ports: !reset []\n    environment:\n' + site_env + '    networks:\n      default: {}\n      gitdeck_https:\n        aliases: [' + alias + ']\nnetworks:\n  gitdeck_https:\n    external: true\n    name: ' + network + '\n', encoding='utf-8')
+        environment = '' if p['kind'] == 'remote' else '    environment:\n' + site_env
+        local.write_text('services:\n  web:\n    ports: !reset []\n' + environment + '    networks:\n      default: {}\n      gitdeck_https:\n        aliases: [' + alias + ']\nnetworks:\n  gitdeck_https:\n    external: true\n    name: ' + network + '\n', encoding='utf-8')
         compose(proxy, ['exec', '-T', 'proxy', 'caddy', 'validate', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile'], log)
         return proxy, restore
     except Exception:
@@ -866,6 +874,15 @@ def status_update(config, job, status, error='', sha=None):
 
 
 def database_backup(p, jobdir, log):
+    if p['kind'] == 'remote':
+        script = ('import sqlite3,os; s=sqlite3.connect("file:/data/rooms.sqlite?mode=ro",uri=True); '
+                  'd=sqlite3.connect("/gitdeck-backup/data.sqlite"); s.backup(d); d.close(); s.close(); '
+                  'os.chmod("/gitdeck-backup/data.sqlite",0o600)')
+        compose(p, ['run', '--rm', '--no-deps', '--user', 'root', '-v', str(jobdir) + ':/gitdeck-backup',
+                    '--entrypoint', 'python', 'web', '-c', script], log)
+        if not (jobdir / 'data.sqlite').is_file():
+            raise RuntimeError('Не создана резервная копия привязок Vano Remote')
+        return
     if p['kind'] == 'chrono':
         compose(p, ['up', '-d', '--wait', '--wait-timeout', '120', 'db'], log)
         compose(p, ['run', '--rm', '--no-deps', '--user', 'root', '-v', str(jobdir) + ':/gitdeck-backup',
@@ -882,6 +899,13 @@ def database_backup(p, jobdir, log):
 
 
 def database_restore(p, jobdir, log):
+    if p['kind'] == 'remote':
+        script = ('import sqlite3,os; s=sqlite3.connect("file:/gitdeck-backup/data.sqlite?mode=ro",uri=True); '
+                  'd=sqlite3.connect("/data/rooms.sqlite"); s.backup(d); d.close(); s.close(); '
+                  'os.chown("/data/rooms.sqlite",10001,10001); os.chmod("/data/rooms.sqlite",0o600)')
+        compose(p, ['run', '--rm', '--no-deps', '--user', 'root', '-v', str(jobdir) + ':/gitdeck-backup:ro',
+                    '--entrypoint', 'python', 'web', '-c', script], log)
+        return
     if p['kind'] == 'chrono':
         compose(p, ['run', '--rm', '--no-deps', '--user', 'root', '-v', str(jobdir) + ':/gitdeck-backup:ro',
                     '--entrypoint', 'sh', 'db', '-ec',
@@ -902,6 +926,10 @@ def bootstrap_chrono(p, source):
     dest.mkdir(parents=True, exist_ok=True)
     validate_destination(dest, p['compose'])
     shutil.copy2(source / 'ops/compose.yaml', dest / p['compose'])
+    if p['kind'] == 'remote':
+        write_env(p, patch_env('', {'APP_URL': 'https://connect.vano.sbena.net/',
+            'HTTPS_PROXY_PROJECT': '', 'APP_PORT': '21120', 'APP_BIND': '127.0.0.1'}))
+        return
     if p['kind'] == 'drawing':
         write_env(p, patch_env('', {'APP_URL': 'https://draw.vano.sbena.net/', 'APP_PORT': '8084',
             'APP_BIND': '0.0.0.0', 'ADMIN_PASSWORD': secrets.token_urlsafe(32),
@@ -921,10 +949,10 @@ def deploy(config, p, job, log):
     dest = Path(p['directory'])
     sha = checkout(p, config, source, log, p['_target_ref']) if p.get('_target_ref') else checkout(p, config, source, log)
     status_update(config, job, 'preparing', sha=sha)
-    first_install = p['kind'] in ('chrono', 'drawing') and not (dest / p['compose']).exists()
+    first_install = p['kind'] in ('chrono', 'drawing', 'remote') and not (dest / p['compose']).exists()
     if first_install:
         bootstrap_chrono(p, source)
-    if p['kind'] in ('chrono', 'drawing'):
+    if p['kind'] in ('chrono', 'drawing', 'remote'):
         log = RedactedLog(log, [v for k, v, *_ in env_records(env_text(p)) if k not in PUBLIC_ENV])
     if p['kind'] == 'self':
         run([sys.executable, '-m', 'py_compile', str(source / 'app.py')], log)

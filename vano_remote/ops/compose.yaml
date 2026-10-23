@@ -1,0 +1,29 @@
+name: vano-remote
+services:
+  web:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-21120}:8080"
+    volumes:
+      - relay-data:/data
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"
+volumes:
+  relay-data:
