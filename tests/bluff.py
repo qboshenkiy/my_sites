@@ -121,5 +121,22 @@ with tempfile.TemporaryDirectory(prefix='pulse-bluff-') as folder:
         host.call('control',{'room':rid2,'command':'start_vote'});assert len(a.call('state')['choices'])==1
         host.call('control',{'room':rid2,'command':'reveal'});assert a.call('state')['status']=='results'
         assert all(p['score']==0 for p in a.call('state')['players'])
-        print('PASS: bluff editor/API and JSON, rotating category chooser, private truth/alias match, no answer leaks, merged lies and self-vote rejection, fixed scoring exactly once, late joins, timers, stale requests, projector and room isolation.')
+        # Secret Author: anonymized responses, best-answer vote, author guess and bonuses.
+        author_quiz={'title':'Тайный автор','mode':'author','scoring':'fixed','questions':[{'text':'Придумай смешную причину, почему Ной взял комаров на ковчег.','category':'Смешные вопросы','seconds':60}]}
+        author_id=host.call('save',author_quiz)['id'];author_room=host.call('create_room',{'id':author_id});author_rid=author_room['id']
+        for p,name in zip(players[:3],['A','B','C']):p.token=p.call('join',{'name':name,'code':author_room['code']})['token']
+        host.call('control',{'room':author_rid,'command':'next'});s=a.call('state');assert s['mode']=='author' and s['chooser']==s['playerId']
+        a.call('bluff_select',{'round':1,'category':'Смешные вопросы'});s=a.call('state');assert s['status']=='write'
+        for p,text in zip(players[:3],['Ответ А','Ответ Б','Ответ В']):p.call('bluff_lie',{'round':1,'index':0,'text':text})
+        s=a.call('state');assert s['status']=='vote' and len(s['choices'])==3 and 'truth' not in str(s['choices']) and 'authors' not in str(s['choices'])
+        by_author={choice['text'][-1]:choice['id'] for choice in s['choices']}
+        a.call('bluff_vote',{'round':1,'index':0,'choice':by_author['Б']});b.call('bluff_vote',{'round':1,'index':0,'choice':by_author['А']});c.call('bluff_vote',{'round':1,'index':0,'choice':by_author['А']})
+        author_guess_state=a.call('state');fixtures['authorGuess']=author_guess_state;assert author_guess_state['status']=='guess' and 'authors' not in str(author_guess_state['choices'])
+        a.call('bluff_guess',{'round':1,'index':0,'author':next(p['id'] for p in a.call('state')['players'] if p['name']=='B')})
+        b.call('bluff_guess',{'round':1,'index':0,'author':next(p['id'] for p in b.call('state')['players'] if p['name']=='C')})
+        c.call('bluff_guess',{'round':1,'index':0,'author':next(p['id'] for p in c.call('state')['players'] if p['name']=='A')})
+        s=a.call('state');fixtures['authorResults']=s;assert s['status']=='results' and {p['name']:p['score'] for p in s['players']}=={'A':5000,'B':2000,'C':2000}
+        assert all('authors' in choice for choice in s['choices'])
+        subprocess.run(['node',str(ROOT/'tests/bluff_render.cjs')],input=json.dumps(fixtures),text=True,encoding='utf-8',check=True)
+        print('PASS: bluff mechanics and Secret Author mode: anonymous response, best-answer vote, author guessing, reveal privacy, scoring bonuses, timers and room isolation.')
     finally:server.terminate();server.wait(timeout=5)

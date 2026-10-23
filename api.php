@@ -59,7 +59,7 @@ try {
         if ((int)($_SERVER['CONTENT_LENGTH']??0)>(($action==='import_preview')?20000000:3000000)) fail('Слишком большой запрос.',413);
         $input=json_decode(file_get_contents('php://input'),true);
         if (!is_array($input)) fail('Некорректный запрос.');
-        if (!in_array($action,['join','answer','bluff_select','bluff_lie','bluff_vote','receive_marathon'],true) && !hash_equals($csrf,$_SERVER['HTTP_X_CSRF_TOKEN']??'')) fail('Обновите страницу и повторите.',403);
+        if (!in_array($action,['join','answer','bluff_select','bluff_lie','bluff_vote','bluff_guess','receive_marathon'],true) && !hash_equals($csrf,$_SERVER['HTTP_X_CSRF_TOKEN']??'')) fail('Обновите страницу и повторите.',403);
     } elseif (!in_array($action,['bootstrap','quizzes','state','image','catalog','directory','assessments','room_participants','forms','form_get','form_results'],true)) fail('Требуется POST.',405);
     communityHandle($action,$input);
     if ($action==='image') {
@@ -120,17 +120,17 @@ try {
         if (!is_array($questions) || count($questions)<1 || count($questions)>50) fail('Добавьте от 1 до 50 вопросов.');
         $valid=[];
         $mode=$input['mode']??'classic';$scoring=$input['scoring']??'speed';
-        if(!in_array($mode,['classic','board','bluff'],true)||!in_array($scoring,['speed','fixed'],true))fail('Некорректный режим игры.');
+        if(!in_array($mode,['classic','board','bluff','author'],true)||!in_array($scoring,['speed','fixed'],true))fail('Некорректный режим игры.');
         $cells=[];
         foreach ($questions as $q) {
-            if($mode==='bluff'){
-                $truth=cleanText($q['truth']??'',120);$aliases=$q['aliases']??[];
+            if(in_array($mode,['bluff','author'],true)){
+                $truth=$mode==='bluff'?cleanText($q['truth']??'',120):'';$aliases=$q['aliases']??[];
                 if(!is_array($aliases)||count($aliases)>10)fail('Добавьте не больше 10 допустимых написаний ответа.');
                 $aliases=array_map(fn($v)=>cleanText($v,120),array_values($aliases));
                 $seconds=filter_var($q['seconds']??60,FILTER_VALIDATE_INT);if($seconds===false||$seconds<5||$seconds>120)fail('Время ввода: 5–120 секунд.');
                 $reference=$q['reference']??'';if(!is_string($reference)||mb_strlen($reference)>200)fail('Источник: до 200 символов.');
                 $image=$q['image']??null;if($image&&!query('SELECT id FROM images WHERE id=?',[$image])->fetchColumn())fail('Изображение не найдено.');
-                $valid[]=['text'=>cleanText($q['text']??'',250),'category'=>cleanText($q['category']??'',60),'truth'=>$truth,'aliases'=>$aliases,'seconds'=>$seconds,'type'=>'quiz','points'=>1000,'options'=>[],'correct'=>null,'image'=>$image,'reference'=>trim($reference)];continue;
+                $valid[]=['text'=>cleanText($q['text']??'',250),'category'=>cleanText($q['category']??'',60),'truth'=>$truth,'aliases'=>$mode==='bluff'?$aliases:[],'seconds'=>$seconds,'type'=>'quiz','points'=>1000,'options'=>[],'correct'=>null,'image'=>$image,'reference'=>trim($reference)];continue;
             }
 
             $type=$q['type']??'quiz'; if (!in_array($type,['quiz','poll'],true)) fail('Неизвестный тип вопроса.');
@@ -153,7 +153,7 @@ try {
         $id=$input['id']??bin2hex(random_bytes(8));
         if (!is_string($id) || !preg_match('/^[a-f0-9]{16}$/',$id)) fail('Некорректный идентификатор.');
         $existing=query('SELECT * FROM quizzes WHERE id=?',[$id])->fetch();if($existing&&!communityOwn($existing))fail('Опросник не найден.',404);
-        query('INSERT INTO quizzes(id,title,description,questions,created_at,owner_id) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,description=excluded.description,questions=excluded.questions',[$id,$title,$description,json_encode(['mode'=>$mode,'scoring'=>in_array($mode,['board','bluff'],true)?'fixed':$scoring,'questions'=>$valid],JSON_UNESCAPED_UNICODE),time(),$me['id']]); out(['id'=>$id]);
+        query('INSERT INTO quizzes(id,title,description,questions,created_at,owner_id) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,description=excluded.description,questions=excluded.questions',[$id,$title,$description,json_encode(['mode'=>$mode,'scoring'=>in_array($mode,['board','bluff','author'],true)?'fixed':$scoring,'questions'=>$valid],JSON_UNESCAPED_UNICODE),time(),$me['id']]); out(['id'=>$id]);
     }
     if ($action==='delete') { hostOnly();communityQuiz((string)($input['id']??'')); query('DELETE FROM quizzes WHERE id=?',[$input['id']??'']); out(['ok'=>true]); }
     if ($action==='create_room') {
@@ -173,12 +173,12 @@ try {
         $id=bin2hex(random_bytes(8)); $token=bin2hex(random_bytes(32));
         query('INSERT INTO players(id,room_id,name,token,user_id) VALUES (?,?,?,?,?)',[$id,$room['id'],$name,$token,$me['id']??null]); $db->exec('COMMIT');pulseLogEvent('game_join',['name'=>$name,'player_id'=>$id,'room_code'=>$room['code']]);out(['token'=>$token,'room'=>$room['id'],'name'=>$name]);
     }
-    if (in_array($action,['state','control','answer','bluff_select','bluff_lie','bluff_vote'],true)) {
+    if (in_array($action,['state','control','answer','bluff_select','bluff_lie','bluff_vote','bluff_guess'],true)) {
         $db->exec('BEGIN IMMEDIATE');
         $player=null;
         $projector=false;
         if($action==='state'&&!empty($_GET['projector'])) { $meta=query('SELECT * FROM room_meta WHERE projector_token=?',[$_GET['projector']])->fetch();if(!$meta)fail('Экран недоступен.',403);$roomId=$meta['room_id'];$projector=true; }
-        elseif (in_array($action,['answer','bluff_select','bluff_lie','bluff_vote'],true) || (!$admin && $action==='state') || !empty($_SERVER['HTTP_X_PLAYER_TOKEN'])) {
+        elseif (in_array($action,['answer','bluff_select','bluff_lie','bluff_vote','bluff_guess'],true) || (!$admin && $action==='state') || !empty($_SERVER['HTTP_X_PLAYER_TOKEN'])) {
             $player=query('SELECT * FROM players WHERE token=?',[$_SERVER['HTTP_X_PLAYER_TOKEN']??''])->fetch(); if (!$player) fail('Подключитесь к игре заново.',401);
             $roomId=$player['room_id'];
         } else { hostOnly(); $roomId=$input['room']??$_GET['room']??''; }
@@ -190,7 +190,7 @@ try {
         $quiz=json_decode($room['quiz'],true); $index=(int)$room['current_index']; $question=$quiz['questions'][$index]??null;
         $meta=query('SELECT * FROM room_meta WHERE room_id=?',[$roomId])->fetch();
         if(!$meta){query('INSERT INTO room_meta(room_id,projector_token) VALUES (?,?)',[$roomId,bin2hex(random_bytes(24))]);$meta=query('SELECT * FROM room_meta WHERE room_id=?',[$roomId])->fetch();}
-        if(($quiz['mode']??'classic')==='bluff'){require __DIR__.'/assets/bluff.php';if($action==='control')query('UPDATE rooms SET control_version=control_version+1 WHERE id=?',[$roomId]);$result=bluffHandle($action,$input,$room,$quiz,$meta,$player,$projector);if($action==='control'){ $fresh=query('SELECT * FROM rooms WHERE id=?',[$roomId])->fetch();if($fresh['status']==='finished')syncRoomReport($fresh); }$db->exec('COMMIT');out($result);}
+        if(in_array(($quiz['mode']??'classic'),['bluff','author'],true)){require __DIR__.'/assets/bluff.php';if($action==='control')query('UPDATE rooms SET control_version=control_version+1 WHERE id=?',[$roomId]);$result=bluffHandle($action,$input,$room,$quiz,$meta,$player,$projector);if($action==='control'){ $fresh=query('SELECT * FROM rooms WHERE id=?',[$roomId])->fetch();if($fresh['status']==='finished')syncRoomReport($fresh); }$db->exec('COMMIT');out($result);}
         if(str_starts_with($action,'bluff_'))fail('Это действие доступно только в Бредовухе.');
         $played=json_decode($meta['played'],true);$boardMode=($quiz['mode']??'classic')==='board';
         if ($room['status']==='question' && (microtime(true)>=(float)$room['deadline']||((int)query('SELECT count(*) FROM players WHERE room_id=?',[$roomId])->fetchColumn()>0&&(int)query('SELECT count(*) FROM answers WHERE room_id=? AND question_index=?',[$roomId,$index])->fetchColumn()>=(int)query('SELECT count(*) FROM players WHERE room_id=?',[$roomId])->fetchColumn()))) { query("UPDATE rooms SET status='results',control_version=control_version+1 WHERE id=?",[$roomId]); $room['status']='results';$room['control_version']++; }
