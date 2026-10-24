@@ -7,22 +7,38 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .panel,.stat-card,.week-detail,.reading-week,.plan-form,.profile-card{border-radius:var(--radius-card)}
 .panel{box-shadow:0 4px 18px #203b3009}
 input:not([type=checkbox]):not([type=radio]),select,textarea{min-height:44px}
+.mobile-menu-button,.mobile-nav-backdrop{display:none}
+.avatar{position:relative;overflow:hidden;aspect-ratio:1/1;padding:0!important;border-radius:50%!important}
+.avatar-photo{position:absolute;inset:0;width:100%;height:100%;display:block;object-fit:cover;border-radius:inherit}
+.user-menu{width:42px;height:42px;min-width:42px!important;min-height:42px!important;padding:0!important;border:1px solid var(--line)!important;border-radius:50%!important;display:grid;place-items:center;background:#f4f6ef!important;overflow:hidden}
+.user-menu .avatar{width:100%;height:100%;font-size:13px}
 @media(max-width:800px){
+  body.mobile-nav-open{overflow:hidden}
   html{scroll-padding-top:12px}
   .layout{padding-bottom:0!important}
-  .sidebar{position:fixed!important;inset:auto 0 0!important;z-index:50;width:100%!important;height:calc(68px + env(safe-area-inset-bottom))!important;display:flex!important;align-items:stretch!important;justify-content:space-around;gap:3px;overflow:visible;padding:4px 5px 0!important;background:#fff;border-top:1px solid var(--line);box-shadow:0 -5px 18px #203b3012}
-  .sidebar>.brand,.sidebar-note,.sidebar-person,.marathon-label,.nav-label{display:none!important}
-  .sidebar::-webkit-scrollbar{display:none}
-  .sidebar .nav{flex:1 1 0;min-width:0;min-height:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:5px 1px!important;margin:0;border-radius:10px;text-align:center;font-size:10px!important;line-height:1.1;white-space:normal;overflow-wrap:normal}
-  .sidebar .nav>span{width:auto;font-size:19px;line-height:1.1}
-  .sidebar .nav>.nav-caption{display:block;width:100%;font-size:0;line-height:1.15;white-space:nowrap}
-  .sidebar .nav>.nav-caption::after{content:attr(data-short);font-size:10px;letter-spacing:-.1px}
-  .content{padding:15px 13px 96px!important}
+  .sidebar{position:fixed!important;inset:0 auto 0 0!important;z-index:102;width:min(86vw,320px)!important;height:100dvh!important;display:flex!important;flex-direction:column!important;align-items:stretch!important;justify-content:flex-start;gap:9px;overflow-y:auto;overflow-x:hidden;padding:20px 16px max(18px,env(safe-area-inset-bottom))!important;background:var(--cream);border-right:1px solid var(--line);box-shadow:8px 0 30px #203b301a;transform:translateX(-110%);transition:transform .22s ease}
+  .sidebar.is-open{transform:translateX(0)}
+  .sidebar>.brand{display:flex!important;margin:0 0 12px!important;font-size:24px}
+  .sidebar .marathon-label{display:flex!important;flex-direction:column;gap:5px;padding:14px;border:1px solid var(--line);border-radius:13px;background:#fff}
+  .sidebar .marathon-label span,.sidebar .marathon-label small{font-size:11px;color:var(--muted)}
+  .sidebar .marathon-label strong{font-size:15px;color:var(--ink)}
+  .sidebar .nav-label{display:block!important;margin:13px 8px 3px;font-size:10px;letter-spacing:1px}
+  .sidebar .nav{flex:0 0 auto;width:100%;min-width:0;min-height:52px;display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:13px;padding:10px 12px!important;margin:0;border-radius:11px;text-align:left;font-size:14px!important;line-height:1.35;white-space:normal}
+  .sidebar .nav>span{width:24px;font-size:21px;line-height:1;text-align:center}
+  .sidebar .nav>.nav-caption{display:inline;width:auto;font-size:14px;line-height:1.35;white-space:normal}
+  .sidebar .nav>.nav-caption::after{content:none}
+  .sidebar .sidebar-note{display:none!important}
+  .sidebar .sidebar-person{display:flex!important;margin-top:auto;padding-top:16px}
+  .mobile-menu-button{display:inline-flex;flex:0 0 42px;width:42px;height:42px;min-height:42px;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:11px;background:#fff;color:var(--green);font-size:20px}
+  .mobile-nav-backdrop{display:none;position:fixed;inset:0;z-index:101;border:0;border-radius:0;background:#14221c80;backdrop-filter:blur(2px)}
+  .sidebar.is-open~.mobile-nav-backdrop{display:block}
+  .content{padding:15px 13px 30px!important}
   .main>footer{display:none!important}
-  .topbar{height:54px;padding:0 13px!important;font-size:11px!important}
-  .topbar .crumb{font-size:10px!important}
+  .topbar{height:56px;padding:0 13px!important;font-size:11px!important}
+  .topbar .crumb{display:none}
+  .topbar>div:first-child>span:nth-child(2){display:none}
   .topbar>div:last-child{font-size:10px!important}
-  .topbar .user-menu{min-width:40px;min-height:40px}
+  .topbar .user-menu{width:42px;height:42px;min-width:42px!important;min-height:42px!important;flex:0 0 42px}
   .welcome{min-height:0!important;padding:21px 18px!important}
   .welcome h1{font-size:28px!important;line-height:1.2;max-width:100%}
   .welcome p{font-size:12px!important;line-height:1.6;margin:11px 0 15px!important}

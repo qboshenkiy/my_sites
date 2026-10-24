@@ -65,6 +65,7 @@ try {
         db()->exec('BEGIN IMMEDIATE');
         $u=sql('SELECT * FROM users WHERE telegram_id=? AND active=1 AND deleted_at IS NULL',[$proof['telegram_id']])->fetch();
         if(!$u)fail('Этот Telegram не привязан к активному участнику. Получите персональное приглашение у команды марафона и подтвердите привязку в боте.',403);
+        if($proof['photo_url']&&$proof['photo_url']!==($u['telegram_photo_url']??null))sql('UPDATE users SET telegram_photo_url=? WHERE id=?',[$proof['photo_url'],$u['id']]);
         $sameMiniApp=$me&&$me['id']===$u['id']&&$clientChannel==='miniapp';
         if(!$sameMiniApp)audit($u['id'],'telegram_miniapp_login',$u['id'],'Вход в Telegram Mini App',['source'=>'telegram','channel'=>'miniapp']);
         db()->exec('COMMIT');if(!$sameMiniApp)loginAs($u['id'],'miniapp');send(['ok'=>true]);

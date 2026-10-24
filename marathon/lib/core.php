@@ -9,7 +9,7 @@ function db(): PDO {
     $db=new PDO('sqlite:'.$dir.'/marathon.sqlite',null,null,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC]);
     $db->exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=10000; PRAGMA foreign_keys=ON;
     CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,name TEXT NOT NULL,login TEXT UNIQUE,password TEXT,role TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,telegram_id TEXT UNIQUE,telegram_name TEXT,created_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,name TEXT NOT NULL,login TEXT UNIQUE,password TEXT,role TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,telegram_id TEXT UNIQUE,telegram_name TEXT,telegram_photo_url TEXT,created_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS reports(user_id TEXT NOT NULL REFERENCES users(id),week INTEGER NOT NULL,pages INTEGER NOT NULL DEFAULT 0,minutes INTEGER NOT NULL DEFAULT 0,books INTEGER NOT NULL DEFAULT 0,title TEXT NOT NULL DEFAULT \'\',note TEXT NOT NULL DEFAULT \'\',editor_id TEXT NOT NULL REFERENCES users(id),updated_at INTEGER NOT NULL,PRIMARY KEY(user_id,week));
     CREATE TABLE IF NOT EXISTS requests(token_hash TEXT PRIMARY KEY,kind TEXT NOT NULL,user_id TEXT REFERENCES users(id),session_hash TEXT,expires_at INTEGER NOT NULL,approved INTEGER NOT NULL DEFAULT 0,consumed INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT,actor_id TEXT,event TEXT NOT NULL,target_id TEXT,details TEXT NOT NULL,created_at INTEGER NOT NULL);
@@ -25,6 +25,7 @@ function db(): PDO {
         $userColumns=array_column(sql('PRAGMA table_info(users)')->fetchAll(),'name');
         if(!in_array('deleted_at',$userColumns,true))$db->exec('ALTER TABLE users ADD COLUMN deleted_at INTEGER');
         if(!in_array('session_epoch',$userColumns,true))$db->exec('ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0');
+        if(!in_array('telegram_photo_url',$userColumns,true))$db->exec('ALTER TABLE users ADD COLUMN telegram_photo_url TEXT');
         $db->exec('UPDATE users SET telegram_id=NULL,telegram_name=NULL WHERE deleted_at IS NOT NULL AND (telegram_id IS NOT NULL OR telegram_name IS NOT NULL)');
         $columns=array_column(sql('PRAGMA table_info(reports)')->fetchAll(),'name');
         if(!in_array('chapters_manual',$columns,true))$db->exec('ALTER TABLE reports ADD COLUMN chapters_manual INTEGER NOT NULL DEFAULT 0');

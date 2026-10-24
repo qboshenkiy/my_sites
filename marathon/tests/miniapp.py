@@ -64,6 +64,11 @@ with tempfile.TemporaryDirectory(prefix='marathon-miniapp-') as folder:
             reader.call('telegram_miniapp_login',{'init_data':proof()},403,csrf=False)
             reader.call('telegram_miniapp_login',{'init_data':proof()})
             assert reader.boot()['user']['id']=='reader'
+            photo='https://t.me/i/userpic/320/reader.jpg'
+            reader.call('telegram_miniapp_login',{'init_data':proof(user={'id':101,'first_name':'Reader','photo_url':photo})})
+            assert reader.boot()['user']['telegram_photo_url']==photo
+            reader.call('telegram_miniapp_login',{'init_data':proof(user={'id':101,'first_name':'Reader','photo_url':'http://example.com/avatar.jpg'})})
+            assert reader.boot()['user']['telegram_photo_url']==photo
             previous_csrf=reader.csrf;reader.call('telegram_miniapp_login',{'init_data':proof()});reader.boot()
             assert reader.csrf==previous_csrf  # re-opening does not invalidate another tab
             reader.call('add_reading',{'chapters':3,'date':'2026-10-22','title':'Book','key':'miniapp_entry_1'})

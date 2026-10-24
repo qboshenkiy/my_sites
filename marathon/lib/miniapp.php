@@ -32,5 +32,7 @@ function validateTelegramInitData(string $raw,string $token,?int $now=null): arr
     if(!preg_match('/^\d{1,12}$/D',$date)||(int)$date>$now+30||$now-(int)$date>3600)$deny();
     try{$u=json_decode($fields['user']??'',true,16,JSON_THROW_ON_ERROR);}catch(JsonException){$deny();}
     if(!is_array($u)||!isset($u['id'])||!is_int($u['id'])||$u['id']<1||$u['id']>4503599627370495||!empty($u['is_bot']))$deny();
-    return ['telegram_id'=>(string)$u['id'],'auth_date'=>(int)$date];
+    $photo=$u['photo_url']??null;$parts=is_string($photo)?parse_url($photo):false;
+    if(!is_string($photo)||strlen($photo)>2048||!$parts||($parts['scheme']??'')!=='https'||empty($parts['host'])||isset($parts['user'])||isset($parts['pass']))$photo=null;
+    return ['telegram_id'=>(string)$u['id'],'auth_date'=>(int)$date,'photo_url'=>$photo];
 }

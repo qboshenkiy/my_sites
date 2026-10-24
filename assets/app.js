@@ -1,4 +1,8 @@
 const app = document.querySelector('#app');
+const pulseNavObserver=new MutationObserver(()=>{const sidebar=app.querySelector('.sidebar'),topbar=app.querySelector('.topbar');if(!sidebar||!topbar||topbar.querySelector('.mobile-menu-button'))return;const toggle=document.createElement('button');toggle.type='button';toggle.className='mobile-menu-button';toggle.setAttribute('aria-label','Открыть меню');toggle.setAttribute('aria-expanded','false');toggle.textContent='☰';topbar.prepend(toggle);const backdrop=document.createElement('button');backdrop.type='button';backdrop.className='mobile-nav-backdrop';backdrop.setAttribute('aria-label','Закрыть меню');sidebar.after(backdrop);});
+pulseNavObserver.observe(app,{childList:true});
+function closePulseNav(){app.querySelector('.sidebar')?.classList.remove('is-open');document.body.classList.remove('mobile-nav-open');const toggle=app.querySelector('.mobile-menu-button');toggle?.setAttribute('aria-expanded','false');toggle?.setAttribute('aria-label','Открыть меню');if(toggle)toggle.textContent='☰';}
+document.addEventListener('keydown',event=>{if(event.key==='Escape')closePulseNav();});
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const shapes = ['▲', '◆', '●', '■'];
 let boot, library = [], rooms = [], draft, activeRoom, state, pollTimer, pollGeneration=0, page = '', filter = '', busy = false;
@@ -123,6 +127,9 @@ function confirmDialog(title, description, onConfirm) {
   dialog.querySelector('#confirm-dialog').onclick=async()=>{dialog.close(); try {await onConfirm();}catch(e){toast(e.message);} };
 }
 app.addEventListener('click',async e=>{
+  if(e.target.closest('.mobile-menu-button')){const sidebar=app.querySelector('.sidebar'),toggle=e.target.closest('.mobile-menu-button'),open=sidebar?.classList.toggle('is-open')||false;document.body.classList.toggle('mobile-nav-open',open);toggle.setAttribute('aria-expanded',String(open));toggle.setAttribute('aria-label',open?'Закрыть меню':'Открыть меню');toggle.textContent=open?'×':'☰';return;}
+  if(e.target.closest('.mobile-nav-backdrop')){closePulseNav();return;}
+  if(e.target.closest('.sidebar .nav'))closePulseNav();
   const button=e.target.closest('[data-action]'); if (!button || button.disabled || busy) return;
   const action=button.dataset.action, id=button.dataset.id;
   try {
