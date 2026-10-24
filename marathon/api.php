@@ -193,7 +193,7 @@ try {
         guard(true);$id=text($input['user']??'',80);db()->exec('BEGIN IMMEDIATE');$u=user($id);if(!$u)fail('Аккаунт не найден.',404);
         if($id===$me['id'])fail('Нельзя удалить свой аккаунт.');
         if($u['role']==='admin'&&(int)$u['active']&&(int)sql("SELECT COUNT(*) FROM users WHERE role='admin' AND active=1 AND deleted_at IS NULL")->fetchColumn()<=1)fail('Нельзя удалить последнего администратора.');
-        sql('UPDATE users SET deleted_at=?,active=0,telegram_id=NULL,telegram_name=NULL,session_epoch=session_epoch+1 WHERE id=?',[time(),$id]);sql('DELETE FROM requests WHERE user_id=?',[$id]);
+        sql('UPDATE users SET deleted_at=?,active=0,telegram_id=NULL,telegram_name=NULL,telegram_photo_url=NULL,session_epoch=session_epoch+1 WHERE id=?',[time(),$id]);sql('DELETE FROM requests WHERE user_id=?',[$id]);
         audit($me['id'],'delete_user',$id,'Аккаунт удалён в архив: '.$u['name'],['before'=>auditUserSnapshot($u),'after'=>auditUserSnapshot(sql('SELECT * FROM users WHERE id=?',[$id])->fetch())]);db()->exec('COMMIT');send(['ok'=>true]);
     }
     if($action==='restore_user') {
@@ -204,7 +204,7 @@ try {
         guard(true);$id=text($input['user']??'',80);db()->exec('BEGIN IMMEDIATE');$u=user($id);if(!$u)fail('Аккаунт не найден.',404);
         if(!$u['telegram_id']){db()->exec('COMMIT');send(['ok'=>true]);}
         if($u['role']!=='participant'&&(!$u['login']||!$u['password']))fail('Сначала сохраните логин и пароль сотрудника, чтобы он мог войти после отвязки Telegram.');
-        sql('UPDATE users SET telegram_id=NULL,telegram_name=NULL,session_epoch=session_epoch+1 WHERE id=?',[$id]);
+        sql('UPDATE users SET telegram_id=NULL,telegram_name=NULL,telegram_photo_url=NULL,session_epoch=session_epoch+1 WHERE id=?',[$id]);
         sql('DELETE FROM requests WHERE user_id=?',[$id]);audit($me['id'],'telegram_unlink',$id,'Telegram отвязан от аккаунта: '.$u['name'],['before'=>auditUserSnapshot($u),'after'=>auditUserSnapshot(sql('SELECT * FROM users WHERE id=?',[$id])->fetch())]);db()->exec('COMMIT');
         if($id===$me['id'])loginAs($id);send(['ok'=>true]);
     }

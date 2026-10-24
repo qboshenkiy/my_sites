@@ -26,7 +26,7 @@ function db(): PDO {
         if(!in_array('deleted_at',$userColumns,true))$db->exec('ALTER TABLE users ADD COLUMN deleted_at INTEGER');
         if(!in_array('session_epoch',$userColumns,true))$db->exec('ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0');
         if(!in_array('telegram_photo_url',$userColumns,true))$db->exec('ALTER TABLE users ADD COLUMN telegram_photo_url TEXT');
-        $db->exec('UPDATE users SET telegram_id=NULL,telegram_name=NULL WHERE deleted_at IS NOT NULL AND (telegram_id IS NOT NULL OR telegram_name IS NOT NULL)');
+        $db->exec('UPDATE users SET telegram_id=NULL,telegram_name=NULL,telegram_photo_url=NULL WHERE deleted_at IS NOT NULL AND (telegram_id IS NOT NULL OR telegram_name IS NOT NULL OR telegram_photo_url IS NOT NULL)');
         $columns=array_column(sql('PRAGMA table_info(reports)')->fetchAll(),'name');
         if(!in_array('chapters_manual',$columns,true))$db->exec('ALTER TABLE reports ADD COLUMN chapters_manual INTEGER NOT NULL DEFAULT 0');
         if(!in_array('days_manual',$columns,true))$db->exec('ALTER TABLE reports ADD COLUMN days_manual INTEGER');
@@ -80,7 +80,7 @@ function legacyStats(string $id): array {
     return ['reports'=>$reports,'pages'=>$pages,'minutes'=>$minutes,'books'=>$books,'recorded'=>count($reports),'goalWeeks'=>$done,'goal'=>$goal,'progress'=>min(100,(int)round($pages/max(1,$goal*(int)setting('weeks'))*100))];
 }
 function legacyStaff(): array {
-    return sql("SELECT u.id,u.name,u.role,u.active,u.telegram_id,u.telegram_name,u.login,u.created_at,COALESCE(SUM(r.pages),0) AS pages,COALESCE(SUM(r.minutes),0) AS minutes,COALESCE(SUM(r.books),0) AS books,COUNT(r.week) AS recorded FROM users u LEFT JOIN reports r ON r.user_id=u.id WHERE u.deleted_at IS NULL GROUP BY u.id ORDER BY pages DESC,u.name")->fetchAll();
+    return sql("SELECT u.id,u.name,u.role,u.active,u.telegram_id,u.telegram_name,u.telegram_photo_url,u.login,u.created_at,COALESCE(SUM(r.pages),0) AS pages,COALESCE(SUM(r.minutes),0) AS minutes,COALESCE(SUM(r.books),0) AS books,COUNT(r.week) AS recorded FROM users u LEFT JOIN reports r ON r.user_id=u.id WHERE u.deleted_at IS NULL GROUP BY u.id ORDER BY pages DESC,u.name")->fetchAll();
 }
 function weekResults(string $id): array {
     $c=calendar($id);$reports=sql('SELECT r.*,u.name AS editor FROM reports r JOIN users u ON u.id=r.editor_id WHERE r.user_id=?',[$id])->fetchAll();
