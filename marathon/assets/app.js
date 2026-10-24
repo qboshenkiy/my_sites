@@ -1,4 +1,7 @@
 const app=document.querySelector('#app');
+const navShortLabels={'Обзор марафона':'Обзор','Участники':'Люди','Команда':'Команда','Журнал изменений':'Журнал','Настройки':'Настройки','Мой прогресс':'Мой план'};
+const compactNavObserver=new MutationObserver(()=>{app.querySelectorAll('.sidebar .nav:not([data-nav-labeled])').forEach(button=>{const labelNode=[...button.childNodes].find(node=>node.nodeType===Node.TEXT_NODE&&node.textContent.trim());if(!labelNode)return;const label=labelNode.textContent.trim();const caption=document.createElement('span');caption.className='nav-caption';caption.dataset.short=navShortLabels[label]||label;caption.textContent=label;button.setAttribute('aria-label',label);button.dataset.navLabeled='1';labelNode.replaceWith(caption);});});
+compactNavObserver.observe(app,{childList:true,subtree:true});
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const roles={admin:'Администратор',moderator:'Модератор',participant:'Участник'};
 let boot,users=[],view='',profileData,search='',authTimer,authToken,selectedWeek='all',busy=false;
