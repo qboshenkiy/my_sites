@@ -10,16 +10,19 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 input:not([type=checkbox]):not([type=radio]),select,textarea{min-height:44px}
 @media(max-width:760px){
   html{scroll-padding-top:12px}
-  .dashboard{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
-  .sidebar{position:fixed!important;inset:auto 0 0!important;z-index:50;width:100%!important;height:auto!important;display:flex!important;justify-content:space-around;gap:4px;overflow:visible;padding:7px 9px max(7px,env(safe-area-inset-bottom))!important;background:#fff;border-top:1px solid var(--line);box-shadow:0 -6px 22px #25253510}
+  .dashboard{padding-bottom:0!important}
+  .sidebar{position:fixed!important;inset:auto 0 0!important;z-index:50;width:100%!important;height:calc(66px + env(safe-area-inset-bottom))!important;display:flex!important;align-items:stretch!important;justify-content:space-around;gap:4px;overflow:visible;padding:4px 8px 0!important;background:#fff;border-top:1px solid var(--line);box-shadow:0 -5px 18px #25253512}
   .sidebar>.brand{display:none!important}
   .sidebar::-webkit-scrollbar{display:none}
-  .sidebar .nav{flex:1 1 0;min-width:0;min-height:56px;display:flex;flex-direction:column;justify-content:center;gap:3px;padding:6px 2px!important;margin:0;border-radius:11px;text-align:center;font-size:9px!important;line-height:1.2;white-space:normal}
+  .sidebar .nav{flex:1 1 0;min-width:0;min-height:58px;display:flex;flex-direction:column;justify-content:center;gap:3px;padding:5px 2px!important;margin:0;border-radius:11px;text-align:center;font-size:11px!important;line-height:1.2;white-space:normal}
   .sidebar .nav>span:first-child{font-size:19px;width:auto;line-height:1.1}
   .sidebar .nav-count{display:none!important}
-  .main-content{padding:16px 14px 24px!important}
-  .topbar{padding-inline:14px!important}
+  .main-content{padding:16px 14px 92px!important}
+  .main>footer{display:none!important}
+  .topbar{padding-inline:14px!important;min-height:52px}
   .welcome{border-radius:16px;min-height:220px!important;padding:23px 19px!important}
+  .welcome h1{font-size:29px!important;line-height:1.18}
+  .welcome p{font-size:12px!important;line-height:1.6}
   .stats{gap:8px!important}
   .stats>div{min-width:0;padding:12px 9px!important;border-radius:12px}
   .quiz-grid{grid-template-columns:1fr!important;gap:12px}

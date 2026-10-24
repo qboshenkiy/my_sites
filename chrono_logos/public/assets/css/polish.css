@@ -10,8 +10,10 @@ input:not([type=checkbox]):not([type=radio]),select,textarea{min-height:44px}
   html{scroll-padding-top:10px}
   .main-content{padding-inline:15px!important}
   .app-main{min-width:0}
-  .app-layout{padding-bottom:calc(78px + env(safe-area-inset-bottom))}
-  .mobile-bottom-nav a,.mobile-bottom-nav button{min-height:50px;padding:7px 4px}
+  .app-layout{padding-bottom:0!important}
+  .app-main{padding-bottom:calc(82px + env(safe-area-inset-bottom))}
+  .mobile-bottom-nav{height:calc(66px + env(safe-area-inset-bottom));align-items:stretch}
+  .mobile-bottom-nav a,.mobile-bottom-nav button{min-height:58px;padding:7px 4px;font-size:11px}
   .card-modal-card{width:calc(100% - 20px);max-height:calc(100dvh - 20px);overflow:auto}
   .modal-content{padding:22px 18px!important}
   .modal-close{position:sticky;top:0}
