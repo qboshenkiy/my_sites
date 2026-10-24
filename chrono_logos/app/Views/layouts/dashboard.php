@@ -32,6 +32,7 @@ $isMobileClient =
     <link rel="stylesheet" href="/assets/css/theme.css">
     <meta name="theme-color" content="#10131b">
     <link rel="stylesheet" href="/assets/css/game-world.css?v=20261017">
+    <link rel="stylesheet" href="/assets/css/polish.css?v=1">
 </head>
 
 <body class="<?= $isMobileClient ? 'mobile-client' : 'desktop-client' ?>">

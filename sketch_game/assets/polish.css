@@ -1,0 +1,29 @@
+/* Comfortable drawing-game controls and consistent surfaces. */
+html{scroll-behavior:smooth}
+body{line-height:1.55}
+button,input,textarea,select{touch-action:manipulation}
+button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:3px solid color-mix(in srgb,var(--accent),white 45%);outline-offset:3px}
+.intro-card,.category,.status-card,.gallery article,.canvas-wrap{border-radius:18px}
+.intro-card,.status-card,.gallery article{box-shadow:0 5px 22px #28233508}
+input:not([type=checkbox]):not([type=radio]),textarea,select{min-height:44px}
+@media(max-width:700px){
+  html{scroll-padding-top:12px}
+  header{position:sticky;top:0;z-index:8;background:#f7f6f2ed;backdrop-filter:blur(12px);padding:12px 15px!important;align-items:center!important}
+  main{padding-inline:14px!important}
+  .intro h1{font-size:clamp(34px,10vw,46px)!important;line-height:1.08}
+  .category{min-height:126px;padding:16px!important}
+  .canvas-wrap{padding:6px!important}
+  .tools{gap:9px}
+  .tools button,.tools select{min-height:48px}
+  .tools .swatch{width:44px;height:44px;min-width:44px;padding:0}
+  .tools select{flex:1 1 145px}
+  .game-actions{gap:10px;display:flex;flex-direction:column;align-items:stretch;position:sticky;bottom:0;z-index:6;background:#f7f6f2f2;backdrop-filter:blur(10px);padding:12px 0 max(12px,env(safe-area-inset-bottom));box-shadow:0 -8px 18px #f7f6f2}
+  .game-actions>button{width:100%;min-height:54px;font-size:16px}
+  .game-actions .hint{line-height:1.4;max-width:none;text-align:center}
+  .game-head{align-items:flex-start;gap:10px}
+  .game-head .quiet{min-height:44px;max-width:130px;white-space:normal;line-height:1.25}
+  .category{min-height:120px!important}
+  .quiet{min-height:44px}
+  dialog{width:calc(100% - 22px);max-height:calc(100dvh - 22px);overflow:auto;padding:22px!important;border-radius:18px}
+}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{transition:none!important}}

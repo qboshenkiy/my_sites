@@ -1,0 +1,43 @@
+/* Shared interaction and spacing polish for Pulse, keeping its lavender identity. */
+:root{--surface:#fff;--surface-soft:#fbfaff;--focus:#a897f4;--radius-card:16px}
+html{scroll-behavior:smooth}
+body{line-height:1.55}
+button,input,select,textarea{touch-action:manipulation}
+button:not(:disabled),a{transition:background-color .16s ease,border-color .16s ease,color .16s ease,box-shadow .16s ease,transform .16s ease}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid color-mix(in srgb,var(--focus),transparent 25%);outline-offset:2px}
+.panel,.quiz-card,.session-row,.join-form,.community-panel,.community-card,.self-test-card{border-radius:var(--radius-card)}
+.panel{box-shadow:0 4px 18px #25253508}
+input:not([type=checkbox]):not([type=radio]),select,textarea{min-height:44px}
+@media(max-width:760px){
+  html{scroll-padding-top:12px}
+  .dashboard{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
+  .sidebar{position:fixed!important;inset:auto 0 0!important;z-index:50;width:100%!important;height:auto!important;display:flex!important;justify-content:space-around;gap:4px;overflow:visible;padding:7px 9px max(7px,env(safe-area-inset-bottom))!important;background:#fff;border-top:1px solid var(--line);box-shadow:0 -6px 22px #25253510}
+  .sidebar>.brand{display:none!important}
+  .sidebar::-webkit-scrollbar{display:none}
+  .sidebar .nav{flex:1 1 0;min-width:0;min-height:56px;display:flex;flex-direction:column;justify-content:center;gap:3px;padding:6px 2px!important;margin:0;border-radius:11px;text-align:center;font-size:9px!important;line-height:1.2;white-space:normal}
+  .sidebar .nav>span:first-child{font-size:19px;width:auto;line-height:1.1}
+  .sidebar .nav-count{display:none!important}
+  .main-content{padding:16px 14px 24px!important}
+  .topbar{padding-inline:14px!important}
+  .welcome{border-radius:16px;min-height:220px!important;padding:23px 19px!important}
+  .stats{gap:8px!important}
+  .stats>div{min-width:0;padding:12px 9px!important;border-radius:12px}
+  .quiz-grid{grid-template-columns:1fr!important;gap:12px}
+  .quiz-card:hover{transform:none}
+  .panel{padding:18px!important}
+  .community-table{min-width:650px}
+  .table-wrap,.community-table-wrap{max-width:100%;overflow:auto;-webkit-overflow-scrolling:touch}
+  dialog{width:calc(100% - 24px);max-width:560px;max-height:calc(100dvh - 24px);overflow:auto;padding:22px 18px!important;border-radius:18px}
+  .primary,.outline{min-height:44px}
+  button,.primary,.outline,.icon-button,.text-button{min-height:44px}
+  .small{min-height:42px;padding:10px 12px}
+  .card-actions{gap:8px;flex-wrap:nowrap}
+  .card-actions .primary{min-height:46px;font-size:12px}
+  .card-actions .icon-button{min-width:44px}
+  .game-option{min-height:76px;padding:16px}
+  .host-controls{gap:10px}
+  .host-controls button,.invite button,.join-form .primary{width:100%;min-height:48px}
+  .editor-footer{position:sticky;bottom:calc(66px + env(safe-area-inset-bottom));z-index:5;background:#f8f9fc;padding:10px 0;box-shadow:0 -8px 18px #f8f9fc}
+  .editor-footer>*{flex:1;min-height:48px}
+}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{scroll-behavior:auto!important;transition:none!important}}

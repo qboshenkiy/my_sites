@@ -1,0 +1,25 @@
+/* Common finish for Chronologos screens; the dark teal and gold game theme remains intact. */
+html{scroll-behavior:smooth;scroll-padding-top:16px}
+body{line-height:1.55}
+button,input,select,textarea{touch-action:manipulation}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:3px solid color-mix(in srgb,#ecc783,transparent 18%);outline-offset:3px}
+button:not(:disabled),a{transition:background-color .16s ease,border-color .16s ease,color .16s ease,box-shadow .16s ease,transform .16s ease}
+.panel,.card,.room-card,.game-card,.card-modal-card{border-radius:16px}
+input:not([type=checkbox]):not([type=radio]),select,textarea{min-height:44px}
+@media(max-width:760px){
+  html{scroll-padding-top:10px}
+  .main-content{padding-inline:15px!important}
+  .app-main{min-width:0}
+  .app-layout{padding-bottom:calc(78px + env(safe-area-inset-bottom))}
+  .mobile-bottom-nav a,.mobile-bottom-nav button{min-height:50px;padding:7px 4px}
+  .card-modal-card{width:calc(100% - 20px);max-height:calc(100dvh - 20px);overflow:auto}
+  .modal-content{padding:22px 18px!important}
+  .modal-close{position:sticky;top:0}
+  .primary-action,#confirm-placement,.room-action-start,.secondary-action{min-height:50px}
+  .room-lobby-actions{display:grid;grid-template-columns:1fr;gap:10px}
+  .room-lobby-actions>form[action="/rooms/start"]{left:12px;right:12px;bottom:calc(78px + env(safe-area-inset-bottom));padding:7px}
+  .placement-actions{flex-wrap:wrap;gap:8px;padding-inline:12px}
+  .placement-actions>*{flex:1 1 calc(50% - 8px);min-height:48px}
+  .placement-actions #confirm-placement{flex-basis:100%}
+}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{scroll-behavior:auto!important;transition:none!important}}
