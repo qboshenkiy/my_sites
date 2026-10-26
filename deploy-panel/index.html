@@ -272,4 +272,4 @@ setInterval(()=>{if(deckBooted&&['overview','server'].includes(deckView))deckFet
 setInterval(()=>{if(deckBooted&&['overview','containers'].includes(deckView))deckFetchDocker();},15000);
 setInterval(()=>{if(deckBooted&&deckView==='logs'&&$('#deck-log-auto').checked)deckFetchLog();},8000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&deckBooted)deckSelectView(deckView,false);});
-</script><script src="/pwa.js" defer></script></body></html>
+</script><script src="/pwa.js?v=2" data-pwa-app="gitdeck" defer></script></body></html>

@@ -30,7 +30,7 @@ public final class AppUpdates {
     public void check(boolean manual) {
         long now=System.currentTimeMillis();
         android.content.SharedPreferences preferences=activity.getSharedPreferences("app-updates",0);
-        if(busy || (!manual && now-preferences.getLong("checked",0)<6*60*60*1000L)) return;
+        if(busy || (!manual && now-preferences.getLong("checked",0)<15*60*1000L)) return;
         busy=true;
         new Thread(()->{
             try {

@@ -49,7 +49,7 @@ public class MainActivity extends ComponentActivity implements Link.Listener {
         super.onCreate(b);
         updates=new net.sbena.updates.AppUpdates(this,BuildConfig.VERSION_CODE);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
-        layout=new LinearLayout(this);layout.setOrientation(1);layout.setPadding(20,20,20,10);layout.setBackgroundColor(Color.rgb(16,24,39));
+        layout=new LinearLayout(this);layout.setOrientation(LinearLayout.VERTICAL);layout.setPadding(20,20,20,10);layout.setBackgroundColor(Color.rgb(16,24,39));
         TextView title=new TextView(this);title.setText("VANO / REMOTE");title.setTextSize(25);title.setTextColor(Color.rgb(99,234,210));layout.addView(title);
         status=new TextView(this);status.setTextColor(Color.WHITE);status.setText("Привяжите свой компьютер один раз. Каждый вход — по отпечатку.");layout.addView(status);
         code=new EditText(this);code.setTextColor(Color.WHITE);code.setHintTextColor(Color.LTGRAY);code.setHint("Вставьте секретный код из Windows");code.setMaxLines(3);code.setInputType(0x00080081);layout.addView(code);
