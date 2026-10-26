@@ -15,7 +15,7 @@ $admin = !empty($_SESSION['admin']);
 $accountId=$_SESSION['pulse_uid']??null;
 $csrf = $_SESSION['csrf'] ??= bin2hex(random_bytes(24));
 session_write_close();
-function fail(string $message, int $status = 400): never { http_response_code($status); echo json_encode(['error'=>$message], JSON_UNESCAPED_UNICODE); exit; }
+function fail(string $message, int $status = 400, ?string $code = null): never { http_response_code($status); echo json_encode(['error'=>$message]+($code===null?[]:['code'=>$code]), JSON_UNESCAPED_UNICODE); exit; }
 function out(array $data): never { echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR); exit; }
 function pulseLogEvent(string $event,array $details=[]): void {
     global $me;
@@ -60,7 +60,7 @@ try {
         if ((int)($_SERVER['CONTENT_LENGTH']??0)>(($action==='import_preview')?20000000:3000000)) fail('Слишком большой запрос.',413);
         $input=json_decode(file_get_contents('php://input'),true);
         if (!is_array($input)) fail('Некорректный запрос.');
-        if (!in_array($action,['join','answer','bluff_select','bluff_lie','bluff_vote','bluff_guess','receive_marathon'],true) && !hash_equals($csrf,$_SERVER['HTTP_X_CSRF_TOKEN']??'')) fail('Обновите страницу и повторите.',403);
+        if (!in_array($action,['join','answer','bluff_select','bluff_lie','bluff_vote','bluff_guess','receive_marathon'],true) && !hash_equals($csrf,$_SERVER['HTTP_X_CSRF_TOKEN']??'')) fail('Обновите страницу и повторите.',403,'csrf_expired');
     } elseif (!in_array($action,['bootstrap','quizzes','state','image','catalog','directory','assessments','room_participants','forms','form_get','form_results'],true)) fail('Требуется POST.',405);
     communityHandle($action,$input);
     if ($action==='image') {

@@ -110,6 +110,9 @@ with tempfile.TemporaryDirectory(prefix='pulse-community-') as tmp:
         with closing(sqlite3.connect(marathon/'marathon.sqlite')) as db:db.execute('UPDATE users SET telegram_id=? WHERE id=?',('123456',ext));db.commit()
         # Mini App authenticates only signed Telegram data against the same marathon identity.
         mini=Client(purl);mini.boot()
+        mini.csrf='stale-session-token'
+        assert mini.call('pulse_miniapp_login',{'initData':'invalid'},403)['code']=='csrf_expired'
+        mini.boot()
         fields={'auth_date':str(int(time.time())),'user':json.dumps({'id':123456,'first_name':'Test'})}
         secret=hmac.new(b'WebAppData',env['TELEGRAM_BOT_TOKEN'].encode(),hashlib.sha256).digest()
         fields['hash']=hmac.new(secret,'\n'.join(k+'='+v for k,v in sorted(fields.items())).encode(),hashlib.sha256).hexdigest()

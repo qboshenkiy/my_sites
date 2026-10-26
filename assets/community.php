@@ -108,7 +108,7 @@ function communityHandle(string $action,array $input): void {
         require_once __DIR__.'/pulse-miniapp.php';
         try{$telegram=pulseValidateTelegramInitData((string)($input['initData']??''),getenv('TELEGRAM_BOT_TOKEN')?:'');}
         catch(DomainException $error){fail($error->getMessage(),403);}
-        $identity=communityBridge('pulse_telegram_identity',['telegram_id'=>$telegram['telegram_id']],true);
+        $identity=communityBridge('pulse_telegram_identity',['telegram_id'=>$telegram['telegram_id']]);
         $db->exec('BEGIN IMMEDIATE');
         communityImport($identity);
         $u=query('SELECT * FROM pulse_accounts WHERE issuer=? AND external_id=? AND active=1',[$identity['issuer'],$identity['users'][0]['id']??''])->fetch();

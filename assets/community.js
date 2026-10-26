@@ -141,6 +141,7 @@ communityAuth=function(register=false){
 };
 async function pulseTelegramLogin(){
   try{
+    boot=await api('bootstrap');
     const initData=window.Telegram?.WebApp?.initData;
     if(initData){await api('pulse_miniapp_login',{initData});boot=await api('bootstrap');await dashboard();return;}
     const request=await api('pulse_telegram_request',{});const dialog=document.createElement('dialog');

@@ -15,12 +15,17 @@ let projectorMode=false;
 let lastGameStage='',selectedAnswerChoices=new Set();
 let gameSignature='',gamePointerHeld=false,gameRenderPending=false;
 function toast(message) { const el = document.querySelector('#toast'); el.textContent = message; el.classList.add('visible'); clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove('visible'), 4500); }
-async function api(action, data, asPlayer = false) {
+async function api(action, data, asPlayer = false, csrfRetried = false) {
   const headers = {'Content-Type':'application/json','X-CSRF-Token':boot?.csrf || ''};
   if (asPlayer && player) headers['X-Player-Token'] = player.token;
   const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),25000);
   let response;try{response = await fetch(`api.php?action=${action}${action === 'state' && projectorMode ? '&projector='+encodeURIComponent(projectorToken) : action === 'state' && !asPlayer ? '&room=' + encodeURIComponent(activeRoom) : ''}`, {method:data ? 'POST' : 'GET',headers,body:data ? JSON.stringify(data) : undefined,signal:controller.signal});}catch(error){throw Error(error.name==='AbortError'?'Сервер долго не отвечает. Кнопка доступна для повторной попытки.':error.message);}finally{clearTimeout(timeout);}
   let result; try { result = await response.json(); } catch { throw new Error('Сервер недоступен. Проверьте подключение.'); }
+  // A rejected CSRF check runs before the action; only Telegram login requests may retry once.
+  if(response.status===403&&result.code==='csrf_expired'&&!csrfRetried&&['pulse_telegram_request','pulse_telegram_status','pulse_miniapp_login'].includes(action)){
+    boot=await api('bootstrap');
+    return api(action,data,asPlayer,true);
+  }
   if (!response.ok) {if(response.status>=500)reportSiteLog('client_error',{message:'Сервер вернул ошибку '+response.status,source:action,status:response.status});throw new Error(result.error || 'Не удалось выполнить действие.');}
   return result;
 }
