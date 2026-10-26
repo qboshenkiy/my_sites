@@ -1,4 +1,6 @@
 <?php
+require __DIR__ . '/assets/pwa-endpoints.php';
+
 
 use CodeIgniter\Boot;
 use Config\Paths;

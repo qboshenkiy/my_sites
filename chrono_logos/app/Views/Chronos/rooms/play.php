@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="/assets/chronos/css/game-play.css">
     <link rel="stylesheet" href="/assets/css/theme.css">
     <meta name="theme-color" content="#10131b">
-    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="manifest" href="/index.php?pwa=manifest">
     <link rel="stylesheet" href="/assets/css/game-world.css?v=20261017">
     <link rel="stylesheet" href="/assets/css/polish.css?v=2">
 </head>

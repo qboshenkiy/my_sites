@@ -23,14 +23,16 @@ public final class AppUpdates {
     static final String FEED = "https://github.com/qboshenkiy/my_sites/releases/download/android-latest/updates.json";
     private final Activity activity;
     private final long installed;
-    private boolean busy, awaitingPermission;
+    private volatile boolean busy;
+    private boolean awaitingPermission, checkedInSession;
+    private AlertDialog downloadDialog;
     private File pending;
     private JSONObject offer;
     public AppUpdates(Activity activity, long installed) { this.activity=activity;this.installed=installed; }
     public void check(boolean manual) {
         long now=System.currentTimeMillis();
         android.content.SharedPreferences preferences=activity.getSharedPreferences("app-updates",0);
-        if(busy || (!manual && now-preferences.getLong("checked",0)<15*60*1000L)) return;
+        if(busy || !shouldCheck(checkedInSession,manual,now,preferences.getLong("checked",0))) return;
         busy=true;
         new Thread(()->{
             try {
@@ -41,14 +43,18 @@ public final class AppUpdates {
                 else {
                     if(!validAsset(candidate.getString("url")) || !candidate.getString("sha256").matches("[a-f0-9]{64}") || candidate.getLong("size")<1 || candidate.getLong("size")>50L*1024*1024) throw new IOException("Invalid release");
                     offer=candidate;
-                    ui(()->new AlertDialog.Builder(activity).setTitle("Доступно обновление")
+                    ui(()->new AlertDialog.Builder(activity).setTitle("Доступна новая версия")
                         .setMessage("Версия "+candidate.optString("versionName")+". Скачать и установить? Ваши данные и вход сохранятся.")
-                        .setPositiveButton("Обновить",(d,w)->download()).setNegativeButton("Позже",null).show());
+                        .setPositiveButton("Установить обновление",(d,w)->download()).setNegativeButton("Позже",null).show());
                 }
+                checkedInSession=true;
                 preferences.edit().putLong("checked",now).apply();
             } catch(Exception error) { if(manual)ui(()->toast("Не удалось проверить обновления. Проверьте интернет или повторите позже.")); }
             finally { busy=false; }
         },"app-update-check").start();
+    }
+    public static boolean shouldCheck(boolean checkedThisSession,boolean manual,long now,long last) {
+        return manual || !checkedThisSession || now<last || now-last>=15*60*1000L;
     }
     public static boolean validAsset(String address) {
         try { URI u=new URI(address);return "https".equals(u.getScheme()) && "github.com".equals(u.getHost()) && u.getPort()==-1 && u.getUserInfo()==null && u.getRawQuery()==null && u.getFragment()==null && u.getRawPath().startsWith("/qboshenkiy/my_sites/releases/download/android-") && u.getRawPath().endsWith(".apk") && !u.getRawPath().contains(".."); }
@@ -80,7 +86,13 @@ public final class AppUpdates {
         throw new IOException("Too many redirects");
     }
     private void download() {
-        if(busy)return;busy=true;toast("Скачиваем обновление…");
+        if(busy)return;busy=true;
+        android.widget.ProgressBar progress=new android.widget.ProgressBar(activity);
+        android.widget.LinearLayout box=new android.widget.LinearLayout(activity);box.setGravity(android.view.Gravity.CENTER);box.setPadding(40,28,40,28);box.addView(progress);
+        downloadDialog=new AlertDialog.Builder(activity).setTitle("Установка обновления")
+            .setMessage("Скачиваем и проверяем новую версию. Затем Android предложит установить её поверх текущей.")
+            .setView(box).setCancelable(false).create();
+        downloadDialog.show();
         new Thread(()->{
             File file=new File(activity.getCacheDir(),"updates/update.apk");
             try {
@@ -92,8 +104,8 @@ public final class AppUpdates {
                 StringBuilder hash=new StringBuilder();for(byte b:digest.digest())hash.append(String.format(Locale.ROOT,"%02x",b&255));
                 if(!hash.toString().equals(offer.getString("sha256")))throw new IOException("Checksum mismatch");
                 validatePackage(file,offer.getLong("versionCode"));
-                pending=file;ui(this::install);
-            } catch(Exception error){file.delete();ui(()->toast("Обновление не установлено: файл недоступен или не прошёл проверку. Повторите позже."));}
+                pending=file;ui(()->{closeDownloadDialog();install();});
+            } catch(Exception error){file.delete();ui(()->{closeDownloadDialog();new AlertDialog.Builder(activity).setTitle("Не удалось обновить приложение").setMessage("Файл недоступен или не прошёл проверку. Проверьте интернет и повторите попытку.").setPositiveButton("Повторить",(d,w)->check(true)).setNegativeButton("Позже",null).show();});}
             finally{busy=false;}
         },"app-update-download").start();
     }
@@ -108,6 +120,7 @@ public final class AppUpdates {
         Signature[] b=Build.VERSION.SDK_INT>=28?current.signingInfo.getApkContentsSigners():current.signatures;
         if(a==null||b==null||a.length==0||!new HashSet<>(Arrays.asList(a)).equals(new HashSet<>(Arrays.asList(b))))throw new IOException("Wrong signing key");
     }
+    private void closeDownloadDialog(){if(downloadDialog!=null){downloadDialog.dismiss();downloadDialog=null;}}
     private void install() {
         if(pending==null||!pending.isFile())return;
         try {

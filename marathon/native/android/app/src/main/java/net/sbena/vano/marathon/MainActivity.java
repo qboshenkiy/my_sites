@@ -94,13 +94,16 @@ public class MainActivity extends ComponentActivity {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setSupportMultipleWindows(true);
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
-        settings.setUserAgentString(settings.getUserAgentString()+" GlavaMarathon/1.0");
+        settings.setUserAgentString(settings.getUserAgentString()+" GlavaMarathon/1.0 NativeUpdates/2");
         if (Build.VERSION.SDK_INT >= 26) settings.setSafeBrowsingEnabled(true);
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(web,false);
         web.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest request) {
                 String url = request.getUrl().toString();
+                if (policy.internal(url) && request.isForMainFrame() && request.hasGesture() && "/_app/check-updates".equals(request.getUrl().getPath())) {
+                    updates.check(true);return true;
+                }
                 if (policy.internal(url)) return false;
                 if (request.isForMainFrame() && request.hasGesture()) openExternal(url);
                 return true;

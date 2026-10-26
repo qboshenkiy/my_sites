@@ -7,7 +7,7 @@ const source = fs.readFileSync('native-common/pwa-assist.js', 'utf8');
   const contexts=[];
   async function open(options={}) {
     const context=await browser.newContext({viewport:{width:390,height:800},...(options.ua?{userAgent:options.ua}:{})});contexts.push(context);
-    await context.route('https://pwa.test/**',route=>route.request().url().endsWith('.png')?route.fulfill({contentType:'image/png',body:fs.readFileSync('assets/telegram-avatars/marathon.png')}):route.fulfill({contentType:'text/html; charset=utf-8',body:`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><body><h1>App</h1><script data-pwa-app="${options.module||'marathon'}">${source}</script></body>`}));
+    await context.route('https://pwa.test/**',route=>route.request().url().endsWith('.png')?route.fulfill({contentType:'image/png',body:fs.readFileSync('assets/telegram-avatars/marathon.png')}):route.fulfill({contentType:'text/html; charset=utf-8',body:`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><body><h1>App</h1>${options.menu?'<aside class="sidebar"></aside>':''}<script data-pwa-app="${options.module||'marathon'}">${source}</script></body>`}));
     await context.addInitScript(({standalone,waiting,sdk})=>{
       window.matchMedia=()=>({matches:standalone});
       if(sdk)window.Telegram={WebApp:{initData:'test',platform:'android'}};
@@ -30,6 +30,9 @@ const source = fs.readFileSync('native-common/pwa-assist.js', 'utf8');
       {ua:'Mozilla/5.0 Telegram Android'}, {suffix:'?miniapp=1'}, {suffix:'#tgWebAppData=test'}, {sdk:true},
       {ua:'Mozilla/5.0 GlavaMarathon/1.0'}, {ua:'Mozilla/5.0 (iPhone) AppleWebKit/605.1.15 Mobile/15E148'}
     ]) {const page=await open(options);await ready(page);assert.equal(await page.locator('.pwa-assist').count(),0,JSON.stringify(options));}
+    const menu=await open({menu:true});assert.equal(await menu.locator('[data-app-install-menu]').count(),1);await menu.click('[data-app-install-menu]');assert.equal(await menu.locator('.pwa-install-help[open]').count(),1);await menu.locator('.pwa-install-help button').click();await ready(menu);await menu.click('[data-app-install-menu]');assert.equal(await menu.evaluate(()=>window.promptCalls),1);
+    const native=await open({menu:true,ua:'Mozilla/5.0 GlavaMarathon/1.0 NativeUpdates/2'});assert.equal(await native.locator('[data-app-install-menu]').getAttribute('href'),'/_app/check-updates');await ready(native);assert.equal(await native.locator('.pwa-assist').count(),0);
+    const telegramMenu=await open({menu:true,suffix:'?miniapp=1'});assert.equal(await telegramMenu.locator('[data-app-install-menu]').count(),0);
     const installed=await open({standalone:true});await ready(installed);assert.equal(await installed.locator('.pwa-assist').count(),0);
     for(const [module,color] of [['marathon','rgb(49, 92, 73)'],['pulse','rgb(117, 99, 232)'],['chrono','rgb(214, 183, 122)'],['drawing','rgb(101, 82, 217)'],['gitdeck','rgb(169, 154, 255)']]){
       const page=await open({module});await ready(page);assert.equal(await page.locator('[data-pwa-install]').evaluate(el=>getComputedStyle(el).backgroundColor),color);

@@ -32,7 +32,7 @@ LAYOUT = {
     'marathon': ['index.php', 'api.php', 'manifest.webmanifest', 'service-worker.js', '.htaccess', 'assets', 'lib', 'tools/bot.php', 'tools/backup.php'],
     'chrono': ['app', 'public/assets', 'public/index.php', 'public/manifest.webmanifest', 'public/service-worker.js', 'public/pwa.js', 'public/_health.php', 'public/.htaccess',
                'public/favicon.ico', 'public/robots.txt', 'composer.json', 'composer.lock', 'spark', 'ops', '.dockerignore'],
-    'self': ['app.py', 'index.html', 'VERSION', 'manifest.webmanifest', 'service-worker.js', 'pwa.js', 'icon.svg', 'README.md', 'install.sh', 'config.example.json', '.gitignore'],
+    'self': ['app.py', 'index.html', 'VERSION', 'manifest.webmanifest', 'service-worker.js', 'pwa.js', 'icon.svg', 'icon-192.png', 'icon-512.png', 'README.md', 'install.sh', 'config.example.json', '.gitignore'],
 }
 REQUIRED = {'remote': ['server/app.py', 'server/requirements.txt', 'server/Dockerfile', 'ops/compose.yaml'],
             'drawing': ['index.php', 'api.php', 'lib/core.php', 'lib/ai.php', 'ops/compose.yaml', 'ops/Dockerfile'],
@@ -40,7 +40,7 @@ REQUIRED = {'remote': ['server/app.py', 'server/requirements.txt', 'server/Docke
             'marathon': ['index.php', 'api.php', 'lib/core.php', 'lib/telegram.php'],
             'chrono': ['app/Config/Paths.php', 'public/index.php', 'composer.lock', 'spark', 'ops/compose.yaml',
                        'ops/Dockerfile', 'ops/entrypoint.sh', 'app/Commands/DeployAdmin.php'],
-            'self': ['app.py', 'index.html', 'VERSION', 'manifest.webmanifest', 'service-worker.js', 'pwa.js', 'icon.svg']}
+            'self': ['app.py', 'index.html', 'VERSION']}
 
 
 def valid_ref(ref):
@@ -1389,9 +1389,18 @@ class Panel(http.server.BaseHTTPRequestHandler):
         static = {'/manifest.webmanifest': ('manifest.webmanifest', 'application/manifest+json; charset=utf-8'),
                   '/service-worker.js': ('service-worker.js', 'text/javascript; charset=utf-8'),
                   '/pwa.js': ('pwa.js', 'text/javascript; charset=utf-8'),
-                  '/icon.svg': ('icon.svg', 'image/svg+xml; charset=utf-8')}
+                  '/icon.svg': ('icon.svg', 'image/svg+xml; charset=utf-8'),
+                  '/icon-192.png': ('icon-192.png', 'image/png'), '/icon-512.png': ('icon-512.png', 'image/png')}
         if url.path in static:
             filename, mime = static[url.path]
+            # The embedded bundle is delivered even by older panel installers that only copy index.html.
+            html = Path(__file__).with_name('index.html').read_text(encoding='utf-8')
+            bundle = re.search(r'<script id="pwa-resources" type="application/json">(.*?)</script>', html, re.S)
+            if bundle:
+                resource = json.loads(bundle.group(1)).get(filename)
+                if resource:
+                    body = base64.b64decode(resource['body']) if resource.get('base64') else resource['body'].encode('utf-8')
+                    return self.send(200, body, mime)
             return self.send(200, Path(__file__).with_name(filename).read_bytes(), mime)
         session = self.session()
         if not session:
