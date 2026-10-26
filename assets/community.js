@@ -141,6 +141,8 @@ communityAuth=function(register=false){
 };
 async function pulseTelegramLogin(){
   try{
+    const initData=window.Telegram?.WebApp?.initData;
+    if(initData){await api('pulse_miniapp_login',{initData});boot=await api('bootstrap');await dashboard();return;}
     const request=await api('pulse_telegram_request',{});const dialog=document.createElement('dialog');
     dialog.innerHTML=`<h2>Вход через бота Пульса</h2><p>Откройте отдельного бота Пульса и нажмите «Подтвердить вход». После подтверждения здесь откроется ваш аккаунт марафона.</p><a class="primary" href="${esc(request.url)}" target="_blank" rel="noopener noreferrer">Открыть Telegram ↗</a><p class="pulse-telegram-status" role="status">Ждём подтверждения · 10 минут</p><button class="outline" type="button">Отмена</button>`;
     document.body.append(dialog);let timer;

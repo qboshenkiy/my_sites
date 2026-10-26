@@ -1,6 +1,8 @@
 """Real PHP/SQLite checks: ownership, catalog, marks, legacy data and marathon SSO."""
 from contextlib import closing
 import http.cookiejar
+import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -106,6 +108,17 @@ with tempfile.TemporaryDirectory(prefix='pulse-community-') as tmp:
         assert 'password' not in json.dumps(admin.call('directory')) and 'telegram_id' not in json.dumps(admin.call('directory'))
         # A separate Pulse bot confirms the Telegram identity already linked in marathon.
         with closing(sqlite3.connect(marathon/'marathon.sqlite')) as db:db.execute('UPDATE users SET telegram_id=? WHERE id=?',('123456',ext));db.commit()
+        # Mini App authenticates only signed Telegram data against the same marathon identity.
+        mini=Client(purl);mini.boot()
+        fields={'auth_date':str(int(time.time())),'user':json.dumps({'id':123456,'first_name':'Test'})}
+        secret=hmac.new(b'WebAppData',env['TELEGRAM_BOT_TOKEN'].encode(),hashlib.sha256).digest()
+        fields['hash']=hmac.new(secret,'\n'.join(k+'='+v for k,v in sorted(fields.items())).encode(),hashlib.sha256).hexdigest()
+        raw=urllib.parse.urlencode(fields)
+        mini.call('pulse_miniapp_login',{'initData':raw.replace('123456','654321')},403)
+        assert mini.boot()['user'] is None
+        mini.call('pulse_miniapp_login',{'initData':raw})
+        assert mini.boot()['user']['external_id']==ext
+        print('PASS: Mini App signed login shares marathon identity; forged login denied')
         telegram=Client(purl);telegram.boot();request=telegram.call('pulse_telegram_request',{})
         assert request['url'].startswith('https://t.me/pulse_fixture_bot?start=pl_')
         code_php=r'''function query(string $sql,array $args=[]):PDOStatement{global $db;$s=$db->prepare($sql);$s->execute($args);return $s;} function fail(string $m,int $s=400):never{throw new RuntimeException($m,$s);} $db=new PDO('sqlite:'.getenv('QUIZ_DATA_DIR').'/quiz.sqlite',null,null,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC]);require $argv[1];require $argv[2];echo json_encode(pulseTelegramUpdate(json_decode(stream_get_contents(STDIN),true),'999999'));'''

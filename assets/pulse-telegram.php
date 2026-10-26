@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__.'/pulse-miniapp.php';
+
 function pulseTelegramSchema(): void {
     global $db;
     $db->exec('CREATE TABLE IF NOT EXISTS pulse_telegram_requests(token_hash TEXT PRIMARY KEY,session_hash TEXT NOT NULL,expires_at INTEGER NOT NULL,user_id TEXT,telegram_id TEXT,consumed INTEGER NOT NULL DEFAULT 0);
@@ -18,6 +20,10 @@ function pulseTelegramUpdate(array $update,string $botId): array {
     $text=$callback['data']??$message['text']??'';$match=[];$request=null;
     if(preg_match($callback?'/^pl_([a-f0-9]{48})$/':'/^\/start(?:@\w+)? pl_([a-f0-9]{48})$/',$text,$match))$request=query('SELECT * FROM pulse_telegram_requests WHERE token_hash=?',[hash('sha256',$match[1])])->fetch();
     $reply=['chat_id'=>$chat['id'],'text'=>'Откройте Пульс и нажмите «Войти через Telegram». Этот отдельный бот подтверждает вход в аккаунт, уже привязанный в марафоне.'];
+    if(!$callback&&preg_match('/^\/(?:start|app)(?:@\w+)?$/',trim($text))&&($url=pulseMiniAppUrl())){
+        $reply['text']='Откройте Пульс прямо в Telegram: викторины, тесты и ваши результаты.';
+        $reply['reply_markup']=['inline_keyboard'=>[[['text'=>'Открыть Пульс','web_app'=>['url'=>$url]]]]];
+    }
     if($match){
         if(!$request||$request['consumed']||$request['expires_at']<time())$reply['text']='Запрос уже использован или истёк. Начните вход заново на сайте Пульса.';
         else{

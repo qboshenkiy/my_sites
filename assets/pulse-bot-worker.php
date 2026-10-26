@@ -31,8 +31,14 @@ try{
     $bot=pulseBotIdentity();$botId=(string)$bot['id'];
     echo "Бот Пульса запущен.\n";
     $offset=(int)(query('SELECT value FROM settings WHERE key=?',['telegram_offset_'.$botId])->fetchColumn()?:0);
+    $menuConfigured=false;
     while(true){
         try{
+            if(!$menuConfigured){
+                $menu=pulseMiniAppMenu();
+                if($menu){try{pulseBotCall('setChatMenuButton',['menu_button'=>$menu]);$menuConfigured=true;}catch(Throwable $error){fwrite(STDERR,"Не удалось настроить кнопку Mini App. Повторим при следующем опросе.\n");}}
+                else $menuConfigured=true;
+            }
             formsBotTick();pulseGameBotTick();
             foreach(pulseBotCall('getUpdates',['offset'=>$offset,'timeout'=>5,'allowed_updates'=>['message','callback_query','poll_answer']]) as $update){
                 if(!pulseGameBotUpdate($update,$botId)&&!formsBotUpdate($update,$botId))foreach(pulseTelegramUpdate($update,$botId) as $action)pulseBotCall($action['method'],$action['args']);

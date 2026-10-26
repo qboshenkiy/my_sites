@@ -104,6 +104,19 @@ function communityHandle(string $action,array $input): void {
         if(strlen($key)<32||!getenv('MARATHON_URL')||!hash_equals($key,$_SERVER['HTTP_X_PULSE_BRIDGE']??''))fail('Запрос не подтверждён.',403);
         $db->exec('BEGIN IMMEDIATE');$result=communityImport($input);communityAudit('receive_marathon','directory',$result);$db->exec('COMMIT');out($result);
     }
+    if($action==='pulse_miniapp_login'){
+        require_once __DIR__.'/pulse-miniapp.php';
+        try{$telegram=pulseValidateTelegramInitData((string)($input['initData']??''),getenv('TELEGRAM_BOT_TOKEN')?:'');}
+        catch(DomainException $error){fail($error->getMessage(),403);}
+        $identity=communityBridge('pulse_telegram_identity',['telegram_id'=>$telegram['telegram_id']],true);
+        $db->exec('BEGIN IMMEDIATE');
+        communityImport($identity);
+        $u=query('SELECT * FROM pulse_accounts WHERE issuer=? AND external_id=? AND active=1',[$identity['issuer'],$identity['users'][0]['id']??''])->fetch();
+        if(!$u){$db->exec('ROLLBACK');fail('Аккаунт марафона не найден.',403);}
+        require_once __DIR__.'/forms-bot.php';formsBotSchema();
+        query('INSERT OR REPLACE INTO pulse_tg_accounts VALUES (?,?)',[$telegram['telegram_id'],$u['id']]);
+        $db->exec('COMMIT');communityLogin($u);out(['ok'=>true]);
+    }
     if(in_array($action,['pulse_telegram_request','pulse_telegram_status'],true)){
         require_once __DIR__.'/pulse-telegram.php';pulseTelegramSchema();
         if(!getenv('TELEGRAM_BOT_TOKEN')||!preg_match('/^[a-zA-Z0-9_]{5,32}$/',getenv('TELEGRAM_BOT_USERNAME')?:'')||!getenv('MARATHON_URL')||!getenv('PULSE_BRIDGE_SECRET'))fail('Подключите отдельного Telegram-бота Пульса в GitDeck.',503);
