@@ -15,34 +15,67 @@ import org.json.JSONObject;
 import javax.crypto.*;
 import javax.crypto.spec.GCMParameterSpec;
 import java.security.KeyStore;
+import androidx.activity.ComponentActivity;
+import androidx.activity.OnBackPressedCallback;
+import androidx.activity.result.ActivityResultLauncher;
+import com.journeyapps.barcodescanner.ScanContract;
+import com.journeyapps.barcodescanner.ScanOptions;
 
-public class MainActivity extends Activity implements Link.Listener {
+public class MainActivity extends ComponentActivity implements Link.Listener {
     EditText code,text;
     TextView status;
     RemoteView screen;
     Link link;
+    LinearLayout layout;
+    Button fullscreenExit;
+    boolean fullscreen=false;
+    private net.sbena.updates.AppUpdates updates;
+    int previousOrientation;
     boolean authenticating=false, requestingProjection=false;
     CancellationSignal authCancel;
     static final String ALIAS="vano.remote.pairing.v1";
+    private final ActivityResultLauncher<ScanOptions> qrScanner=registerForActivityResult(new ScanContract(), result->{
+        if(result.getContents()==null)return;
+        try{
+            String raw=result.getContents();
+            if(raw.length()>4096)throw new Exception();
+            JSONObject p=new JSONObject(raw);
+            java.net.URI u=new java.net.URI(p.getString("server"));
+            if(!"wss".equals(u.getScheme())||u.getHost()==null||u.getUserInfo()!=null||u.getQuery()!=null||u.getFragment()!=null||!(u.getPath().isEmpty()||u.getPath().equals("/"))||!p.getString("room").matches("[a-f0-9]{32}")||p.getString("secret").length()<40)throw new Exception();
+            code.setText(raw);status("Код компьютера "+u.getHost()+" получен. Нажмите «Привязать» и подтвердите отпечатком.");
+        }catch(Exception e){status("Этот QR не является кодом привязки Vano Remote.");}
+    });
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
+        updates=new net.sbena.updates.AppUpdates(this,BuildConfig.VERSION_CODE);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
-        LinearLayout layout=new LinearLayout(this);layout.setOrientation(1);layout.setPadding(20,20,20,10);layout.setBackgroundColor(Color.rgb(16,24,39));
+        layout=new LinearLayout(this);layout.setOrientation(1);layout.setPadding(20,20,20,10);layout.setBackgroundColor(Color.rgb(16,24,39));
         TextView title=new TextView(this);title.setText("VANO / REMOTE");title.setTextSize(25);title.setTextColor(Color.rgb(99,234,210));layout.addView(title);
         status=new TextView(this);status.setTextColor(Color.WHITE);status.setText("Привяжите свой компьютер один раз. Каждый вход — по отпечатку.");layout.addView(status);
         code=new EditText(this);code.setTextColor(Color.WHITE);code.setHintTextColor(Color.LTGRAY);code.setHint("Вставьте секретный код из Windows");code.setMaxLines(3);code.setInputType(0x00080081);layout.addView(code);
+        row(layout,new String[]{"Сканировать QR"},new Runnable[]{()->{disconnect();qrScanner.launch(new ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setPrompt("Наведите камеру на QR в окне «Код привязки» на компьютере").setOrientationLocked(false).setBeepEnabled(false).setBarcodeImageEnabled(false));}});
         row(layout,new String[]{"Привязать","Войти • отпечаток","Отключить"},new Runnable[]{()->biometric(true),()->biometric(false),this::disconnect});
+        row(layout,new String[]{"USB • отпечаток","Полный экран"},new Runnable[]{()->biometric(false,true),()->setFullscreen(!fullscreen)});
+        row(layout,new String[]{"Проверить обновления"},new Runnable[]{()->updates.check(true)});
         row(layout,new String[]{"Передать экран","Разрешить управление"},new Runnable[]{this::share,()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))});
         screen=new RemoteView(this);layout.addView(screen,new LinearLayout.LayoutParams(-1,0,1));
         text=new EditText(this);text.setTextColor(Color.WHITE);text.setHintTextColor(Color.LTGRAY);text.setHint("Текст для компьютера");layout.addView(text);
         row(layout,new String[]{"Отправить","Enter","⌫","Esc"},new Runnable[]{()->{send("text","value",text.getText().toString());text.setText("");},()->send("key","name","enter"),()->send("key","name","backspace"),()->send("key","name","esc")});
         row(layout,new String[]{"ПК ↑","ПК ↓","Правый клик","Удалить привязку"},new Runnable[]{()->send("scroll","dy",3),()->send("scroll","dy",-3),()->screen.right=true,this::forget});
-        setContentView(layout);
+        FrameLayout stage=new FrameLayout(this);stage.addView(layout,new FrameLayout.LayoutParams(-1,-1));
+        fullscreenExit=new Button(this);fullscreenExit.setText("✕");fullscreenExit.setContentDescription("Выйти из полного экрана");fullscreenExit.setAlpha(.7f);fullscreenExit.setVisibility(View.GONE);fullscreenExit.setOnClickListener(v->setFullscreen(false));
+        FrameLayout.LayoutParams exitParams=new FrameLayout.LayoutParams(120,110,Gravity.TOP|Gravity.END);stage.addView(fullscreenExit,exitParams);
+        setContentView(stage);
+        getOnBackPressedDispatcher().addCallback(this,new OnBackPressedCallback(true){@Override public void handleOnBackPressed(){if(fullscreen)setFullscreen(false);else{disconnect();finish();}}});
         if(Build.VERSION.SDK_INT>=33)requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},5);
     }
+    @Override protected void onResume(){super.onResume();if(updates!=null)updates.resume();}
     void row(LinearLayout parent,String[] names,Runnable[] actions){LinearLayout r=new LinearLayout(this);for(int i=0;i<names.length;i++){Button b=new Button(this);b.setText(names[i]);b.setTextSize(11);final Runnable a=actions[i];b.setOnClickListener(v->a.run());r.addView(b,new LinearLayout.LayoutParams(0,-2,1));}parent.addView(r);}
     android.content.SharedPreferences prefs(){return getSharedPreferences("pairing",MODE_PRIVATE);}
     void biometric(boolean enroll){
+        biometric(enroll,false);
+    }
+    void biometric(boolean enroll,boolean usb){
         if(authenticating)return;
         try{
             if(((BiometricManager)getSystemService(BIOMETRIC_SERVICE)).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)!=BiometricManager.BIOMETRIC_SUCCESS)throw new Exception("Настройте отпечаток в настройках телефона. Требуется сильная биометрия.");
@@ -63,16 +96,16 @@ public class MainActivity extends Activity implements Link.Listener {
                 @Override public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result){authenticating=false;try{
                     Cipher c=result.getCryptoObject().getCipher();
                     if(enroll){byte[] encrypted=c.doFinal(Link.utf(raw));prefs().edit().putString("iv",Base64.encodeToString(c.getIV(),Base64.NO_WRAP)).putString("value",Base64.encodeToString(encrypted,Base64.NO_WRAP)).commit();code.setText("");status("Привязка сохранена. Нажмите «Войти • отпечаток».");}
-                    else {byte[] plain=c.doFinal(Base64.decode(prefs().getString("value",""),Base64.NO_WRAP));try{disconnect();link=new Link(new JSONObject(new String(plain,java.nio.charset.StandardCharsets.UTF_8)),MainActivity.this);}finally{java.util.Arrays.fill(plain,(byte)0);}}
+                    else {byte[] plain=c.doFinal(Base64.decode(prefs().getString("value",""),Base64.NO_WRAP));try{JSONObject pairing=new JSONObject(new String(plain,java.nio.charset.StandardCharsets.UTF_8));if(usb)pairing.put("server","ws://127.0.0.1:28123");disconnect();link=new Link(pairing,MainActivity.this);}finally{java.util.Arrays.fill(plain,(byte)0);}}
                 }catch(Exception e){status("Ошибка ключа или кода. Повторите привязку.");}}
                 @Override public void onAuthenticationError(int error,CharSequence message){authenticating=false;status(message.toString());}
             });
         }catch(Exception e){authenticating=false;status(e.getMessage()==null?"Ошибка биометрии":e.getMessage());}
     }
     void forget(){new AlertDialog.Builder(this).setMessage("Удалить привязку с телефона? Чтобы отозвать доступ полностью, нажмите «Отозвать телефон» также в Windows.").setPositiveButton("Удалить",(d,w)->{disconnect();prefs().edit().clear().commit();try{KeyStore k=KeyStore.getInstance("AndroidKeyStore");k.load(null);k.deleteEntry(ALIAS);}catch(Exception ignored){}status("Привязка удалена");}).setNegativeButton("Отмена",null).show();}
-    void disconnect(){if(link!=null){link.close();link=null;}stopService(new Intent(this,ScreenService.class));if(screen!=null){screen.bitmap=null;screen.invalidate();}status("Отключено");}
+    void disconnect(){if(link!=null){link.close();link=null;}stopService(new Intent(this,ScreenService.class));getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(screen!=null){screen.bitmap=null;screen.invalidate();}status("Отключено");}
     void send(String type,String field,Object value){try{if(link!=null)link.send(new JSONObject().put("type",type).put(field,value));}catch(Exception ignored){}}
-    @Override public void status(String value){runOnUiThread(()->status.setText(value));}
+    @Override public void status(String value){runOnUiThread(()->{status.setText(value);if(link!=null&&link.ready)getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);});}
     @Override public void ended(){runOnUiThread(this::disconnect);}
     @Override public void data(JSONObject v){
         try{String t=v.getString("type");if(t.equals("frame")){byte[] jpeg=Base64.decode(v.getString("jpeg"),Base64.NO_WRAP);Bitmap b=BitmapFactory.decodeByteArray(jpeg,0,jpeg.length);runOnUiThread(()->{screen.bitmap=b;screen.invalidate();});}else if(ScreenService.active){ControlService.control(v);}}catch(Exception ignored){}
@@ -81,6 +114,16 @@ public class MainActivity extends Activity implements Link.Listener {
     @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==7){requestingProjection=false;if(result==RESULT_OK&&link!=null&&link.ready){Intent i=new Intent(this,ScreenService.class).putExtra("result",result).putExtra("data",data);startForegroundService(i);}}}
     @Override protected void onStop(){super.onStop();if(authenticating&&authCancel!=null)authCancel.cancel();if(!ScreenService.active&&!requestingProjection)disconnect();}
     @Override protected void onDestroy(){if(authCancel!=null)authCancel.cancel();disconnect();super.onDestroy();}
+    void setFullscreen(boolean enabled){
+        if(enabled==fullscreen)return;
+        fullscreen=enabled;
+        for(int i=0;i<layout.getChildCount();i++){View child=layout.getChildAt(i);if(child!=screen)child.setVisibility(enabled?View.GONE:View.VISIBLE);}
+        layout.setPadding(enabled?0:20,enabled?0:20,enabled?0:20,enabled?0:10);
+        fullscreenExit.setVisibility(enabled?View.VISIBLE:View.GONE);
+        android.view.WindowInsetsController insets=getWindow().getInsetsController();
+        if(enabled){previousOrientation=getRequestedOrientation();setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);if(insets!=null){insets.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);insets.hide(WindowInsets.Type.systemBars());}}
+        else{setRequestedOrientation(previousOrientation);if(insets!=null)insets.show(WindowInsets.Type.systemBars());}
+    }
     class RemoteView extends View {
         Bitmap bitmap;RectF rect=new RectF();boolean right=false;float downX,downY;boolean downValid=false;
         RemoteView(Context c){super(c);setBackgroundColor(Color.rgb(7,13,22));}

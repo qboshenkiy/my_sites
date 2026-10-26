@@ -27,7 +27,8 @@ class GitDeckTests(unittest.TestCase):
         self.dest.mkdir()
         self.source = self.root / 'git-source'
         self.source.mkdir()
-        for name, value in {'api.php': 'new api', 'index.php': 'new index', 'seed.php': 'new seed',
+        for name, value in {'api.php': 'new api', 'index.php': 'new index', 'manifest.webmanifest': '{}',
+                            'service-worker.js': '// test worker', 'seed.php': 'new seed',
                             'assets/app.js': 'new js', 'assets/new.css': 'new css',
                             '.env': 'PRIVATE_REPO_ENV_MUST_NOT_DEPLOY', 'compose.yaml': 'NOT_DEPLOYED'}.items():
             path = self.source / name

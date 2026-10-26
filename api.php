@@ -45,6 +45,7 @@ try {
     CREATE TABLE IF NOT EXISTS answers (player_id TEXT NOT NULL REFERENCES players(id),room_id TEXT NOT NULL REFERENCES rooms(id),question_index INTEGER NOT NULL,choice INTEGER NOT NULL,points INTEGER NOT NULL,created_at REAL NOT NULL,PRIMARY KEY(player_id,question_index));
     CREATE TABLE IF NOT EXISTS login_attempts (ip TEXT PRIMARY KEY,attempts INTEGER NOT NULL,updated_at INTEGER NOT NULL);');
     $db->exec('CREATE TABLE IF NOT EXISTS images(id TEXT PRIMARY KEY,mime TEXT NOT NULL,data BLOB NOT NULL); CREATE TABLE IF NOT EXISTS room_meta(room_id TEXT PRIMARY KEY REFERENCES rooms(id),played TEXT NOT NULL DEFAULT \'[]\',projector_token TEXT NOT NULL);');
+    require __DIR__.'/assets/pulse-game-bot.php';pulseGameBotSchema();
     require __DIR__.'/seed.php';
     require __DIR__.'/assets/community.php';communitySchema();
     $me=$accountId?query('SELECT * FROM pulse_accounts WHERE id=? AND active=1',[$accountId])->fetch():null;
@@ -73,7 +74,7 @@ try {
         if(!$info||strlen($bytes)>2000000||$info[0]>4096||$info[1]>4096||!in_array($info['mime'],['image/png','image/jpeg','image/webp','image/gif'],true))fail('Изображение: до 2 МБ и 4096×4096 пикселей.');
         $id=bin2hex(random_bytes(16));query('INSERT INTO images VALUES (?,?,?)',[$id,$info['mime'],$bytes]);out(['id'=>$id]);
     }
-    if ($action==='bootstrap') out(['admin'=>$admin,'user'=>communityUser($me?:null),'marathon'=>(bool)(getenv('MARATHON_URL')&&getenv('PULSE_BRIDGE_SECRET')),'telegram'=>['configured'=>(bool)(getenv('TELEGRAM_BOT_TOKEN')&&getenv('TELEGRAM_BOT_USERNAME')&&getenv('MARATHON_URL')&&getenv('PULSE_BRIDGE_SECRET'))],'configured'=>(bool)query("SELECT value FROM settings WHERE key='password'")->fetchColumn(),'csrf'=>$csrf]);
+    if ($action==='bootstrap') out(['admin'=>$admin,'user'=>communityUser($me?:null),'marathon'=>(bool)(getenv('MARATHON_URL')&&getenv('PULSE_BRIDGE_SECRET')),'telegram'=>['configured'=>(bool)(getenv('TELEGRAM_BOT_TOKEN')&&getenv('TELEGRAM_BOT_USERNAME')&&getenv('MARATHON_URL')&&getenv('PULSE_BRIDGE_SECRET')),'botConfigured'=>(bool)(getenv('TELEGRAM_BOT_TOKEN')&&getenv('TELEGRAM_BOT_USERNAME'))],'configured'=>(bool)query("SELECT value FROM settings WHERE key='password'")->fetchColumn(),'csrf'=>$csrf]);
     if ($action==='setup' || $action==='login') {
         $password=$input['password']??'';
         if (!is_string($password) || strlen($password)<8 || strlen($password)>200) fail('Пароль должен содержать от 8 до 200 символов.');
@@ -163,6 +164,12 @@ try {
         query('INSERT INTO rooms(id,code,quiz,status,created_at,owner_id) VALUES (?,?,?,?,?,?)',[$id,$code,json_encode($quiz,JSON_UNESCAPED_UNICODE),'lobby',time(),$me['id']]);
         query('INSERT INTO room_meta(room_id,projector_token) VALUES (?,?)',[$id,bin2hex(random_bytes(24))]);out(['id'=>$id,'code'=>$code]);
     }
+    if($action==='room_telegram_create'){
+        hostOnly();$room=query('SELECT * FROM rooms WHERE id=?',[(string)($input['room']??'')])->fetch();if(!$room||!communityOwn($room))fail('Комната не найдена.',404);
+        if(!getenv('TELEGRAM_BOT_TOKEN')||!getenv('TELEGRAM_BOT_USERNAME'))fail('Сначала подключите Telegram-бота Пульса в GitDeck.',503);
+        if(in_array(json_decode($room['quiz'],true)['mode']??'classic',['bluff','author'],true))fail('Для этого режима подключение группы пока недоступно.');
+        try{$result=pulseGameBotCreate($room['id']);}catch(DomainException $e){fail($e->getMessage(),409);}out($result);
+    }
     if ($action==='join') {
         $code=cleanText($input['code']??'',6); $name=$me?$me['name']:cleanText($input['name']??'',24);
         $db->exec('BEGIN IMMEDIATE'); $room=query('SELECT * FROM rooms WHERE code=?',[$code])->fetch();
@@ -193,7 +200,8 @@ try {
         if(in_array(($quiz['mode']??'classic'),['bluff','author'],true)){require __DIR__.'/assets/bluff.php';if($action==='control')query('UPDATE rooms SET control_version=control_version+1 WHERE id=?',[$roomId]);$result=bluffHandle($action,$input,$room,$quiz,$meta,$player,$projector);if($action==='control'){ $fresh=query('SELECT * FROM rooms WHERE id=?',[$roomId])->fetch();if($fresh['status']==='finished')syncRoomReport($fresh); }$db->exec('COMMIT');out($result);}
         if(str_starts_with($action,'bluff_'))fail('Это действие доступно только в Бредовухе.');
         $played=json_decode($meta['played'],true);$boardMode=($quiz['mode']??'classic')==='board';
-        if ($room['status']==='question' && (microtime(true)>=(float)$room['deadline']||((int)query('SELECT count(*) FROM players WHERE room_id=?',[$roomId])->fetchColumn()>0&&(int)query('SELECT count(*) FROM answers WHERE room_id=? AND question_index=?',[$roomId,$index])->fetchColumn()>=(int)query('SELECT count(*) FROM players WHERE room_id=?',[$roomId])->fetchColumn()))) { query("UPDATE rooms SET status='results',control_version=control_version+1 WHERE id=?",[$roomId]); $room['status']='results';$room['control_version']++; }
+        $telegramGroup=query('SELECT chat_id,chat_title,bind_code FROM pulse_room_groups WHERE room_id=?',[$roomId])->fetch()?:null;
+        if ($room['status']==='question' && (microtime(true)>=(float)$room['deadline']||(empty($telegramGroup['chat_id'])&&(int)query('SELECT count(*) FROM players WHERE room_id=?',[$roomId])->fetchColumn()>0&&(int)query('SELECT count(*) FROM answers WHERE room_id=? AND question_index=?',[$roomId,$index])->fetchColumn()>=(int)query('SELECT count(*) FROM players WHERE room_id=?',[$roomId])->fetchColumn()))) { query("UPDATE rooms SET status='results',control_version=control_version+1 WHERE id=?",[$roomId]); $room['status']='results';$room['control_version']++; }
         if ($action==='control') {
             hostOnly(); $command=$input['command']??'';
             if($command==='reveal'&&$room['status']==='results'){$db->exec('COMMIT');out(['ok'=>true]);}
@@ -226,10 +234,10 @@ try {
             $points=$isCorrect ? (($quiz['scoring']??'speed')==='fixed'?$maxPoints:(int)round($maxPoints*(.5+.5*max(0,((float)$room['deadline']-microtime(true))/$question['seconds'])))) : 0;
             $storedChoice=count($choices)===1?$choices[0]:json_encode($choices);query('INSERT INTO answers VALUES (?,?,?,?,?,?)',[$player['id'],$roomId,$index,$storedChoice,$points,microtime(true)]);
             query('UPDATE players SET score=score+? WHERE id=?',[$points,$player['id']]);
-            if((int)query('SELECT count(*) FROM answers WHERE room_id=? AND question_index=?',[$roomId,$index])->fetchColumn()>=(int)query('SELECT count(*) FROM players WHERE room_id=?',[$roomId])->fetchColumn())query("UPDATE rooms SET status='results',control_version=control_version+1 WHERE id=?",[$roomId]);
+            if(empty($telegramGroup['chat_id'])&&(int)query('SELECT count(*) FROM answers WHERE room_id=? AND question_index=?',[$roomId,$index])->fetchColumn()>=(int)query('SELECT count(*) FROM players WHERE room_id=?',[$roomId])->fetchColumn())query("UPDATE rooms SET status='results',control_version=control_version+1 WHERE id=?",[$roomId]);
             $db->exec('COMMIT'); out(['ok'=>true]);
         }
-        $players=query('SELECT id,name,score FROM players WHERE room_id=? ORDER BY score DESC,name ASC',[$roomId])->fetchAll();
+        $players=query('SELECT id,name,score,source FROM players WHERE room_id=? ORDER BY score DESC,name ASC',[$roomId])->fetchAll();
         $counts=$question?array_fill(0,count($question['options']),0):[];
         foreach(query('SELECT choice FROM answers WHERE room_id=? AND question_index=?',[$roomId,$index])->fetchAll() as $a){$selected=json_decode((string)$a['choice'],true);if(!is_array($selected))$selected=[(int)$a['choice']];foreach($selected as $selectedIndex)if(isset($counts[(int)$selectedIndex]))$counts[(int)$selectedIndex]++;}
         $answer=$player?query('SELECT choice,points FROM answers WHERE player_id=? AND question_index=?',[$player['id'],$index])->fetch():null;
@@ -248,7 +256,7 @@ try {
         $rank=0;$lastScore=null;foreach($players as $i=>&$p){if($lastScore!==$p['score'])$rank=$i+1;$p['rank']=$rank;$lastScore=$p['score'];}unset($p);
         $board=[];foreach($quiz['questions'] as $i=>$item)$board[]=['index'=>$i,'category'=>$item['category']??'Вопросы','points'=>$item['points']??1000,'played'=>in_array($i,$played,true)];
         $db->exec('COMMIT');
-        out(['version'=>(int)$room['control_version'],'id'=>$roomId,'code'=>$room['code'],'title'=>$quiz['title'],'status'=>$room['status'],'mode'=>$quiz['mode']??'classic','scoring'=>$quiz['scoring']??'speed','board'=>$board,'played'=>count($played),'projectorToken'=>$admin&&!$player&&!$projector?$meta['projector_token']:null,'index'=>$index,'total'=>count($quiz['questions']),'question'=>$question,'remaining'=>$room['status']==='question'?max(0,(float)$room['deadline']-microtime(true)):0,'players'=>$players,'counts'=>$counts,'answered'=>(int)query('SELECT count(*) FROM answers WHERE room_id=? AND question_index=?',[$roomId,$index])->fetchColumn(),'answer'=>$answer?:null,'playerId'=>$player['id']??null]);
+        out(['version'=>(int)$room['control_version'],'id'=>$roomId,'code'=>$room['code'],'title'=>$quiz['title'],'status'=>$room['status'],'mode'=>$quiz['mode']??'classic','scoring'=>$quiz['scoring']??'speed','board'=>$board,'played'=>count($played),'projectorToken'=>$admin&&!$player&&!$projector?$meta['projector_token']:null,'telegramGroup'=>$player||$projector?null:($telegramGroup?['connected'=>(bool)$telegramGroup['chat_id'],'title'=>$telegramGroup['chat_title'],'command'=>$telegramGroup['bind_code']?'/quiz '.$telegramGroup['bind_code']:null]:null),'index'=>$index,'total'=>count($quiz['questions']),'question'=>$question,'remaining'=>$room['status']==='question'?max(0,(float)$room['deadline']-microtime(true)):0,'players'=>$players,'counts'=>$counts,'answered'=>(int)query('SELECT count(*) FROM answers WHERE room_id=? AND question_index=?',[$roomId,$index])->fetchColumn(),'answer'=>$answer?:null,'playerId'=>$player['id']??null]);
     }
     fail('Неизвестное действие.',404);
 } catch(Throwable $e) { if (isset($db) && $db->inTransaction()) $db->rollBack(); pulseLogEvent('server_error',['action'=>$action??'unknown','error'=>get_class($e),'message'=>$e->getMessage(),'request_id'=>bin2hex(random_bytes(6))]); fail('Ошибка сервера. Повторите попытку.',500); }

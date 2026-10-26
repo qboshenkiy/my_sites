@@ -6,6 +6,7 @@ on:
       - 'native-common/**'
       - 'marathon/native/android/**'
       - 'chrono_logos/native/android/**'
+      - 'vano_remote/android/**'
       - 'tools/android_manifest.py'
       - '.github/workflows/android-updates.yml'
   workflow_dispatch:
@@ -39,17 +40,19 @@ jobs:
           chmod 600 "$HOME/.android/debug.keystore"
       - name: Android SDK
         run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
-      - name: Build and test both applications
+      - name: Build and test Android applications
         run: |
           code=$((100 + GITHUB_RUN_NUMBER))
           name="1.1.$GITHUB_RUN_NUMBER"
           mkdir -p android-release
-          for module in marathon chrono_logos; do
-            chmod +x "$module/native/android/gradlew"
-            "$module/native/android/gradlew" --project-dir "$module/native/android" --no-daemon --console=plain -PappVersionCode="$code" -PappVersionName="$name" testDebugUnitTest lintDebug assembleDebug
+          for module in marathon chrono_logos vano_remote; do
+            if [ "$module" = vano_remote ]; then project="$module/android"; else project="$module/native/android"; fi
+            chmod +x "$project/gradlew"
+            "$project/gradlew" --project-dir "$project" --no-daemon --console=plain -PappVersionCode="$code" -PappVersionName="$name" testDebugUnitTest lintDebug assembleDebug
           done
           cp marathon/native/android/app/build/outputs/apk/debug/app-debug.apk android-release/marathon.apk
           cp chrono_logos/native/android/app/build/outputs/apk/debug/app-debug.apk android-release/chrono-logos.apk
+          cp vano_remote/android/app/build/outputs/apk/debug/app-debug.apk android-release/vano-remote.apk
           python3 tools/android_manifest.py android-release "$code" "$name"
           echo "ANDROID_CODE=$code" >> "$GITHUB_ENV"
       - name: Publish immutable APKs and update feed
@@ -60,7 +63,7 @@ jobs:
             gh release download "android-$ANDROID_CODE" --dir android-release --pattern '*.apk' --clobber
             python3 tools/android_manifest.py android-release "$ANDROID_CODE" "1.1.$GITHUB_RUN_NUMBER"
           else
-            gh release create "android-$ANDROID_CODE" android-release/*.apk --title "Android $ANDROID_CODE" --notes 'Автоматическая сборка приложений марафона и Chrono Logos. Существующие данные сохраняются.' --target "$GITHUB_SHA"
+            gh release create "android-$ANDROID_CODE" android-release/*.apk --title "Android $ANDROID_CODE" --notes 'Автоматическая сборка Android-приложений марафона, Chrono Logos и Vano Remote. Данные приложений сохраняются.' --target "$GITHUB_SHA"
           fi
           gh release view android-latest >/dev/null 2>&1 || gh release create android-latest --title 'Android updates' --notes 'Stable update feed for installed applications.' --target "$GITHUB_SHA"
           gh release upload android-latest android-release/updates.json --clobber

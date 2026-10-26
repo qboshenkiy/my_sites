@@ -41,7 +41,7 @@ if not EXTERNAL_BASE:
         probe.bind(('127.0.0.1', 8099))
 
 with tempfile.TemporaryDirectory(prefix='pulse-test-') as tmp:
-    env = dict(os.environ, QUIZ_DATA_DIR=tmp)
+    env = dict(os.environ, QUIZ_DATA_DIR=tmp, TELEGRAM_BOT_TOKEN='999999:pulse-e2e-token', TELEGRAM_BOT_USERNAME='pulse_e2e_bot')
     server = None if EXTERNAL_BASE else subprocess.Popen([PHP, '-S', '127.0.0.1:8099', '-t', str(ROOT), str(ROOT / 'router.php')], env=env,
                                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
@@ -74,6 +74,10 @@ with tempfile.TemporaryDirectory(prefix='pulse-test-') as tmp:
         quiz = host.call('save', {'title': 'E2E викторина', 'description': 'Тест', 'questions': questions})
         host.call('save', {'title': '', 'questions': questions}, expected=400)
         room = host.call('create_room', {'id': quiz['id']})
+        group=host.call('room_telegram_create',{'room':room['id']})
+        assert group['command'].startswith('/quiz ')
+        group_state=host.call('state',suffix='&room='+room['id'])
+        assert group_state['telegramGroup']['command']==group['command'] and not group_state['telegramGroup']['connected']
         join = guest.call('join', {'code': room['code'], 'name': '<Игрок>'})
         guest.token = join['token']
         stranger.call('join', {'code': room['code'], 'name': '<Игрок>'}, expected=400)

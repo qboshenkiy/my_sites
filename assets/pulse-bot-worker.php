@@ -27,18 +27,18 @@ try{
     $lock=fopen($dir.'/telegram-worker.lock','c');if(!$lock||!flock($lock,LOCK_EX|LOCK_NB))throw new RuntimeException('Бот Пульса уже запущен.');
     $db=new PDO('sqlite:'.$dir.'/quiz.sqlite',null,null,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC]);
     $db->exec('PRAGMA busy_timeout=10000; PRAGMA foreign_keys=ON;');$me=null;
-    require __DIR__.'/community.php';require __DIR__.'/pulse-telegram.php';require __DIR__.'/forms-bot.php';communitySchema();pulseTelegramSchema();formsBotSchema();
+    require __DIR__.'/community.php';require __DIR__.'/pulse-telegram.php';require __DIR__.'/forms-bot.php';require __DIR__.'/pulse-game-bot.php';communitySchema();pulseTelegramSchema();formsBotSchema();pulseGameBotSchema();
     $bot=pulseBotIdentity();$botId=(string)$bot['id'];
     echo "Бот Пульса запущен.\n";
     $offset=(int)(query('SELECT value FROM settings WHERE key=?',['telegram_offset_'.$botId])->fetchColumn()?:0);
     while(true){
         try{
-            formsBotTick();
+            formsBotTick();pulseGameBotTick();
             foreach(pulseBotCall('getUpdates',['offset'=>$offset,'timeout'=>5,'allowed_updates'=>['message','callback_query','poll_answer']]) as $update){
-                if(!formsBotUpdate($update,$botId))foreach(pulseTelegramUpdate($update,$botId) as $action)pulseBotCall($action['method'],$action['args']);
+                if(!pulseGameBotUpdate($update,$botId)&&!formsBotUpdate($update,$botId))foreach(pulseTelegramUpdate($update,$botId) as $action)pulseBotCall($action['method'],$action['args']);
                 $offset=(int)$update['update_id']+1;query('INSERT OR REPLACE INTO settings VALUES (?,?)',['telegram_offset_'.$botId,(string)$offset]);
             }
-            formsBotTick();
+            formsBotTick();pulseGameBotTick();
         }catch(Throwable $error){formsBotRollback();fwrite(STDERR,"Ошибка связи бота Пульса. Повтор через 5 секунд.\n");sleep(5);}
     }
 }catch(Throwable $error){fwrite(STDERR,$error->getMessage()."\n");exit(1);}

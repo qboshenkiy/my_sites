@@ -1,14 +1,25 @@
 plugins { id 'com.android.application' }
 android {
     namespace 'net.sbena.vano.remote'
-    compileSdk 34
+    compileSdk 36
     defaultConfig {
         applicationId 'net.sbena.vano.remote'
         minSdk 30
         targetSdk 34
-        versionCode 1
-        versionName '0.1.0'
+        versionCode providers.gradleProperty('appVersionCode').orElse('100').get().toInteger()
+        versionName providers.gradleProperty('appVersionName').orElse('1.1.0').get()
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8 }
+    sourceSets { main { java.srcDir '../../../native-common/src'; res.srcDir '../../../native-common/res' }; test.java.srcDir '../../../native-common/tests' }
+    buildFeatures { buildConfig true }
+    testOptions { unitTests.returnDefaultValues = true }
+    lint { abortOnError true; checkReleaseBuilds true }
 }
-dependencies { implementation 'com.squareup.okhttp3:okhttp:3.14.9' }
+dependencies {
+    implementation platform('org.jetbrains.kotlin:kotlin-bom:1.8.22')
+    implementation 'com.squareup.okhttp3:okhttp:3.14.9'
+    implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
+    implementation 'androidx.activity:activity:1.8.2'
+    implementation 'androidx.core:core:1.15.0'
+    testImplementation 'junit:junit:4.13.2'
+}
