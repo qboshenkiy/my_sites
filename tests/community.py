@@ -39,7 +39,7 @@ class Client:
 with tempfile.TemporaryDirectory(prefix='pulse-community-') as tmp:
     folder=Path(tmp);pulse=folder/'pulse';marathon=folder/'marathon';pulse.mkdir();marathon.mkdir()
     pulse_port,marathon_port=port(),port();purl=f'http://127.0.0.1:{pulse_port}';murl=f'http://127.0.0.1:{marathon_port}';key='test-bridge-secret-'+'a'*48
-    env=dict(os.environ,QUIZ_DATA_DIR=str(pulse),MARATHON_DATA_DIR=str(marathon),MARATHON_URL=murl,PULSE_URL=purl,PULSE_BRIDGE_SECRET=key,TELEGRAM_BOT_TOKEN='999999:pulse-test-bot-token',TELEGRAM_BOT_USERNAME='pulse_fixture_bot')
+    env=dict(os.environ,QUIZ_DATA_DIR=str(pulse),MARATHON_DATA_DIR=str(marathon),MARATHON_URL=murl,PULSE_URL=purl,PULSE_BRIDGE_SECRET=key,QUIZ_TRUST_PROXY='1',TELEGRAM_BOT_TOKEN='999999:pulse-test-bot-token',TELEGRAM_BOT_USERNAME='pulse_fixture_bot')
     servers=[]
     try:
         for root,p in ((ROOT,pulse_port),(ROOT/'marathon',marathon_port)):
@@ -48,6 +48,27 @@ with tempfile.TemporaryDirectory(prefix='pulse-community-') as tmp:
         for _ in range(80):
             try:admin.boot();break
             except OSError:time.sleep(.1)
+        # Telegram embeds need SameSite=None on HTTPS, with CSRF still mandatory.
+        for mini,https in ((False,True),(True,True),(True,False)):
+            headers={'X-Pulse-MiniApp':'1' if mini else '0','X-Forwarded-Proto':'https' if https else 'http'}
+            with urllib.request.urlopen(urllib.request.Request(purl+'/api.php?action=bootstrap',headers=headers)) as response:
+                session_cookie=response.headers.get_all('Set-Cookie')[-1]
+                bootstrap=json.load(response)
+            assert ('SameSite=None' if mini and https else 'SameSite=Lax') in session_cookie
+            assert ('; secure' in session_cookie.lower())==https
+            if mini and https:
+                signed_headers=dict(headers,Cookie=session_cookie.split(';')[0],**{'Content-Type':'application/json','X-CSRF-Token':bootstrap['csrf']})
+                request=urllib.request.Request(purl+'/api.php?action=pulse_miniapp_login',data=b'{}',headers=signed_headers)
+                try:response=urllib.request.urlopen(request)
+                except urllib.error.HTTPError as error:response=error
+                assert response.status==403
+                assert 'csrf_expired'!=json.load(response).get('code')
+                signed_headers['X-CSRF-Token']='wrong'
+                request=urllib.request.Request(purl+'/api.php?action=pulse_miniapp_login',data=b'{}',headers=signed_headers)
+                try:response=urllib.request.urlopen(request)
+                except urllib.error.HTTPError as error:response=error
+                assert response.status==403 and json.load(response)['code']=='csrf_expired'
+        print('PASS: HTTPS Telegram cookies use SameSite=None/Secure; browser and HTTP stay Lax; CSRF enforced')
         admin.call('setup',{'password':'testing-admin-password'});admin.boot()
         before=admin.call('quizzes');assert len(before['quizzes'])==3
         ua=a.register('Анна','reader_a');ub=b.register('Борис','reader_b')

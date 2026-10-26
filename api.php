@@ -9,8 +9,12 @@ if (!is_dir($dataDir.'/sessions')) mkdir($dataDir.'/sessions',0700,true);
 session_save_path($dataDir.'/sessions');
 ini_set('session.gc_maxlifetime',(string)(400*86400));
 ini_set('session.use_strict_mode','1');
-session_set_cookie_params(['lifetime'=>400*86400,'httponly'=>true,'samesite'=>'Lax','secure'=>$https,'path'=>'/']);
+$miniApp=($_SERVER['HTTP_X_PULSE_MINIAPP']??'')==='1';
+$cookieOptions=['httponly'=>true,'samesite'=>$https&&$miniApp?'None':'Lax','secure'=>$https,'path'=>'/'];
+session_set_cookie_params(['lifetime'=>400*86400]+$cookieOptions);
 session_start();
+// Renew existing cookies too: a Mini App may reopen a session originally created in a browser.
+setcookie(session_name(),session_id(),['expires'=>time()+400*86400]+$cookieOptions);
 $admin = !empty($_SESSION['admin']);
 $accountId=$_SESSION['pulse_uid']??null;
 $csrf = $_SESSION['csrf'] ??= bin2hex(random_bytes(24));
