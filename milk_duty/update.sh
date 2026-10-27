@@ -14,4 +14,7 @@ if [[ "$source_dir" != "$target" ]]; then
   cp -a "$source_dir/web/." "$target/web/"
 fi
 docker compose "${compose[@]}" up -d --build --wait
+if [[ -f /etc/gitdeck/config.json && -f /opt/gitdeck/app.py ]]; then
+  python3 src/register_gitdeck.py
+fi
 echo 'Обновление завершено. Пароль, участники, токен и расписание сохранены.'

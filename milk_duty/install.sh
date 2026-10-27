@@ -14,5 +14,8 @@ cd "$target"
 if [[ ! -e .env ]]; then install -m 600 .env.example .env; fi
 docker compose up -d --build --wait
 docker compose exec web python src/app.py password
+if [[ -f /etc/gitdeck/config.json && -f /opt/gitdeck/app.py ]]; then
+  python3 src/register_gitdeck.py
+fi
 echo 'Готово. На своём ПК: ssh -N -L 8130:127.0.0.1:8130 root@IP_СЕРВЕРА'
 echo 'Откройте http://localhost:8130 . Токен бота и все настройки вводятся в панели.'
