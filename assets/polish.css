@@ -72,3 +72,18 @@ input:not([type=checkbox]):not([type=radio]),select,textarea{min-height:44px}
 .standings-method{margin-block:18px}.standings-method summary{cursor:pointer;font-weight:600;min-height:26px;display:list-item}.standings-method[open] summary{margin-bottom:10px}.standings-method p{font-size:12px;line-height:1.7}.sidebar .nav-caption{flex:1;min-width:0;font-size:13px;line-height:1.4;text-align:left}
 
 .sidebar>*{flex-shrink:0}
+
+/* Keep the document scrollable in Telegram's resizable WebView. */
+html.pulse-miniapp{height:auto;min-height:100%;overflow-y:auto}
+.pulse-miniapp body{height:auto;min-height:var(--pulse-viewport-height,100dvh);overflow-y:auto;padding:var(--pulse-safe-top,0px) var(--pulse-safe-right,0px) var(--pulse-safe-bottom,0px) var(--pulse-safe-left,0px)}
+.pulse-miniapp .dashboard,.pulse-miniapp .public-page,.pulse-miniapp .game-page{min-height:var(--pulse-viewport-height,100dvh)}
+@media(max-width:760px){
+ .dashboard>.main{width:100%;min-width:0;margin:0}
+ .topbar{height:auto;flex-wrap:wrap;padding-block:8px}
+ .forms-heading,.report-heading{align-items:flex-start;flex-wrap:wrap}
+ .forms-row-actions{flex-wrap:wrap;max-width:100%}
+ .pulse-miniapp body.mobile-nav-open{overflow:hidden}
+ .pulse-miniapp .sidebar{top:var(--pulse-safe-top,0px)!important;height:calc(var(--pulse-viewport-height,100dvh) - var(--pulse-safe-top,0px) - var(--pulse-safe-bottom,0px))!important;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+ .table-scroll{overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch}
+ input:not([type=checkbox]):not([type=radio]),select,textarea{font-size:16px}
+}

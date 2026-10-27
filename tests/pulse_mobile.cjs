@@ -1,0 +1,14 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const handlers={},classes=new Set(['mobile-nav-open']);let observer;
+const sidebar={classList:{contains:()=>false,remove(){}}};
+const app={querySelector:s=>s==='.sidebar'?sidebar:null};
+const context={document:{querySelector:()=>app,body:{classList:{remove:x=>classes.delete(x)}},addEventListener:(e,f,c)=>(handlers[e]??=[]).push({f,c})},window:{innerWidth:390,addEventListener(){}},MutationObserver:class{constructor(f){observer=f}observe(){}}};
+vm.createContext(context);vm.runInContext(fs.readFileSync('assets/app.js','utf8').split('const esc =')[0],context);
+assert.equal(handlers.click[0].c,true);
+handlers.click[0].f({target:{closest:()=>({})}});assert(!classes.has('mobile-nav-open'),'Feature capture navigation must release scroll lock');
+classes.add('mobile-nav-open');observer();assert(!classes.has('mobile-nav-open'),'Replacing the shell must clear stale scroll lock');
+const props={},events={},root={classList:{add(){}},style:{setProperty:(k,v)=>props[k]=v}};
+const tg={initData:'fixture',viewportStableHeight:640,safeAreaInset:{top:24,bottom:16},contentSafeAreaInset:{top:40},ready(){},expand(){},onEvent:(e,f)=>events[e]=f};
+vm.runInNewContext(fs.readFileSync('assets/pulse-miniapp.js','utf8'),{document:{documentElement:root},window:{Telegram:{WebApp:tg},addEventListener(){}}});
+assert.equal(props['--pulse-viewport-height'],'640px');assert.equal(props['--pulse-safe-top'],'40px');tg.viewportStableHeight=420;events.viewportChanged();assert.equal(props['--pulse-viewport-height'],'420px');
+console.log('PASS: capture navigation and replaced shell release scroll; Telegram viewport/insets update');
