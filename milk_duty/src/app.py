@@ -8,6 +8,7 @@ import http.cookies
 import http.server
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import threading
@@ -15,6 +16,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from zoneinfo import ZoneInfo
 
 from core import Store, Invalid
 
@@ -99,14 +101,14 @@ class Application:
             return
         self.transport(token, 'sendMessage', {'chat_id': chat['id'], 'text': reply})
 
-    def deliver(self, now=None):
+    def deliver(self, now=None, only_id=None):
         now = time.time() if now is None else now
         with self.lock, self.store.db() as db:
             cfg = self.store.settings(db)
             db.execute("UPDATE outbox SET status='expired',error='Время напоминания истекло' WHERE status IN ('pending','retry') AND expires<=?", (now,))
-            if not cfg['enabled'] or not cfg.get('bot_token'):
+            if not cfg.get('bot_token'):
                 return
-            rows = list(db.execute("SELECT o.*,p.chat_id FROM outbox o JOIN people p ON p.id=o.person WHERE o.status IN ('pending','retry') AND next_try<=? AND expires>? ORDER BY id LIMIT 10", (now,now)))
+            rows = list(db.execute("SELECT o.*,p.chat_id FROM outbox o JOIN people p ON p.id=o.person WHERE o.status IN ('pending','retry') AND next_try<=? AND expires>? AND (? OR kind LIKE 'manual-%') AND (? IS NULL OR o.id=?) ORDER BY id LIMIT 10", (now,now,cfg['enabled'],only_id,only_id)))
             for row in rows:
                 try:
                     if not row['chat_id']:
@@ -119,6 +121,44 @@ class Application:
                     db.execute('UPDATE outbox SET status=?,attempts=attempts+1,next_try=?,error=? WHERE id=?', (status,now+delay,str(error),row['id']))
                     if error.code in (0,401,409,429):
                         break
+
+    def remind(self, day_string, request_id):
+        try:
+            day = dt.date.fromisoformat(day_string)
+        except (ValueError, TypeError):
+            raise Invalid('Выберите дату дежурства.')
+        if not isinstance(request_id,str) or not re.fullmatch(r'[a-zA-Z0-9_-]{16,80}',request_id):
+            raise Invalid('Обновите страницу и повторите отправку.')
+        with self.lock:
+            with self.store.db() as db:
+                db.execute('BEGIN IMMEDIATE')
+                cfg = self.store.settings(db)
+                if not cfg.get('bot_token'):
+                    raise Invalid('Сначала подключите бота в настройках.')
+                if day < self.store.today(cfg):
+                    raise Invalid('Дежурство уже прошло. Выберите сегодня или будущую дату.')
+                duty = self.store.duty(db,day,cfg,True)
+                if not duty:
+                    raise Invalid('На эту дату нет дежурного. Подключите участников и проверьте дни очереди.')
+                person = db.execute('SELECT * FROM people WHERE id=? AND chat_id IS NOT NULL',(duty['person'],)).fetchone()
+                if not person:
+                    raise Invalid('Участник ещё не подключён. Отправьте ему личную ссылку из карточки участника.')
+                kind = 'manual-'+request_id
+                # A repeated HTTP request must never create another delivery, even after a replacement.
+                existing = db.execute('SELECT o.*,p.name FROM outbox o JOIN people p ON p.id=o.person WHERE kind=?',(kind,)).fetchone()
+                if existing:
+                    if existing['day'] != day_string:
+                        raise Invalid('Этот запрос уже использован для другой даты.')
+                    return {'ok':existing['status']=='sent','status':existing['status'],'error':existing['error'],'name':existing['name']}
+                message = cfg['message'] if day == self.store.today(cfg) else 'Напоминаем: {date} ваша очередь дежурить и купить молоко.'
+                text = message.replace('{name}',person['name']).replace('{date}',day.strftime('%d.%m.%Y'))
+                expires = dt.datetime.combine(day+dt.timedelta(days=1),dt.time(),ZoneInfo(cfg['timezone'])).timestamp()
+                self.store.enqueue(db,duty,kind,person['id'],text,expires)
+                outbox_id = db.execute('SELECT id FROM outbox WHERE kind=?',(kind,)).fetchone()[0]
+            self.deliver(only_id=outbox_id)
+            with self.store.db() as db:
+                row = db.execute('SELECT * FROM outbox WHERE id=?',(outbox_id,)).fetchone()
+                return {'ok':row['status']=='sent','status':row['status'],'error':row['error'],'name':person['name']}
 
     def worker(self):
         while not self.stop.is_set():
@@ -300,6 +340,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             store.replace(data.get('day'),int(data['person']))
         elif path == '/api/bot':
             self.app.configure_bot(data.get('token'))
+        elif path == '/api/remind':
+            return self.send(200,self.app.remind(data.get('day'),data.get('request_id')))
         elif path == '/api/test':
             with store.db() as db:
                 cfg = store.settings(db)
