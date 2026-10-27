@@ -38,7 +38,9 @@ function standingsData(): array {
     foreach(query('SELECT s.* FROM published_scores s JOIN published_assessments a ON a.assessment_id=s.assessment_id')->fetchAll() as $score)$scores[$score['user_id']][$score['assessment_id']]=(float)$score['points'];
     $rows=[];
     foreach($users as $user){
-        $values=$scores[$user['id']]??[];$total=array_sum($values);$percent=$maximum>0?round($total/$maximum*100,2):0;
+        $values=$scores[$user['id']]??[];$total=array_sum($values);$percentSum=0;
+        foreach($tests as $test){$max=(float)$test['max_points'];$percentSum+=$max>0?(($values[$test['id']]??0)/$max*100):0;}
+        $percent=round($percentSum/count($tests),2);
         $rows[]=['id'=>$user['id'],'name'=>$user['name'],'active'=>(bool)$user['active'],'points'=>$total,'percent'=>$percent,'completed'=>count($values),'scores'=>$values];
     }
     usort($rows,fn($a,$b)=>($b['percent']<=>$a['percent'])?:strcmp($a['id'],$b['id']));
