@@ -5,15 +5,19 @@ const originalShell = shell;
 shell = function(content, selected='quizzes') {
   originalShell(content,selected);
   const sidebar=document.querySelector('.sidebar');
-  const nav=(action,title,active=false)=>`<button class="nav ${active?'active':''}" data-action="${action}">${title}</button>`;
-  sidebar.querySelector('.nav-label').insertAdjacentHTML('afterend',nav('catalog','◎ Общий каталог',page==='catalog'));
-  sidebar.querySelector('.sidebar-tip').insertAdjacentHTML('beforebegin',nav('results','✓ Мои результаты',page==='results')+(communityStaff()?nav('assessments','▤ Ведомости тестов',['assessments','assessment-editor'].includes(page))+nav('participants','♙ Участники',page==='participants'):''));
+  const navIcons={catalog:'library',results:'chart',assessments:'table',participants:'users',standings:'chart'};
+  const nav=(action,title,active=false)=>`<button class="nav ${active?'active':''}" data-action="${action}"><span>${icon(navIcons[action])}</span><span>${title.replace(/^[^А-ЯA-Z]+/u,'')}</span></button>`;
+  sidebar.querySelector('[data-action="dashboard"]').insertAdjacentHTML('afterend',nav('catalog','◎ Общий каталог',page==='catalog'));
+  sidebar.querySelector('.sidebar-tip').insertAdjacentHTML('beforebegin',nav('results','✓ Мои результаты',page==='results')+(boot.user?nav('standings','Общий рейтинг',page==='standings'):'')+(communityStaff()?nav('assessments','▤ Ведомости тестов',['assessments','assessment-editor'].includes(page))+nav('participants','♙ Участники',page==='participants'):''));
   const account=sidebar.querySelector('.account');
-  account.innerHTML=boot.user?`<span class="avatar">${esc(boot.user.name.slice(0,1))}</span><div>${esc(boot.user.name)}<small>${esc({admin:'Администратор',moderator:'Модератор',participant:'Участник'}[boot.user.role])}</small></div><button class="icon-button" title="Выйти" data-action="logout">↪</button>`:'<button class="primary" data-action="account">Войти в аккаунт</button>';
+  account.innerHTML=boot.user?`<span class="avatar">${esc(boot.user.name.slice(0,1))}</span><div>${esc(boot.user.name)}<small>${esc({admin:'Администратор',moderator:'Модератор',participant:'Участник'}[boot.user.role])}</small></div><button class="icon-button" title="Выйти" data-action="logout">${AppUI.icon('logout')}</button>`:'<button class="primary" data-action="account">Войти в аккаунт</button>';
   if(!boot.user) sidebar.querySelectorAll('[data-action="dashboard"],[data-action="sessions"],[data-action="results"]').forEach(b=>b.hidden=true);
   const heading=document.querySelector('.topbar>span');
-  heading.textContent=({catalog:'Общий каталог',results:'Мои результаты',assessments:'Ведомости тестов','assessment-editor':'Ведомость теста',participants:'Участники'})[page]||heading.textContent;
-  sidebar.querySelector('.workspace small').textContent='Создавайте и играйте вместе';
+  heading.textContent=({catalog:'Общий каталог',results:'Мои результаты',assessments:'Ведомости тестов','assessment-editor':'Ведомость теста',participants:'Участники',standings:'Общий рейтинг'})[page]||heading.textContent;
+  sidebar.querySelector('.workspace small').textContent=boot.user?'Опросники, игры и результаты':'Каталог и вход в игру';
+  const context=sidebar.querySelector('.sidebar-tip');context.className='sidebar-tip nav-context';
+  context.innerHTML=boot.user?`<strong>${communityStaff()?'Пространство команды':'Личный кабинет'}</strong><p>${communityStaff()?'Создавайте опросники, запускайте игры и проверяйте результаты.':'Ваши результаты сохраняются в профиле. В игру можно войти по коду ведущего.'}</p>`:'<strong>Вы пока не вошли</strong><p>Общий каталог и вход по коду доступны сразу. Войдите, чтобы сохранять результаты.</p>';
+
 };
 const originalDashboard=dashboard;
 const originalJoinPage=joinPage;
@@ -77,7 +81,7 @@ async function linkParticipants(room){
 }
 document.addEventListener('click',async event=>{
   const b=event.target.closest('[data-action]');if(!b)return;const action=b.dataset.action,id=b.dataset.id;
-  if(!['catalog','account','register-page','legacy-login','marathon-login','public-launch','clone-quiz','visibility','results','assessments','participants','sync-marathon','new-assessment','edit-assessment','delete-assessment','export-assessment','link-participants'].includes(action))return;
+  if(!['catalog','account','register-page','legacy-login','marathon-login','public-launch','clone-quiz','visibility','results','assessments','participants','sync-marathon','new-assessment','edit-assessment','delete-assessment','export-assessment','link-participants','standings'].includes(action))return;
   event.preventDefault();event.stopImmediatePropagation();if(b.disabled)return;b.disabled=true;
   try{
     if(action==='catalog')await catalogPage();
@@ -91,6 +95,7 @@ document.addEventListener('click',async event=>{
       const q=library.find(q=>q.id===id),visibility=q.visibility==='public'?'private':'public';
       confirmDialog(visibility==='public'?'Опубликовать опрос?':'Сделать опрос личным?',visibility==='public'?'Другие участники смогут запускать этот опрос и создавать свои копии.':'Опрос исчезнет из каталога. Уже созданные копии и игры сохранятся.',async()=>{await api('publish',{id,visibility});await dashboard();});
     }
+    if(action==='standings')await standingsPage();
     if(action==='results')await resultsPage();
     if(action==='assessments')await resultsPage(true);
     if(action==='participants')await participantsPage();

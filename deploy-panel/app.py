@@ -32,7 +32,7 @@ LAYOUT = {
     'marathon': ['index.php', 'api.php', 'manifest.webmanifest', 'service-worker.js', '.htaccess', 'assets', 'lib', 'tools/bot.php', 'tools/backup.php'],
     'chrono': ['app', 'public/assets', 'public/index.php', 'public/manifest.webmanifest', 'public/service-worker.js', 'public/pwa.js', 'public/_health.php', 'public/.htaccess',
                'public/favicon.ico', 'public/robots.txt', 'composer.json', 'composer.lock', 'spark', 'ops', '.dockerignore'],
-    'self': ['app.py', 'index.html', 'VERSION', 'manifest.webmanifest', 'service-worker.js', 'pwa.js', 'icon.svg', 'icon-192.png', 'icon-512.png', 'README.md', 'install.sh', 'config.example.json', '.gitignore'],
+    'self': ['app.py', 'index.html', 'VERSION', 'manifest.webmanifest', 'service-worker.js', 'pwa.js', 'icon.svg', 'icon-192.png', 'icon-512.png', 'ui.js', 'ui.css', 'README.md', 'install.sh', 'config.example.json', '.gitignore'],
 }
 REQUIRED = {'remote': ['server/app.py', 'server/requirements.txt', 'server/Dockerfile', 'ops/compose.yaml'],
             'drawing': ['index.php', 'api.php', 'lib/core.php', 'lib/ai.php', 'ops/compose.yaml', 'ops/Dockerfile'],
@@ -1386,7 +1386,7 @@ class Panel(http.server.BaseHTTPRequestHandler):
             return self.send(200, {'ok': True, 'version': VERSION})
         if url.path == '/':
             return self.send(200, Path(__file__).with_name('index.html').read_bytes(), 'text/html; charset=utf-8')
-        static = {'/manifest.webmanifest': ('manifest.webmanifest', 'application/manifest+json; charset=utf-8'),
+        static = {'/ui.js': ('ui.js', 'text/javascript; charset=utf-8'), '/ui.css': ('ui.css', 'text/css; charset=utf-8'), '/manifest.webmanifest': ('manifest.webmanifest', 'application/manifest+json; charset=utf-8'),
                   '/service-worker.js': ('service-worker.js', 'text/javascript; charset=utf-8'),
                   '/pwa.js': ('pwa.js', 'text/javascript; charset=utf-8'),
                   '/icon.svg': ('icon.svg', 'image/svg+xml; charset=utf-8'),

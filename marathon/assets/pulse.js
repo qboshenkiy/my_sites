@@ -7,9 +7,9 @@ shell=function(...args){
   const sidebar=document.querySelector('.sidebar');if(!sidebar||!boot.user)return;
   const destination=boot.pulse?.url;
   const controls=document.createElement('div');controls.className='pulse-integration-actions';
-  if(destination){const link=document.createElement('a');link.className='nav';link.href=destination;link.target='_blank';link.rel='noopener noreferrer';link.textContent='ϟ Открыть Пульс';controls.append(link);}
+  if(destination){const link=document.createElement('a');link.className='nav';link.href=destination;link.target='_blank';link.rel='noopener noreferrer';link.innerHTML='<span>'+AppUI.icon('bolt')+'</span><span>Открыть Пульс</span>';controls.append(link);}
   if(boot.user.role==='admin'){
-    const button=document.createElement('button');button.className='nav';button.textContent='ϟ Передать участников в Пульс';controls.append(button);
+    const button=document.createElement('button');button.className='nav';button.innerHTML='<span>'+AppUI.icon('users')+'</span><span>Передать участников в Пульс</span>';controls.append(button);
     button.onclick=async()=>{
       if(!boot.pulse?.configured){toast('Сначала в GitDeck на карточке Пульса нажмите «Подключить марафон».');return;}
       button.disabled=true;

@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__.'/room-report.php';
 require_once __DIR__.'/forms.php';
+require_once __DIR__.'/standings.php';
 
 // Additive migration: quizzes, room snapshots and past answers stay in place.
 function communitySchema(): void {
@@ -30,6 +31,7 @@ function communitySchema(): void {
     }
     roomReportSchema();
     formsSchema();
+    standingsSchema();
 }
 function communityUser(?array $row): ?array {
     if (!$row) return null;
@@ -97,6 +99,7 @@ function communityImport(array $source): array {
 }
 function communityHandle(string $action,array $input): void {
     global $db,$me,$admin;
+    standingsHandle($action,$input);
     roomReportHandle($action,$input);
     formsHandle($action,$input);
     if($action==='receive_marathon'){
@@ -196,8 +199,10 @@ function communityHandle(string $action,array $input): void {
         $rows=$staff?query('SELECT * FROM assessments ORDER BY held_on DESC,created_at DESC')->fetchAll():query('SELECT a.* FROM assessments a JOIN assessment_scores s ON s.assessment_id=a.id WHERE s.user_id=? AND (a.source_form_id IS NULL OR EXISTS(SELECT 1 FROM pulse_forms f WHERE f.id=a.source_form_id AND f.published=1)) ORDER BY a.held_on DESC,a.created_at DESC',[$me['id']])->fetchAll();
         foreach ($rows as &$a) {
             $a['can_link']=!empty($a['source_room_id'])&&communityOwn(query('SELECT * FROM rooms WHERE id=?',[$a['source_room_id']])->fetch()?:[]);
-            $scores=$staff?query('SELECT s.*,u.name FROM assessment_scores s JOIN pulse_accounts u ON u.id=s.user_id WHERE s.assessment_id=? ORDER BY u.name',[$a['id']])->fetchAll():query('SELECT s.*,u.name FROM assessment_scores s JOIN pulse_accounts u ON u.id=s.user_id WHERE s.assessment_id=? AND s.user_id=?',[$a['id'],$me['id']])->fetchAll();
+            $scores=$staff?query('SELECT s.*,u.name FROM assessment_scores s JOIN pulse_accounts u ON u.id=s.user_id WHERE s.assessment_id=? ORDER BY s.points DESC,u.id',[$a['id']])->fetchAll():query('SELECT s.*,u.name FROM assessment_scores s JOIN pulse_accounts u ON u.id=s.user_id WHERE s.assessment_id=? AND s.user_id=?',[$a['id'],$me['id']])->fetchAll();
             foreach ($scores as &$s) {$s['percent']=round((float)$s['points']/(float)$a['max_points']*100,2);unset($s['editor_id']);}unset($s);$a['scores']=$scores;
+            $publication=query('SELECT source_revision,published_at,version FROM published_assessments WHERE assessment_id=?',[$a['id']])->fetch();
+            $a['publication']=$publication?:null;
         }unset($a);
         $games=query('SELECT p.name,p.score,r.id,r.code,r.quiz,r.status,r.created_at FROM players p JOIN rooms r ON r.id=p.room_id WHERE p.user_id=? ORDER BY r.created_at DESC LIMIT 100',[$me['id']])->fetchAll();
         foreach($games as &$g){$q=json_decode($g['quiz'],true);$g['title']=$q['title'];unset($g['quiz']);}unset($g);
@@ -228,6 +233,7 @@ function communityHandle(string $action,array $input): void {
         communityStaff();$id=(string)($input['id']??'');$db->exec('BEGIN IMMEDIATE');
         $a=query('SELECT * FROM assessments WHERE id=?',[$id])->fetch();if(!$a)fail('Тест не найден.',404);
         if((int)($input['revision']??0)!==(int)$a['revision'])fail('Ведомость уже изменена. Откройте её заново.',409);
+        if(query('SELECT 1 FROM published_assessments WHERE assessment_id=?',[$id])->fetchColumn())fail('Сначала открепите результат от общего рейтинга.',409);
         communityAudit('delete_assessment',$id,['assessment'=>$a,'scores'=>query('SELECT * FROM assessment_scores WHERE assessment_id=?',[$id])->fetchAll()]);
         query('DELETE FROM assessment_scores WHERE assessment_id=?',[$id]);query('DELETE FROM assessments WHERE id=?',[$id]);$db->exec('COMMIT');out(['ok'=>true]);
     }

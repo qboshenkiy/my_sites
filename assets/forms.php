@@ -138,7 +138,10 @@ function formsHandle(string $action,array $input): void {
         if((int)($input['revision']??-1)!==(int)$form['revision'])fail('Настройки уже изменились. Обновите тест.',409);
         foreach(['active','published'] as $field)if(!isset($input[$field])||!is_bool($input[$field]))fail('Некорректные настройки теста.');
         query('UPDATE pulse_forms SET active=?,published=?,revision=revision+1 WHERE id=?',[$input['active']?1:0,$input['published']?1:0,$id]);
-        $form=formOwned($id);formSyncAssessment($form);communityAudit('configure_form',$id,['active'=>$form['active'],'published'=>$form['published']]);
+        $form=formOwned($id);$assessmentId=formSyncAssessment($form);
+        if($form['published']&&$assessmentId&&in_array($me['role'],['admin','moderator'],true))standingsPublish(query('SELECT * FROM assessments WHERE id=?',[$assessmentId])->fetch());
+        elseif(!$form['published']&&!empty($form['assessment_id']))standingsRemove($form['assessment_id']);
+        communityAudit('configure_form',$id,['active'=>$form['active'],'published'=>$form['published']]);
     }
     $db->exec('COMMIT');out(['ok'=>true]);
 }

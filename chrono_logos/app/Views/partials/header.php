@@ -18,7 +18,7 @@
             </h1>
 
             <div class="page-subtitle">
-                Управление игровыми проектами
+                <?= esc($subtitle ?? 'Игры, комнаты и результаты') ?>
             </div>
 
         </div>
@@ -43,6 +43,7 @@
                 type="button"
                 class="header-user"
                 id="user-menu-toggle"
+                aria-label="<?= esc('Аккаунт: ' . ($username ?? 'Пользователь'), 'attr') ?>"
                 aria-haspopup="true"
                 aria-expanded="false"
             >

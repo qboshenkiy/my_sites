@@ -83,14 +83,14 @@ if (! function_exists('app_modules')) {
             [
                 'code'        => 'draw',
                 'title'       => 'Draw',
-                'description' => 'Новая игровая механика Draw.',
+                'description' => 'В разработке: игровая механика Draw пока недоступна.',
                 'url'         => '/draw',
 
                 'menu' => [
                     [
                         'url'   => '/draw',
                         'icon'  => 'board',
-                        'label' => 'Draw',
+                        'label' => 'Draw · скоро',
                         'match' => 'draw',
                     ],
                 ],

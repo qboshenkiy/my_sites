@@ -42,13 +42,15 @@
   function applyTheme(element){for(const key of ['accent','surface','text','muted','line','button'])element.style.setProperty('--pwa-'+key,theme[key]);}
   function mountInstallAction(){
     if(standalone||embedded()&&!nativeUpdates||document.querySelector('[data-app-install-menu]'))return;
-    const host=document.querySelector('.sidebar-nav,.sidebar,.deck-nav,header .mobile-app-actions,header > div');
+    const host=module==='gitdeck'?document.querySelector('header'):document.querySelector('.sidebar-nav,.sidebar,header .mobile-app-actions,header > div:not(.brand)');
     if(!host)return;
     addStyle();const action=document.createElement(nativeUpdates?'a':'button');
     action.dataset.appInstallMenu='1';action.className='pwa-menu-action';
     if(host.closest('header'))action.classList.add('pwa-menu-inline');
     if(nativeUpdates){action.href='/_app/check-updates';action.textContent='↻ Обновить приложение';}
     else {action.type='button';action.textContent='↓ Установить приложение';}
+    if(module==='gitdeck'||module==='drawing')action.textContent=nativeUpdates?'Обновить':'Установить';
+    if(window.AppUI&&!host.matches('.mobile-app-actions')){const label=action.textContent.replace(/^[↻↓]\s*/, '');action.innerHTML=window.AppUI.icon(nativeUpdates?'refresh':'download')+'<span>'+label+'</span>';}
     if(host.matches('.mobile-app-actions')){action.title=action.textContent;action.setAttribute('aria-label',action.textContent);action.textContent=nativeUpdates?'↻':'↓';}
     applyTheme(action);host.append(action);
   }

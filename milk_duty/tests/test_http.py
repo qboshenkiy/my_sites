@@ -41,6 +41,13 @@ class HttpTests(unittest.TestCase):
         with r:
             body=json.load(r);self.assertEqual(r.status,status,body);return body
     def login(self):self.csrf=self.request('/api/login',{'password':'testing-password-123'})['csrf']
+    def test_login_page_can_load_shared_ui_without_authentication(self):
+        for file,mime in [('/ui.js','text/javascript'),('/ui.css','text/css')]:
+            with self.client.open(self.base+file) as response:
+                self.assertEqual(response.status,200)
+                self.assertIn(mime,response.headers['Content-Type'])
+                self.assertGreater(len(response.read()),100)
+
     def test_auth_csrf_and_person_flow(self):
         self.request('/api/state',status=401)
         self.request('/api/login',{'password':'wrong'},401)

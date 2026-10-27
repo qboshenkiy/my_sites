@@ -62,7 +62,7 @@
                 </div>
 
                 <div class="sidebar-role">
-                    <?= session()->get('role_code') === 'ADMIN' ? 'ADMIN' : 'USER' ?>
+                    <?= session()->get('role_code') === 'ADMIN' ? 'Организатор' : 'Игрок' ?>
                 </div>
 
             </div>

@@ -8,7 +8,7 @@ for target in ['assets','marathon/assets','sketch_game/assets','chrono_logos/pub
 for target in ['chrono_logos/public/pwa.js','deploy-panel/pwa.js']:(ROOT/target).write_bytes((ROOT/'native-common/pwa-assist.js').read_bytes())
 panel=ROOT/'deploy-panel';bundle={}
 (panel/'service-worker.js').write_bytes((ROOT/'native-common/service-worker.js').read_bytes())
-for filename in ['pwa.js','manifest.webmanifest','service-worker.js','icon.svg','icon-192.png','icon-512.png']:
+for filename in ['pwa.js','manifest.webmanifest','service-worker.js','icon.svg','icon-192.png','icon-512.png','ui.js','ui.css']:
  file=panel/filename;binary=filename.endswith('.png')
  bundle[filename]={'base64':binary,'body':base64.b64encode(file.read_bytes()).decode() if binary else file.read_text(encoding='utf-8')}
 block='<script id="pwa-resources" type="application/json">'+json.dumps(bundle,ensure_ascii=False,separators=(',',':')).replace('<','\\u003c')+'</script>'

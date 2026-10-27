@@ -65,7 +65,7 @@ try {
         $input=json_decode(file_get_contents('php://input'),true);
         if (!is_array($input)) fail('Некорректный запрос.');
         if (!in_array($action,['join','answer','bluff_select','bluff_lie','bluff_vote','bluff_guess','receive_marathon'],true) && !hash_equals($csrf,$_SERVER['HTTP_X_CSRF_TOKEN']??'')) fail('Обновите страницу и повторите.',403,'csrf_expired');
-    } elseif (!in_array($action,['bootstrap','quizzes','state','image','catalog','directory','assessments','room_participants','forms','form_get','form_results'],true)) fail('Требуется POST.',405);
+    } elseif (!in_array($action,['bootstrap','quizzes','state','image','catalog','directory','assessments','standings','room_participants','forms','form_get','form_results'],true)) fail('Требуется POST.',405);
     communityHandle($action,$input);
     if ($action==='image') {
         $img=query('SELECT * FROM images WHERE id=?',[$_GET['id']??''])->fetch(); if(!$img)fail('Изображение не найдено.',404);

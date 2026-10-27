@@ -22,8 +22,8 @@
     <meta name="theme-color" content="#10131b">
     <link rel="manifest" href="/index.php?pwa=manifest">
     <link rel="stylesheet" href="/assets/css/game-world.css?v=20261017">
-    <link rel="stylesheet" href="/assets/css/polish.css?v=2">
-</head>
+    <link rel="stylesheet" href="/assets/css/polish.css?v=20261027">
+<link rel="stylesheet" href="/assets/ui.css?v=20261027"><script src="/assets/ui.js?v=20261027" data-ui-theme="chrono" defer></script></head>
 
 <body class="auth-screen">
 <a class="auth-brand" href="/games"><span aria-hidden="true">◷</span>Chronologos</a>

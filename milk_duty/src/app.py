@@ -257,9 +257,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         path = urllib.parse.urlsplit(self.path).path
         if path == '/health':
             return self.send(200,{'ok':True})
-        if path in ('/','/app.js','/style.css','/icon.svg'):
+        if path in ('/','/app.js','/style.css','/icon.svg','/ui.js','/ui.css'):
             file = {'/':'index.html'}.get(path,path[1:])
-            mime = {'index.html':'text/html; charset=utf-8','app.js':'text/javascript; charset=utf-8','style.css':'text/css; charset=utf-8','icon.svg':'image/svg+xml'}[file]
+            mime = {'index.html':'text/html; charset=utf-8','app.js':'text/javascript; charset=utf-8','style.css':'text/css; charset=utf-8','icon.svg':'image/svg+xml','ui.js':'text/javascript; charset=utf-8','ui.css':'text/css; charset=utf-8'}[file]
             return self.send(200,(ROOT/'web'/file).read_bytes(),mime)
         session = self.session()
         if path == '/api/session':

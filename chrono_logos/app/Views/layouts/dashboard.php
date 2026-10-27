@@ -1,9 +1,3 @@
-<?php
-$isMobileClient =
-    service('request')
-        ->getUserAgent()
-        ->isMobile();
-?>
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -33,62 +27,19 @@ $isMobileClient =
     <meta name="theme-color" content="#10131b">
     <link rel="manifest" href="/index.php?pwa=manifest">
     <link rel="stylesheet" href="/assets/css/game-world.css?v=20261017">
-    <link rel="stylesheet" href="/assets/css/polish.css?v=2">
-</head>
+    <link rel="stylesheet" href="/assets/css/polish.css?v=20261027">
+<link rel="stylesheet" href="/assets/ui.css?v=20261027"><script src="/assets/ui.js?v=20261027" data-ui-theme="chrono" defer></script></head>
 
-<body class="<?= $isMobileClient ? 'mobile-client' : 'desktop-client' ?>">
+<body class="responsive-client">
 
 <div class="app-layout">
 
-    <?php if (! $isMobileClient): ?>
-        <?= view('partials/aside') ?>
-    <?php endif; ?>
+    <?= view('partials/aside') ?>
 
 
     <div class="app-main">
 
-        <?php if ($isMobileClient): ?>
-
-            <header class="mobile-app-header">
-
-                <a
-                    href="/rooms"
-                    class="mobile-app-logo"
-                >
-                    <span>◷</span>
-                    Chronologos
-                </a>
-
-                <div class="mobile-app-actions">
-
-                    <a href="/rooms">
-                        Комнаты
-                    </a>
-
-                    <form
-                        method="post"
-                        action="/auth/logout"
-                    >
-                        <?= csrf_field() ?>
-                        <button type="submit">
-                            Выйти
-                        </button>
-                    </form>
-
-                </div>
-
-            </header>
-
-        <?php else: ?>
-
-            <?= view('partials/header', [
-                'title' => $title ?? 'Dashboard',
-                'username' => $username
-                    ?? session()->get('username'),
-            ]) ?>
-
-        <?php endif; ?>
-
+        <?= view('partials/header', ['title'=>$title ?? 'Главная', 'username'=>$username ?? session()->get('username')]) ?>
 
         <main class="main-content">
 
@@ -111,7 +62,7 @@ $isMobileClient =
         <nav class="mobile-bottom-nav" aria-label="Основная навигация">
             <?php $currentPath = trim(service('uri')->getPath(), '/'); ?>
             <?php foreach ([['rooms','Играть','play'],['games','Каталог','book'],['creator/games','Мои игры','cards'],['account/settings','Профиль','settings']] as [$path,$label,$symbol]): ?>
-            <a href="/<?= $path ?>" <?= str_starts_with($currentPath,$path) ? 'aria-current="page"' : '' ?>><span aria-hidden="true"><?= ['play'=>'▷','book'=>'▤','cards'=>'▦','settings'=>'◉'][$symbol] ?></span><?= $label ?></a>
+            <a href="/<?= $path ?>" <?= str_starts_with($currentPath,$path) ? 'aria-current="page"' : '' ?>><span aria-hidden="true"><?= icon($symbol) ?></span><?= $label ?></a>
             <?php endforeach ?>
         </nav>
 
@@ -120,27 +71,26 @@ $isMobileClient =
 </div>
 
 
-<?php if (! $isMobileClient): ?>
 <script>
 const sidebar = document.getElementById('sidebar');
 const sidebarToggle = document.getElementById('sidebar-toggle');
 const sidebarOverlay = document.getElementById('sidebar-overlay');
-
-function toggleSidebar()
-{
-    sidebar.classList.toggle('is-open');
-    sidebarOverlay.classList.toggle('is-active');
-}
-
-if (sidebarToggle) {
-    sidebarToggle.addEventListener('click', toggleSidebar);
-}
-
-if (sidebarOverlay) {
-    sidebarOverlay.addEventListener('click', toggleSidebar);
+if (sidebarToggle && sidebar) {
+    sidebarToggle.setAttribute('aria-controls','sidebar');
+    sidebarToggle.setAttribute('aria-expanded','false');
+    const closeSidebar = () => {
+        sidebar.classList.remove('is-open');sidebarOverlay?.classList.remove('is-active');
+        sidebarToggle.setAttribute('aria-expanded','false');document.body.classList.remove('mobile-nav-open');
+    };
+    sidebarToggle.addEventListener('click',()=>{
+        const open=sidebar.classList.toggle('is-open');sidebarOverlay?.classList.toggle('is-active',open);
+        sidebarToggle.setAttribute('aria-expanded',String(open));document.body.classList.toggle('mobile-nav-open',open);
+    });
+    sidebarOverlay?.addEventListener('click',closeSidebar);
+    document.addEventListener('keydown',event=>{if(event.key==='Escape'){closeSidebar();sidebarToggle.focus();}});
+    window.addEventListener('resize',()=>{if(innerWidth>760)closeSidebar();});
 }
 </script>
-<?php endif; ?>
 
 <script>
 /*
