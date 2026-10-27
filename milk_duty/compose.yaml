@@ -1,0 +1,14 @@
+services:
+  web:
+    build: .
+    restart: unless-stopped
+    environment:
+      DATA_DIR: /data
+      TRUST_PROXY: "1"
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8130}:8130"
+    volumes:
+      - duty-data:/data
+    stop_grace_period: 30s
+volumes:
+  duty-data:
