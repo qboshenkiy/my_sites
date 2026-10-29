@@ -5,6 +5,8 @@ require_once __DIR__.'/bot-menu.php';
 require_once __DIR__.'/bot-admin.php';
 require_once __DIR__.'/bot-audit.php';
 require_once __DIR__.'/bot-daily.php';
+require_once __DIR__.'/bot-catchup.php';
+require_once __DIR__.'/bot-group.php';
 // Pure update handler: tests exercise Telegram binding without contacting Telegram.
 function telegramUpdate(array $update): array {
     $updateId=$update['update_id']??null;
@@ -18,6 +20,7 @@ function telegramUpdate(array $update): array {
         $from=$callback['from']??$message['from']??[];
         $chat=$message['chat']??[];
         $telegramId=(string)($from['id']??'');
+        if($groupReply=telegramGroupCommand($message)){sql('INSERT INTO bot_updates VALUES (?,?)',[$updateId,time()]);db()->exec('COMMIT');return [$groupReply];}
         if(($chat['type']??'')!=='private'||(string)($chat['id']??'')!==$telegramId||!preg_match('/^\d+$/',$telegramId)||!empty($from['is_bot'])){
             sql('INSERT INTO bot_updates VALUES (?,?)',[$updateId,time()]);db()->exec('COMMIT');return [];
         }
@@ -33,6 +36,7 @@ function telegramUpdate(array $update): array {
         elseif(!$callback&&preg_match('/^\/start(?:@\w+)? ([ai])_([a-f0-9]{48})$/',$text,$match)){$kind=$match[1]==='a'?'login':'invite';$token=$match[2];}
         if($callback)$out[]=['method'=>'answerCallbackQuery','args'=>['callback_query_id'=>$callback['id']]];
         if(telegramAuditMenu($text,(bool)$callback,$linked,$reply)){}
+        elseif(telegramGroupMenu($text,(bool)$callback,$linked,$reply)){}
         elseif(telegramAdminMenu($text,(bool)$callback,$linked,$telegramId,$reply)){}
         elseif(telegramMenu($text,(bool)$callback,$linked,$telegramId,$reply)){}
         elseif($callback&&preg_match('/^r_([yn])_([a-f0-9]{32})$/',$text,$confirmation)){
@@ -82,7 +86,7 @@ function telegramUpdate(array $update): array {
                 $lines[]='Пока ничего не зачтено. Проверьте число и подтвердите. Кнопки действуют 15 минут; новый ввод заменяет предыдущий запрос.';
                 $reply(implode("\n",$lines),[[['text'=>'✓ Подтвердить','callback_data'=>'r_y_'.$token],['text'=>'Отмена','callback_data'=>'r_n_'.$token]]]);
             }catch(DomainException $e){$reply($e->getMessage());}}
-        } else $reply("Бот привязывает Telegram и подтверждает вход.\nЧтобы добавить прочитанные главы, напишите: прочитал 5\nГлавы сначала закрывают предыдущую неделю, остаток идёт в текущую. Перед зачётом нажмите «Подтвердить» или «Отмена».\nГрафики, планы и отчёты доступны на сайте.",$base!==''?[[['text'=>'Открыть сайт','url'=>$base]]]:null);
+        } else $reply("Бот привязывает Telegram и подтверждает вход.\nЧтобы добавить прочитанные главы, напишите: прочитал 5\nГлавы сначала закрывают самые ранние непрочитанные недели, остаток идёт в текущую. Перед зачётом нажмите «Подтвердить» или «Отмена».\nГрафики, планы и отчёты доступны на сайте.",$base!==''?[[['text'=>'Открыть сайт','url'=>$base]]]:null);
         sql('INSERT INTO bot_updates VALUES (?,?)',[$updateId,time()]);
         db()->exec('COMMIT');return $out;
     } catch(Throwable $e){if(db()->inTransaction())db()->rollBack();else db()->exec('ROLLBACK');throw $e;}

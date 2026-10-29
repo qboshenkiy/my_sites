@@ -137,10 +137,10 @@ function addReading(string $id,string $actor,int $chapters,string $date,string $
 
 // Called inside the Telegram update transaction. Validate the complete allocation before writing.
 function telegramReadingPlan(string $id,int $chapters): array {
-    $c=calendar($id);$current=$c['current'];if($current<1||$current>23)throw new DomainException('Сейчас нет текущего или предыдущего плана для отметки.');
+    $c=calendar($id);$current=$c['current'];if($current<1||$current>23)throw new DomainException('Сейчас нет открытых планов для отметки.');
     if($chapters<1||$chapters>200000)throw new DomainException('Укажите положительное число глав, не больше 200000.');
-    $weeks=weekResults($id);$eligible=array_values(array_filter($weeks,fn($w)=>$w['week']>=max(1,$current-1)&&$w['week']<=min(22,$current)&&$w['remaining']>0&&($w['week']===$current||$w['completedCycles']===0)));
-    $capacity=array_sum(array_column($eligible,'remaining'));if($chapters>$capacity)throw new DomainException('Можно зачесть не больше '.$capacity.' глав: это остаток предыдущей и текущей недель. Ничего не добавлено.');
+    $weeks=weekResults($id);$eligible=array_values(array_filter($weeks,fn($w)=>$w['week']<=min(22,$current)&&$w['remaining']>0&&($w['week']===$current||$w['completedCycles']===0)));
+    $capacity=array_sum(array_column($eligible,'remaining'));if($chapters>$capacity)throw new DomainException('Можно зачесть не больше '.$capacity.' глав: это остаток открытых недель. Ничего не добавлено.');
     $left=$chapters;$result=[];foreach($eligible as $w){if(!$left)break;$w['added']=min($left,$w['remaining']);$result[]=$w;$left-=$w['added'];}return $result;
 }
 function addTelegramReading(string $id,int $chapters,int $updateId): array {

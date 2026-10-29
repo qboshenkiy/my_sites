@@ -14,6 +14,12 @@ function telegramDailyTarget(array $books,int $goal,int $day,int $days): string 
     }
     throw new LogicException('Reading target exceeds plan.');
 }
+function telegramDailyCount(array $books,int $goal,int $day,int $days): string {
+    $total=$books?array_sum(array_map(fn($b)=>(int)$b['chapter_to']-(int)$b['chapter_from']+1,$books)):$goal;
+    $target=(int)ceil($total*min($day,$days)/$days);
+    $previous=(int)ceil($total*min(max(0,$day-1),$days)/$days);
+    return 'На этот день: '.($target-$previous).' глав; всего к вечеру: '.$target.' из '.$total.'.';
+}
 function telegramDailyText(array $calendar): ?string {
     $week=$calendar['current'];
     if($week<1||$week>$calendar['weeks'])return null;
@@ -21,8 +27,8 @@ function telegramDailyText(array $calendar): ?string {
     $day=(int)(new DateTimeImmutable($plan['start']))->diff(new DateTimeImmutable($calendar['today']))->format('%a')+1;
     $lines=['📚 Ориентир чтения · неделя '.$week.' · день '.$day.'/7',
         'К концу сегодняшнего дня ('.$calendar['today'].') нужно дочитать включительно:',
-        '', 'За 7 дней:',telegramDailyTarget($plan['books'],$plan['goal'],$day,7),
-        '', 'За 6 дней:',telegramDailyTarget($plan['books'],$plan['goal'],$day,6)];
+        '', 'За 7 дней:',telegramDailyCount($plan['books'],$plan['goal'],$day,7),telegramDailyTarget($plan['books'],$plan['goal'],$day,7),
+        '', 'За 6 дней:',telegramDailyCount($plan['books'],$plan['goal'],$day,6),telegramDailyTarget($plan['books'],$plan['goal'],$day,6)];
     if($day===7)$lines[]='План на 6 дней уже завершён. Сегодня — запасной день.';
     $lines[]='';$lines[]='Это ориентир по плану недели; ваши отметки чтения не меняются.';
     return implode("\n",$lines);
@@ -42,7 +48,7 @@ function telegramDailyReminders(?DateTimeImmutable $now=null,?callable $deliver=
         // The polling worker holds bot.lock: no second sender runs concurrently.
         sql('INSERT INTO telegram_daily_deliveries(user_id,day,telegram_id,next_attempt) VALUES (?,?,?,?) ON CONFLICT(user_id,day) DO UPDATE SET telegram_id=excluded.telegram_id,next_attempt=excluded.next_attempt',[$user['id'],$day,$user['telegram_id'],$time+300]);
         try {
-            $deliver(['chat_id'=>$user['telegram_id'],'text'=>$text,'reply_markup'=>['inline_keyboard'=>[[['text'=>'📚 План недели','callback_data'=>'menu:plan'],['text'=>'📖 Отметить чтение','callback_data'=>'menu:read']]]]]);
+            $deliver(['chat_id'=>$user['telegram_id'],'text'=>$text,'reply_markup'=>['inline_keyboard'=>[[['text'=>'📚 План недели','callback_data'=>'menu:plan'],['text'=>'🧭 Как догнать?','callback_data'=>'menu:catchup']]]]]);
             sql('UPDATE telegram_daily_deliveries SET sent_at=? WHERE user_id=? AND day=?',[$time,$user['id'],$day]);
         }catch(Throwable $e){error_log('Daily reading reminder delivery failed; retry in 5 minutes.');break;}
         if(++$attempts>=5)break; // Keep incoming bot commands responsive during delivery failures.

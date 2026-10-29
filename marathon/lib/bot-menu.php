@@ -4,20 +4,22 @@ function telegramReplyKeyboard(bool $admin=false): array {$rows=[
     [['text'=>'📖 Отметить чтение'],['text'=>'📊 Мой прогресс']],
     [['text'=>'📚 План недели'],['text'=>'🗓 Мои недели']],
     [['text'=>'🔁 Круги чтения'],['text'=>'📱 Марафон']],
+    [['text'=>'🧭 Как догнать?']],
     [['text'=>'❓ Помощь'],['text'=>'Отмена']]
-];if($admin){array_unshift($rows,[['text'=>'👥 Участники'],['text'=>'📋 Общий отчёт']]);$rows[]=[['text'=>'🧾 Журнал']];}return ['keyboard'=>$rows,'resize_keyboard'=>true,'is_persistent'=>true,'input_field_placeholder'=>'Выберите действие или напишите «прочитал 5»'];}
+];if($admin){array_unshift($rows,[['text'=>'👥 Участники'],['text'=>'📋 Общий отчёт']]);$rows[]=[['text'=>'🧾 Журнал'],['text'=>'📣 Отправить в группу']];}return ['keyboard'=>$rows,'resize_keyboard'=>true,'is_persistent'=>true,'input_field_placeholder'=>'Выберите действие или напишите «прочитал 5»'];}
 function telegramBookLines(array $books): array {return array_map(fn($b)=>'• '.$b['title'].': главы '.$b['chapter_from'].'–'.$b['chapter_to'],$books);}
 function telegramReaderHeader(array $reader,array $c): string {return $reader['name'].' · '.($c['current']<1?'до старта':($c['current']>22?'марафон завершён':'неделя '.$c['current'].'/22'));}
 function telegramMenu(string $text,bool $callback,?array $reader,string $telegramId,callable $reply): bool {
-    $actions=['📖 Отметить чтение'=>'read','📊 Мой прогресс'=>'progress','📚 План недели'=>'plan','🗓 Мои недели'=>'weeks','🔁 Круги чтения'=>'rounds','🌐 Открыть сайт'=>'site','📱 Марафон'=>'site','/app'=>'site','❓ Помощь'=>'help','Отмена'=>'cancel','🏠 Меню'=>'home','/start'=>'home','/menu'=>'home','/help'=>'help','/cancel'=>'cancel'];
+    $actions=['🧭 Как догнать?'=>'catchup','Как догнать?'=>'catchup','📖 Отметить чтение'=>'read','📊 Мой прогресс'=>'progress','📚 План недели'=>'plan','🗓 Мои недели'=>'weeks','🔁 Круги чтения'=>'rounds','🌐 Открыть сайт'=>'site','📱 Марафон'=>'site','/app'=>'site','❓ Помощь'=>'help','Отмена'=>'cancel','🏠 Меню'=>'home','/start'=>'home','/menu'=>'home','/help'=>'help','/cancel'=>'cancel'];
     $action=$callback&&str_starts_with($text,'menu:')?substr($text,5):($actions[preg_replace('~^(/(?:start|menu|help|cancel|app))@\w+$~i','$1',trim($text))]??null);
     if($action==='site'){$base=rtrim(getenv('APP_URL')?:'','/');$reply($base?'Планы, исправление глав и подробная история доступны на сайте.':'Администратор ещё не указал адрес сайта.',telegramAppButtons());return true;}
-    if($action==='help'){$reply("❓ Как отмечать чтение\n1. Нажмите «📖 Отметить чтение».\n2. Введите число новых глав или выберите кнопку.\n3. Проверьте распределение и подтвердите.\n\nСначала закрывается непрочитанный план предыдущей недели, затем текущей. Исправить главы можно на сайте.\n\n🔁 Круг — повтор того же недельного плана. Завершите план и начните следующий круг: книги и сроки недели остаются прежними, результаты каждого прохода сохраняются. Прогресс показывает текущий круг текущей недели.");return true;}
+    if($action==='help'){$reply("❓ Как отмечать чтение\n1. Нажмите «📖 Отметить чтение».\n2. Введите число новых глав или выберите кнопку.\n3. Проверьте распределение и подтвердите.\n\nСначала закрываются самые ранние непрочитанные недели, затем текущая. Исправить главы можно на сайте.\n\n🔁 Круг — повтор того же недельного плана. Завершите план и начните следующий круг: книги и сроки недели остаются прежними, результаты каждого прохода сохраняются. Прогресс показывает текущий круг текущей недели.");return true;}
     $repeatCallback=$callback&&($text==='repeat:new'||preg_match('/^w_([yn])_([a-f0-9]{32})$/',$text,$match));
     if($callback&&(str_starts_with($text,'circle:')||str_starts_with($text,'c_'))){$reply('Круги теперь относятся к отдельной неделе. Откройте «🔁 Круги чтения».');return true;}
     if($action===null&&!$repeatCallback)return false;
     if(!$reader){$reply('Сначала получите персональное приглашение и привяжите Telegram. После этого кнопки откроют ваш план и прогресс.');return true;}
     $id=$reader['id'];$c=calendar($id);$s=stats($id);$w=$s['pace'];$header=telegramReaderHeader($reader,$c);
+    if($action==='catchup'){$reply(telegramCatchupText($c,$s['reports']),[[['text'=>'📖 Отметить чтение','callback_data'=>'menu:read'],['text'=>'📚 План недели','callback_data'=>'menu:plan']]]);return true;}
     if($repeatCallback){
         if(!$w){$reply('Новый круг доступен только в текущей неделе марафона.');return true;}
         $binding=$reader['session_epoch'].':'.$w['week'].':'.$w['cycle'].':'.$c['today'];
@@ -35,7 +37,7 @@ function telegramMenu(string $text,bool $callback,?array $reader,string $telegra
     }
     if($action==='cancel'){sql('DELETE FROM telegram_menu_states WHERE user_id=?',[$id]);sql('DELETE FROM telegram_reading_requests WHERE user_id=?',[$id]);sql("DELETE FROM requests WHERE user_id=? AND kind IN ('round','weekly_repeat')",[$id]);$reply('Отменено. Неподтверждённые главы не зачтены.');return true;}
     if($action==='read'){
-        $eligible=array_filter($s['reports'],fn($v)=>$v['week']>=max(1,$c['current']-1)&&$v['week']<=min(22,$c['current'])&&$v['remaining']>0&&($v['week']===$c['current']||$v['completedCycles']===0));$left=array_sum(array_column($eligible,'remaining'));
+        $eligible=array_filter($s['reports'],fn($v)=>$v['week']<=min(22,$c['current'])&&$v['remaining']>0&&($v['week']===$c['current']||$v['completedCycles']===0));$left=array_sum(array_column($eligible,'remaining'));
         if(!$left){$reply($w?'✅ Недельный план прочитан. Можно повторить его через «🔁 Круги чтения».':'Сейчас нет открытого плана для отметки.',[[['text'=>'🔁 Круги чтения','callback_data'=>'menu:rounds']]]);return true;}
         sql('INSERT INTO telegram_menu_states VALUES (?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET telegram_id=excluded.telegram_id,session_epoch=excluded.session_epoch,round_number=excluded.round_number,expires_at=excluded.expires_at',[$id,$telegramId,(int)$reader['session_epoch'],$c['round'],time()+900]);
         $buttons=[];foreach([1,5,10] as $n)if($n<=$left)$buttons[]=['text'=>'+'.$n.' глав','callback_data'=>'amount:'.$n];
