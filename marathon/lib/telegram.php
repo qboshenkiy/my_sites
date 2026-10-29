@@ -4,6 +4,7 @@ require_once __DIR__.'/core.php';
 require_once __DIR__.'/bot-menu.php';
 require_once __DIR__.'/bot-admin.php';
 require_once __DIR__.'/bot-audit.php';
+require_once __DIR__.'/bot-daily.php';
 // Pure update handler: tests exercise Telegram binding without contacting Telegram.
 function telegramUpdate(array $update): array {
     $updateId=$update['update_id']??null;

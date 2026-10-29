@@ -1,7 +1,7 @@
 // Render the production scripts with API fixtures, without browser/network state.
 const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path'),assert=require('node:assert/strict');
 const fixture=JSON.parse(fs.readFileSync(0,'utf8')),app={innerHTML:'',addEventListener(){}},added=[];
-const context=vm.createContext({console,URL,Date,Intl,Math,JSON,Number,String,Object,Array,Set,Map,structuredClone,setTimeout,clearTimeout,requestAnimationFrame(){},
+const context=vm.createContext({MutationObserver:class{observe(){}},AppUI:{icon:()=>''},console,URL,Date,Intl,Math,JSON,Number,String,Object,Array,Set,Map,structuredClone,setTimeout,clearTimeout,requestAnimationFrame(){},
  document:{querySelector:s=>s==='#app'?app:s==='.reader-summary'?{after:n=>added.push(n.innerHTML)}:null,querySelectorAll:()=>[],addEventListener(){},createElement:()=>({innerHTML:'',dataset:{}})},location:{href:'http://example.test/'},localStorage:{getItem:()=>null},navigator:{}});
 for(const name of ['app.js','v2.js','v3.js','users.js','rounds.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'../assets',name),'utf8'),context,{filename:name});
 context.fixture=fixture;

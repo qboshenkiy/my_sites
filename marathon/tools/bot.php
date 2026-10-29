@@ -21,6 +21,7 @@ if($miniApp=telegramMiniAppUrl()){
 echo "Telegram authorization worker started.\n";
 while(true){
     try {
+        telegramDailyReminders();
         $last=(int)(sql("SELECT value FROM settings WHERE key='bot_offset'")->fetchColumn()?:0);
         $updates=telegramCall('getUpdates',['offset'=>$last,'timeout'=>25,'allowed_updates'=>['message','callback_query']])['result'];
         foreach($updates as $update){
