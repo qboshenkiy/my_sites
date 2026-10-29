@@ -19,8 +19,10 @@ check(str_contains(bot('📣 Отправить в группу',200,'private',2
 $reply=bot('📣 Отправить в группу');$last=$reply[count($reply)-1];$action=$last['args']['reply_markup']['inline_keyboard'][0][0]['callback_data'];
 check(str_starts_with($action,'group:send:'),'Preview confirmation');$delivered=[];$send=function($args)use(&$delivered){$delivered[]=$args;};
 telegramGroupDeliveries($send);check(!$delivered,'Preview alone does not send');
-bot($action,100,'private',100,true);bot($action,100,'private',100,true);telegramGroupDeliveries($send);$count=count($delivered);check($count>0&&$delivered[0]['chat_id']==='-900','Only confirmed target group');telegramGroupDeliveries($send);check(count($delivered)===$count,'No duplicate confirmed send');
+bot($action,100,'private',100,true);bot($action,100,'private',100,true);telegramGroupDeliveries($send);$count=count($delivered);check($count===1&&$delivered[0]['text']===telegramDailyText(calendar())&&$delivered[0]['chat_id']==='-900','Only confirmed target group');telegramGroupDeliveries($send);check(count($delivered)===$count,'No duplicate confirmed send');
 $reply=bot('📣 Отправить в группу');$action=$reply[count($reply)-1]['args']['reply_markup']['inline_keyboard'][0][0]['callback_data'];bot($action,100,'private',100,true);bot('/reading_here',100,'supergroup',-901);telegramGroupDeliveries($send);check(count($delivered)===$count,'Changed group cancels queued old report');
 $allocation=telegramReadingPlan('reader',15);check($allocation[0]['week']===1&&count($allocation)>=2,'Reading reaches debt older than one week');
-check(str_contains(telegramDailyCount([],60,1,7),'9 глав'),'Concrete daily chapter count');
+check(telegramGroupReport()===telegramDailyText(calendar()),'Manual message equals the shared daily target, no personal results');
+sql('INSERT INTO telegram_group_dispatches(id,actor_id,actor_epoch,chat_id,payload,confirmed,expires_at,format_version) VALUES (?,?,?,?,?,1,?,0)',['legacy','admin',$admin['session_epoch'],'-901','Old personal data',time()+600]);
+sql('INSERT INTO telegram_group_parts(dispatch_id,part,text) VALUES (?,0,?)',['legacy','Old personal data']);telegramGroupDeliveries($send);check(count($delivered)===$count,'Old queued personal reports are retired after update');
 echo "PASS: catch-up forecast, new weekly workload, repeat credit, private button, group authorization/preview/confirmation/deduplication, changed group and old debt allocation\n";
