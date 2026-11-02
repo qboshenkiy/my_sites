@@ -1,0 +1,8 @@
+.env
+data/
+models/
+*.mp3
+*.wav
+*.onnx
+*.onnx.json
+.venv/

@@ -1,0 +1,24 @@
+services:
+  web:
+    build: .
+    restart: unless-stopped
+    environment:
+      DATA_DIR: /data
+      MODEL_DIR: /models
+      COOKIE_SECURE: ${COOKIE_SECURE:-0}
+      MAX_STORAGE_MB: ${MAX_STORAGE_MB:-4096}
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8140}:8140"
+    volumes:
+      - book-data:/data
+      - voice-models:/models
+    mem_limit: 2g
+    cpus: 1.5
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+volumes:
+  book-data:
+  voice-models:
