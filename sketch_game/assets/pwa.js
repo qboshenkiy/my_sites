@@ -7,7 +7,7 @@
     marathon:{name:'Глава',accent:'#315c49',surface:'#fafbf5',text:'#24392e',muted:'#788474',line:'#dce3d3',button:'#ffffff',icon:'/assets/telegram-avatars/marathon.png'},
     chrono:{name:'Chrono Logos',accent:'#d6b77a',surface:'#191e2a',text:'#f1f3f8',muted:'#a7b2c7',line:'#333e52',button:'#211c13',icon:'/assets/img/icons/hrono.png'},
     drawing:{name:'Штрих',accent:'#6552d9',surface:'#fffdf9',text:'#28252f',muted:'#777280',line:'#e4dfed',button:'#ffffff',icon:'/assets/icon.svg'},
-    gitdeck:{name:'GitDeck',accent:'#a99aff',surface:'#151c29',text:'#e4eaf5',muted:'#9aa8bd',line:'#303b50',button:'#17132a',icon:'/icon.svg'}
+    gitdeck:{name:'GitDeck',accent:'#5dd6bd',surface:'#1a2523',text:'#e8f1ec',muted:'#a0b5ae',line:'#2c403a',button:'#082a23',icon:'/icon.svg'}
   };
   const theme=themes[module]||themes.pulse;
   const ua=navigator.userAgent;
