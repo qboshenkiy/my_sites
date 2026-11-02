@@ -12,7 +12,8 @@ function formsSchema(): void {
         user_id TEXT,name TEXT NOT NULL,guest_key TEXT NOT NULL,answers TEXT NOT NULL,points REAL NOT NULL,max_points REAL NOT NULL,
         submitted_at INTEGER NOT NULL,source TEXT NOT NULL,UNIQUE(form_id,guest_key));
         CREATE UNIQUE INDEX IF NOT EXISTS form_account_attempt ON form_attempts(form_id,user_id) WHERE user_id IS NOT NULL;
-        CREATE INDEX IF NOT EXISTS form_attempt_list ON form_attempts(form_id,submitted_at);");
+        CREATE INDEX IF NOT EXISTS form_attempt_list ON form_attempts(form_id,submitted_at);
+        CREATE TABLE IF NOT EXISTS form_result_links(token_hash TEXT PRIMARY KEY,attempt_id TEXT NOT NULL,expires_at INTEGER NOT NULL);");
 }
 function formOwned(string $id): array {
     hostOnly();$form=query('SELECT * FROM pulse_forms WHERE id=?',[$id])->fetch();
@@ -23,7 +24,8 @@ function formGuestKey(): string {
     return $me?'u:'.$me['id']:'w:'.hash('sha256',session_id());
 }
 function formAttempt(array $form): array|false {
-    return query('SELECT * FROM form_attempts WHERE form_id=? AND guest_key=?',[$form['id'],formGuestKey()])->fetch();
+    global $me;
+    return query('SELECT * FROM form_attempts WHERE form_id=? AND (guest_key=? OR (? IS NOT NULL AND user_id=?))',[$form['id'],formGuestKey(),$me['id']??null,$me['id']??null])->fetch();
 }
 function formScore(array $form,array $answers,bool $allowMissing=false): array {
     $questions=json_decode($form['quiz'],true)['questions'];
@@ -92,6 +94,11 @@ function formsHandle(string $action,array $input): void {
         if($action==='form_submit')$db->exec('BEGIN IMMEDIATE');
         $form=query('SELECT * FROM pulse_forms WHERE token=?',[$token])->fetch();if(!$form)fail('Тест не найден.',404);
         $attempt=formAttempt($form);
+        if($action==='form_get'&&isset($input['result'])){
+            $secret=$input['result'];if(!is_string($secret)||!preg_match('/^[a-f0-9]{64}$/D',$secret))fail('Ссылка результата недействительна.',404);
+            $attempt=query('SELECT a.* FROM form_attempts a JOIN form_result_links l ON l.attempt_id=a.id WHERE l.token_hash=? AND l.expires_at>=? AND a.form_id=?',[hash('sha256',$secret),time(),$form['id']])->fetch();
+            if(!$attempt)fail('Ссылка результата истекла. Получите новую в боте.',404);
+        }
         if($action==='form_submit'&&!$attempt){
             if(!$form['active'])fail('Приём ответов закрыт.',409);
             if($form['require_account']&&!$me)fail('Войдите в аккаунт перед прохождением.',401);

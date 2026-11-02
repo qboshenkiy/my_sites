@@ -93,7 +93,7 @@ with tempfile.TemporaryDirectory(prefix='pulse-forms-') as tmp:
         if($m==='editMessageText')return ['message_id'=>$a['message_id']];return [];};
         if(isset($input['update']))formsBotUpdate($input['update'],'999999');if(!empty($input['tick']))formsBotTick();echo json_encode($calls,JSON_UNESCAPED_UNICODE);'''
         def bot(update=None,tick=False,fail=None):
-            return json.loads(subprocess.check_output([PHP,'-r',code_php,str(ROOT/'assets/community.php'),str(ROOT/'assets/pulse-telegram.php'),str(ROOT/'assets/forms-bot.php')],env=env,input=json.dumps(dict(update=update,tick=tick,fail_method=fail)),text=True,encoding='utf-8'))
+            return json.loads(subprocess.check_output([PHP,'-r',code_php,str(ROOT/'assets/community.php'),str(ROOT/'assets/pulse-telegram.php'),str(ROOT/'assets/forms-bot.php')],env=dict(env,APP_URL='https://pulse.example.test'),input=json.dumps(dict(update=update,tick=tick,fail_method=fail)),text=True,encoding='utf-8'))
         seq=10000
         def message(tg,text,chat=None,kind='private'):
             global seq
@@ -110,14 +110,31 @@ with tempfile.TemporaryDirectory(prefix='pulse-forms-') as tmp:
         with closing(sqlite3.connect(pdir/'quiz.sqlite')) as db:poll2=db.execute('SELECT current_poll_id FROM form_tg_deliveries WHERE form_id=?',(tf['id'],)).fetchone()[0]
         assert poll2!=poll
         bot(answer(202,poll2,0),True)  # Cannot answer another user's private test.
-        bot(answer(201,poll2,1),True)
+        finished=bot(answer(201,poll2,1),True)
+        assert 'Результат на сайте' in json.dumps(finished,ensure_ascii=False) and 'Показать правильные ответы' in json.dumps(finished,ensure_ascii=False)
+        assert 'Правильно:' not in json.dumps(finished,ensure_ascii=False)
         data=admin.call('form_results&form='+tf['id']);assert len(data['attempts'])==1 and data['attempts'][0]['percent']==50
         def callback(tg,data,chat=None,kind='private',message_id=None):
             global seq
             seq+=1;return dict(update_id=seq,callback_query=dict(id=str(seq),**{'from':dict(id=tg,first_name='TG')},message=dict(message_id=message_id,chat=dict(id=chat or tg,type=kind)),data=data))
         hidden=bot(callback(201,'pr:'+tf['id']));assert 'ещё не открыл' in json.dumps(hidden,ensure_ascii=False)
+        summary=bot(message(201,'/start fr_'+tf['id']))
+        link=next(button['url'] for method,args in summary if method=='sendMessage' for row in args.get('reply_markup',{}).get('inline_keyboard',[]) for button in row if 'url' in button)
+        secret=link.split('#result=')[1]
+        assert '#result=' in link and '?test='+tf['token'] in link
+        shared=outsider.call('form_get',{'token':tf['token'],'result':secret});assert shared['submitted'] and 'answers' not in shared['attempt']
+        outsider.call('form_get',{'token':locked['token'],'result':secret},404)
+        denied=bot(callback(202,'pa:'+tf['id']));assert 'Правильно:' not in json.dumps(denied,ensure_ascii=False)
         admin.call('form_configure',{'form':tf['id'],'revision':1,'active':True,'published':True})
-        review=bot(callback(201,'pr:'+tf['id']));assert '500' in json.dumps(review) and 'Правильно' in json.dumps(review,ensure_ascii=False)
+        review=bot(callback(201,'pa:'+tf['id']));assert '500' in json.dumps(review) and 'Правильно' in json.dumps(review,ensure_ascii=False)
+        assert '❌ Неверно' in json.dumps(review,ensure_ascii=False) and 'Ваш ответ:' in json.dumps(review,ensure_ascii=False)
+        shared=outsider.call('form_get',{'token':tf['token'],'result':secret});assert shared['attempt']['percent']==50 and shared['attempt']['answers'][1]==1
+        admin.call('form_configure',{'form':tf['id'],'revision':2,'active':True,'published':False})
+        assert 'answers' not in outsider.call('form_get',{'token':tf['token'],'result':secret})['attempt']
+        admin.call('form_configure',{'form':tf['id'],'revision':3,'active':True,'published':True})
+        with closing(sqlite3.connect(pdir/'quiz.sqlite')) as db:
+            db.execute('UPDATE form_result_links SET expires_at=0');db.commit()
+        outsider.call('form_get',{'token':tf['token'],'result':secret},404)
         print('PASS: native private Telegram polls, delayed correctness, identity, per-chat isolation, duplicate updates and final scoring')
 
         group=create();connection=admin.call('form_telegram_create',{'form':group['id']});command=connection['command']
