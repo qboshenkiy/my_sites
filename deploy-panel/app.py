@@ -24,7 +24,7 @@ import threading
 import time
 import urllib.parse
 
-VERSION = '1.7.0'
+VERSION = '1.8.0'
 LAYOUT = {
     'remote': ['server', 'ops', '.dockerignore'],
     'drawing': ['index.php', 'api.php', 'manifest.webmanifest', 'service-worker.js', 'lib', 'assets', 'ops', '.dockerignore'],
@@ -41,6 +41,68 @@ REQUIRED = {'remote': ['server/app.py', 'server/requirements.txt', 'server/Docke
             'chrono': ['app/Config/Paths.php', 'public/index.php', 'composer.lock', 'spark', 'ops/compose.yaml',
                        'ops/Dockerfile', 'ops/entrypoint.sh', 'app/Commands/DeployAdmin.php'],
             'self': ['app.py', 'index.html', 'VERSION']}
+
+
+BOOKVOICE = {
+    'id': 'bookvoice', 'name': 'Голос книги', 'kind': 'docker',
+    'repo': 'https://github.com/qboshenkiy/my_sites.git', 'branch': 'main',
+    'subdir': 'bookvoice', 'directory': '/opt/bookvoice', 'compose': 'compose.yaml',
+    'profiles': [], 'services': ['web'], 'main_service': 'web',
+    'paths': ['src', 'web', 'requirements.txt'], 'wait_health': True, 'ssh_key': ''}
+
+
+def register_bookvoice(server):
+    # Updating GitDeck adds a discoverable card, without provisioning or touching data.
+    if any(p['id'] == 'bookvoice' for p in server.config['projects']):
+        return
+    project = project_from_form(dict(BOOKVOICE), None, server.config)
+    save_config(server, [*server.config['projects'], project], config_revision(server.config))
+
+
+def setup_bookvoice(config, p, job, log):
+    folder = Path(config['state_dir']) / 'jobs' / job
+    payload_file = folder / 'environment.json'
+    try:
+        password = json.loads(payload_file.read_text()).get('password', '')
+        if password and not 12 <= len(password) <= 200:
+            raise ValueError('Пароль должен содержать от 12 до 200 символов')
+        # Only the fixed first-party module can run this provisioning recipe.
+        if any(p.get(k) != BOOKVOICE[k] for k in ('id', 'kind', 'repo', 'subdir', 'directory', 'compose')):
+            raise ValueError('Настройка доступна для стандартной карточки «Голос книги»')
+        source_project = dict(BOOKVOICE, paths=[*BOOKVOICE['paths'], 'Dockerfile', 'compose.yaml', '.dockerignore'])
+        source = folder / 'setup-source'
+        sha = checkout(source_project, config, source, log)
+        dest = Path(p['directory'])
+        dest.mkdir(parents=True, exist_ok=True)
+        # Preserve existing deployment files; update application code through normal deploy.
+        for name in source_project['paths']:
+            target = validate_destination(dest, name)
+            if target.exists():
+                continue
+            if (source / name).is_dir():
+                shutil.copytree(source / name, target)
+            else:
+                shutil.copy2(source / name, target)
+        status_update(config, job, 'installing', sha=sha)
+        compose(p, ['build', 'web'], log)
+        compose(p, ['run', '--rm', '--no-deps', '-T', 'web', 'python', 'src/download_models.py'], log)
+        compose(p, ['up', '-d', '--wait', '--wait-timeout', '180', 'web'], log)
+        # Password travels only over stdin, never argv or deployment logs. Empty preserves it.
+        script = ("import sys,json,secrets,os;from pathlib import Path;"
+                  "from werkzeug.security import generate_password_hash;"
+                  "p=Path('/data/password.json');v=sys.stdin.read();"
+                  "assert v or p.exists(),'Задайте пароль библиотеки';"
+                  "v and p.write_text(json.dumps({'hash':generate_password_hash(v),'epoch':secrets.token_hex(16)}));"
+                  "v and os.chmod(p,0o600)")
+        result = subprocess.run(compose_command(p) + ['exec', '-T', 'web', 'python', '-c', script],
+            cwd=dest, input=password.encode(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
+        if result.returncode:
+            raise ValueError('Не удалось задать пароль. Укажите пароль библиотеки и повторите настройку')
+        run([sys.executable, str(dest / 'src/connect_https.py'), 'books.vano.sbena.net'], log)
+        log.write('Готово: https://books.vano.sbena.net. Книги и ключ ElevenLabs сохранены.\n')
+        status_update(config, job, 'success', sha=sha)
+    finally:
+        payload_file.unlink(missing_ok=True)
 
 
 def valid_ref(ref):
@@ -754,6 +816,7 @@ def enqueue(server, p, action, ref='', payload=None):
              '--property=Type=exec', sys.executable, str(snapshot), '--config', server.config_path,
              'worker', '--job', job], timeout=20)
     except Exception as exc:
+        (folder / 'environment.json').unlink(missing_ok=True)
         status_update(server.config, job, 'failed', str(exc))
         raise
     return job
@@ -1047,7 +1110,9 @@ def work(config, job):
             p['_target_ref'] = row['target_ref']
         with (jobdir / 'output.log').open('a', encoding='utf-8') as log:
             try:
-                if row['action'] == 'configure':
+                if row['action'] == 'setup_bookvoice':
+                    setup_bookvoice(config, p, job, log)
+                elif row['action'] == 'configure':
                     apply_environment(config, p, job, log)
                 elif row['action'] == 'connect_marathon':
                     connect_marathon(config, p, job, log)
@@ -1584,6 +1649,18 @@ class Panel(http.server.BaseHTTPRequestHandler):
                     return self.send(202,{'job':enqueue(self.server,p,'pulse_bot')})
                 except (StopIteration,ValueError,OSError,RuntimeError) as error:
                     return self.send(400,{'error':str(error) or 'Выберите Пульс'})
+        if self.path == '/api/bookvoice/setup':
+            if self.server.demo:
+                return self.send(403, {'error': 'В предпросмотре установка отключена'})
+            with self.mutex:
+                try:
+                    password = data.get('password', '')
+                    if not isinstance(password, str) or (password and not 12 <= len(password) <= 200):
+                        raise ValueError('Пароль должен содержать от 12 до 200 символов')
+                    p = next(p for p in self.server.config['projects'] if p['id'] == 'bookvoice')
+                    return self.send(202, {'job': enqueue(self.server, p, 'setup_bookvoice', payload={'password': password})})
+                except (StopIteration, ValueError, OSError, RuntimeError) as error:
+                    return self.send(400, {'error': str(error) or 'Карточка «Голос книги» не найдена'})
         if self.path == '/api/update':
             if self.server.demo:
                 return self.send(403, {'error': 'Предпросмотр: команды на сервере отключены'})
@@ -1606,6 +1683,12 @@ def serve(config, config_path, demo=False):
     db_open(config).close()
     server = http.server.ThreadingHTTPServer(('127.0.0.1', int(config.get('port', 8120))), Panel)
     server.config, server.config_path, server.demo = config, str(Path(config_path).resolve()), demo
+    if not demo:
+        try:
+            register_bookvoice(server)
+        except (ValueError, OSError) as error:
+            print('Не удалось добавить карточку «Голос книги»: ' + str(error), file=sys.stderr, flush=True)
+    config = server.config
     server.monitor = ServerMonitor(config, demo)
     server.monitor.start()
     print('GitDeck: http://127.0.0.1:' + str(server.server_port), flush=True)
