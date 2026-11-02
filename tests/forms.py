@@ -172,6 +172,28 @@ with tempfile.TemporaryDirectory(prefix='pulse-forms-') as tmp:
         admin.call('form_telegram_command',{'form':failed['id'],'delivery':row['id'],'revision':row['revision'],'command':'retry'});bot(tick=True)
         assert admin.call('form_results&form='+failed['id'])['deliveries'][0]['state']=='active'
         print('PASS: group answers remain hidden, one editable message, admin controls, delayed review and retry after failure')
+        # Deletion is owner-only, versioned and removes the published contribution atomically.
+        deleting=admin.call('form_results&form='+group['id'])['form']
+        a.call('form_delete',{'form':group['id'],'revision':deleting['revision']},404)
+        admin.call('form_delete',{'form':group['id'],'revision':0},409)
+        with closing(sqlite3.connect(pdir/'quiz.sqlite')) as db:
+            db.execute("UPDATE form_tg_deliveries SET state='sending' WHERE form_id=?",(group['id'],));db.commit()
+        admin.call('form_delete',{'form':group['id'],'revision':deleting['revision']},409)
+        with closing(sqlite3.connect(pdir/'quiz.sqlite')) as db:
+            db.execute("UPDATE form_tg_deliveries SET state='closed' WHERE form_id=?",(group['id'],));db.commit()
+        aid=deleting['assessment_id']
+        assert any(t['id']==aid for t in admin.call('standings')['tests'])
+        admin.call('form_delete',{'form':group['id'],'revision':deleting['revision']})
+        assert all(t['id']!=aid for t in admin.call('standings')['tests'])
+        guest.call('form_get&token='+group['token'],status=404)
+        a.call('form_submit',{'token':group['token'],'answers':[[0,4],0]},404)
+        admin.call('form_results&form='+group['id'],status=404)
+        assert any(f['id']==fid for f in admin.call('forms')['forms'])
+        with closing(sqlite3.connect(pdir/'quiz.sqlite')) as db:
+            assert db.execute('SELECT 1 FROM quizzes WHERE id=?',(quiz,)).fetchone()
+            for table,key,value in [('form_attempts','form_id',group['id']),('form_tg_deliveries','form_id',group['id']),('assessments','id',aid),('assessment_scores','assessment_id',aid),('published_scores','assessment_id',aid)]:
+                assert db.execute(f'SELECT count(*) FROM {table} WHERE {key}=?',(value,)).fetchone()[0]==0
+        print('PASS: form deletion permissions, stale revision, in-flight bot guard, rating cleanup and source quiz preservation')
         if os.environ.get('FORMS_UI')=='1':
             subprocess.run(['node',str(ROOT/'tests/forms_ui.cjs')],env=dict(env,FORMS_TEST_URL=purl,FORMS_QUIZ_ID=quiz,FORMS_USER_A=ua,FORMS_USER_B=ub),check=True,timeout=100)
     finally:

@@ -86,7 +86,7 @@ function formAdjustedAttempt(array $form,array $attempt): array {
 }
 function formsHandle(string $action,array $input): void {
     global $db,$me;
-    if(!in_array($action,['forms','form_create','form_get','form_submit','form_configure','form_results','form_link_attempt','form_telegram_create','form_telegram_command'],true))return;
+    if(!in_array($action,['forms','form_create','form_get','form_submit','form_configure','form_delete','form_results','form_link_attempt','form_telegram_create','form_telegram_command'],true))return;
     formsSchema();
     if(in_array($action,['form_get','form_submit'],true)){
         $token=$input['token']??$_GET['token']??'';
@@ -135,8 +135,24 @@ function formsHandle(string $action,array $input): void {
         $quiz=json_decode($form['quiz'],true);unset($form['quiz']);out(['form'=>$form,'question_count'=>count($quiz['questions']),'attempts'=>$attempts,'deliveries'=>$deliveries,'bot'=>getenv('TELEGRAM_BOT_USERNAME')?:null]);
     }
     if(in_array($action,['form_telegram_create','form_telegram_command'],true)){require_once __DIR__.'/forms-bot.php';formsBotSchema();formsBotHandle($action,$input,$form);return;}
+    if($action==='form_delete'){require_once __DIR__.'/forms-bot.php';formsBotSchema();}
     $db->exec('BEGIN IMMEDIATE');$form=formOwned($id);
-    if($action==='form_link_attempt'){
+    if($action==='form_delete'){
+        if((int)($input['revision']??-1)!==(int)$form['revision'])fail('Настройки уже изменились. Обновите тест.',409);
+        if(query("SELECT 1 FROM form_tg_deliveries WHERE form_id=? AND state IN ('queued','sending')",[$id])->fetchColumn())fail('Бот сейчас отправляет сообщения. Дождитесь завершения отправки и повторите удаление.',409);
+        communityAudit('delete_form',$id,['title'=>$form['title'],'responses'=>(int)query('SELECT count(*) FROM form_attempts WHERE form_id=?',[$id])->fetchColumn()]);
+        // Remove only the assessment generated for this form; retain its source quiz.
+        foreach(query('SELECT id FROM assessments WHERE source_form_id=?',[$id])->fetchAll() as $assessment){
+            standingsRemove($assessment['id']);
+            query('DELETE FROM assessment_scores WHERE assessment_id=?',[$assessment['id']]);
+            query('DELETE FROM assessments WHERE id=?',[$assessment['id']]);
+        }
+        query('DELETE FROM form_result_links WHERE attempt_id IN (SELECT id FROM form_attempts WHERE form_id=?)',[$id]);
+        query('DELETE FROM form_attempts WHERE form_id=?',[$id]);
+        foreach(['form_tg_polls','form_tg_votes','form_tg_selections'] as $table)query('DELETE FROM '.$table.' WHERE delivery_id IN (SELECT id FROM form_tg_deliveries WHERE form_id=?)',[$id]);
+        query('DELETE FROM form_tg_deliveries WHERE form_id=?',[$id]);
+        query('DELETE FROM pulse_forms WHERE id=?',[$id]);
+    }elseif($action==='form_link_attempt'){
         communityStaff();$uid=(string)($input['user_id']??'');$u=query('SELECT * FROM pulse_accounts WHERE id=? AND active=1',[$uid])->fetch();if(!$u)fail('Аккаунт не найден.');
         $a=query('SELECT * FROM form_attempts WHERE id=? AND form_id=?',[$input['attempt']??'',$id])->fetch();if(!$a)fail('Ответ не найден.',404);
         if(query('SELECT id FROM form_attempts WHERE form_id=? AND user_id=? AND id<>?',[$id,$uid,$a['id']])->fetchColumn())fail('У этого аккаунта уже есть результат.',409);
