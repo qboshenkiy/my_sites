@@ -95,6 +95,24 @@ function formsBotEditGroupQuestion(array $delivery,array $form): void {
     formsBotCall('editMessageText',['chat_id'=>$delivery['chat_id'],'message_id'=>(int)$delivery['current_message_id'],
         'text'=>formsBotGroupText($delivery,$form),'reply_markup'=>['inline_keyboard'=>formsBotGroupKeyboard($delivery,$form,$q)]]);
 }
+function formsBotOwnAttempt(string $formId,string $telegram): array|false {
+    $uid=query('SELECT user_id FROM pulse_tg_accounts WHERE telegram_id=?',[$telegram])->fetchColumn();
+    if(!$uid){$identity=formsBotIdentity($telegram);$uid=$identity['id']??null;}
+    return query('SELECT * FROM form_attempts WHERE form_id=? AND (guest_key=? OR (? IS NOT NULL AND user_id=?))',[$formId,'t:'.hash('sha256',$telegram),$uid?:null,$uid?:null])->fetch();
+}
+function formsBotHistory(string $telegram,int $page): void {
+    $uid=query('SELECT user_id FROM pulse_tg_accounts WHERE telegram_id=?',[$telegram])->fetchColumn();
+    if(!$uid){$identity=formsBotIdentity($telegram);$uid=$identity['id']??null;}
+    $where=' FROM form_attempts a JOIN pulse_forms f ON f.id=a.form_id WHERE (a.guest_key=? OR (? IS NOT NULL AND a.user_id=?))';
+    $args=['t:'.hash('sha256',$telegram),$uid?:null,$uid?:null];
+    $total=(int)query('SELECT count(*)'.$where,$args)->fetchColumn();$page=min(max(0,$page),max(0,(int)ceil($total/8)-1));
+    $rows=query('SELECT f.id,f.title,f.published,a.submitted_at'.$where.' ORDER BY a.submitted_at DESC,a.id LIMIT 8 OFFSET '.($page*8),$args)->fetchAll();
+    $buttons=[];
+    foreach($rows as $row)$buttons[]=[['text'=>mb_substr($row['title'],0,45).' · '.date('d.m.Y',(int)$row['submitted_at']).($row['published']?'':' · скрыт'),'callback_data'=>'pr:'.$row['id']]];
+    $nav=[];if($page>0)$nav[]=['text'=>'← Назад','callback_data'=>'fh:'.($page-1)];if(($page+1)*8<$total)$nav[]=['text'=>'Далее →','callback_data'=>'fh:'.($page+1)];if($nav)$buttons[]=$nav;
+    if(($url=pulseMiniAppUrl()))$buttons[]=[['text'=>'Открыть Пульс','web_app'=>['url'=>$url]]];
+    formsBotReply($telegram,$total?'Ваши пройденные тесты. Выберите тест, чтобы посмотреть результат. Страница '.($page+1).' из '.(int)ceil($total/8).'.':'Пока нет пройденных тестов. Пройдите тест в этом боте или войдите через Telegram на сайте и отправьте работу.',$buttons);
+}
 function formsBotUpdate(array $update,string $botId): bool {
     global $db;
     formsBotSchema();pulseTelegramSchema();$number=$update['update_id']??null;if(!is_int($number))return false;
@@ -108,15 +126,20 @@ function formsBotUpdate(array $update,string $botId): bool {
     $isReview=preg_match('/^pa:([a-f0-9]{16})$/',$text,$reviewResult);
     $isResult=preg_match('/^pr:([a-f0-9]{16})$/',$text,$result)||preg_match('/^\/start(?:@\w+)? fr_([a-f0-9]{16})$/',$text,$result);
     if($isReview)$result=$reviewResult;
+    $isHistory=preg_match('/^fh:([0-9]{1,6})$/',$text,$history)||preg_match('/^(?:\/results(?:@\w+)?|Мои результаты|\/start(?:@\w+)?)$/u',$text);
     $isRetry=preg_match('/^pt:([a-f0-9]{16}):(\d+)$/',$text,$retry);
-    if(!$isStart&&!$isBind&&!$isControl&&!$isGroupAnswer&&!$isGroupSubmit&&!$isResult&&!$isReview&&!$isRetry&&!$poll)return false;
+    if(!$isStart&&!$isBind&&!$isControl&&!$isGroupAnswer&&!$isGroupSubmit&&!$isResult&&!$isReview&&!$isRetry&&!$isHistory&&!$poll)return false;
     if(query('SELECT 1 FROM pulse_bot_updates WHERE bot_id=? AND update_id=?',[$botId,$number])->fetchColumn())return true;
     $from=$poll['user']??$callback['from']??$message['from']??[];$telegram=(string)($from['id']??'');$chat=(string)($message['chat']['id']??'');
     if(!preg_match('/^[0-9]{1,20}$/',$telegram)||!empty($from['is_bot']))return true;
     $name=trim(($from['first_name']??'').' '.($from['last_name']??''))?:'Участник';
     $callbackText=null;
     try{
-        if($poll){
+        if($isHistory){
+            if(($message['chat']['type']??'')!=='private'||$chat!==$telegram)return true;
+            if(preg_match('/^\/start/',$text))formsBotCall('sendMessage',['chat_id'=>$chat,'text'=>'Пульс: тесты и ваши результаты.','reply_markup'=>['keyboard'=>[[['text'=>'Мои результаты']]],'resize_keyboard'=>true,'is_persistent'=>true]]);
+            formsBotHistory($telegram,isset($history[1])?(int)$history[1]:0);
+        }elseif($poll){
             $p=query('SELECT * FROM form_tg_polls WHERE poll_id=?',[$poll['poll_id']??''])->fetch();if(!$p||$p['closed'])return true;
             $delivery=query('SELECT * FROM form_tg_deliveries WHERE id=?',[$p['delivery_id']])->fetch();
             if($delivery['kind']==='private'&&$delivery['chat_id']!==$telegram)return true;
@@ -202,8 +225,8 @@ function formsBotUpdate(array $update,string $botId): bool {
         }elseif($isResult||$isReview){
             if(($message['chat']['type']??'')!=='private'||$chat!==$telegram)return true;
             $form=query('SELECT * FROM pulse_forms WHERE id=?',[$result[1]])->fetch();if(!$form)throw new DomainException('Тест не найден.');
-            $a=query('SELECT * FROM form_attempts WHERE form_id=? AND guest_key=?',[$form['id'],'t:'.hash('sha256',$telegram)])->fetch();
-            if(!$a)throw new DomainException('Сначала завершите этот тест в боте.');
+            $a=formsBotOwnAttempt($form['id'],$telegram);
+            if(!$a)throw new DomainException('У вас нет сохранённой работы по этому тесту.');
             if(!$form['published'])formsBotSendResult($form,$chat,$a);
             else if($isReview)formsBotSendReview($form,$chat,$a);else formsBotSendResult($form,$chat,$a);
         }
@@ -220,6 +243,7 @@ function formsBotResultKeyboard(array $form,array $attempt): array {
         $buttons[]=[['text'=>'Результат на сайте','url'=>$base.'/?test='.$form['token'].'#result='.$secret]];
     }
     $buttons[]=[['text'=>'Показать правильные ответы','callback_data'=>'pa:'.$form['id']]];
+    $buttons[]=[['text'=>'Мои пройденные тесты','callback_data'=>'fh:0']];
     return $buttons;
 }
 function formsBotSendResult(array $form,string $chat,array $attempt): void {

@@ -7,3 +7,5 @@
 .self-test-review.incorrect{background:#fff0f0;border:2px solid #c63e4c;color:#9d2232}.self-test-review.incorrect>span{color:#b52638}.self-test-review.incorrect small{color:#9d2232;font-weight:700}
 
 .self-test-verdict{font-weight:700;margin:12px 0}.self-test-verdict.is-correct{color:#227343}.self-test-verdict.is-incorrect{color:#a42436}.self-test-review>span:nth-child(2){min-width:0;overflow-wrap:anywhere}.self-test-review small{margin-left:auto}.self-test-review{flex-wrap:wrap}
+
+.forms-attempt-review{width:min(850px,calc(100vw - 24px));max-height:90dvh;overflow:auto}.forms-attempt-review .self-test-question{margin-top:20px}

@@ -63,6 +63,15 @@ with tempfile.TemporaryDirectory(prefix='pulse-forms-') as tmp:
         again=a.call('form_submit',{'token':token,'answers':[[0,4],0]});assert again==hidden
         assert not a.call('assessments')['assessments']
         guest.call('form_submit',{'token':token,'name':'Гостевой ответ','answers':[[0,4],0]})
+        owner_report=admin.call('form_results&form='+fid)
+        original_attempt=next(x for x in owner_report['attempts'] if x['user_id']==ua)
+        detail=admin.call('form_attempt',{'form':fid,'attempt':original_attempt['id']})
+        assert detail['attempt']['answers']==[[0,4],1] and detail['attempt']['points']==500
+        assert all('correct' in q for q in detail['questions'])
+        a.call('form_attempt',{'form':fid,'attempt':original_attempt['id']},404)
+        admin.call('form_attempt',{'form':fid,'attempt':'missing'},404)
+        assert 'points' not in a.call('form_get&token='+token)['attempt']
+
         admin.call('save',{'id':quiz,'title':'Изменён шаблон','questions':[questions[0]]})
         assert len(guest.call('form_get&token='+token)['questions'])==2
         admin.call('form_configure',{'form':fid,'revision':1,'active':True,'published':True})
@@ -172,6 +181,31 @@ with tempfile.TemporaryDirectory(prefix='pulse-forms-') as tmp:
         admin.call('form_telegram_command',{'form':failed['id'],'delivery':row['id'],'revision':row['revision'],'command':'retry'});bot(tick=True)
         assert admin.call('form_results&form='+failed['id'])['deliveries'][0]['state']=='active'
         print('PASS: group answers remain hidden, one editable message, admin controls, delayed review and retry after failure')
+        # History lists only this Telegram user's work and preserves publication privacy.
+        history=bot(message(201,'/results'))
+        keyboard=[button for method,args in history if method=='sendMessage' for row in args.get('reply_markup',{}).get('inline_keyboard',[]) for button in row]
+        assert any(b.get('callback_data')=='pr:'+tf['id'] for b in keyboard)
+        assert not any(b.get('callback_data')=='pr:'+failed['id'] for b in keyboard)
+        assert 'Правильно:' not in json.dumps(history,ensure_ascii=False)
+        start_calls=bot(message(201,'/start'))
+        assert any(args.get('reply_markup',{}).get('keyboard') for method,args in start_calls if method=='sendMessage')
+        denied=bot(callback(202,'pr:'+tf['id']))
+        assert 'нет сохранённой работы' in json.dumps(denied,ensure_ascii=False)
+        assert 'Ваш результат:' not in json.dumps(denied,ensure_ascii=False)
+        assert not any(method=='sendMessage' for method,args in bot(message(201,'/results',-10010,'supergroup')))
+        # An account-linked attempt submitted on the website is also accessible in Telegram.
+        with closing(sqlite3.connect(pdir/'quiz.sqlite')) as db:
+            db.execute('INSERT OR REPLACE INTO pulse_tg_accounts VALUES (?,?)',('303',ua));db.commit()
+        web_history=bot(message(303,'Мои результаты'))
+        assert 'pr:'+fid in json.dumps(web_history)
+        hidden_result=bot(callback(303,'pr:'+fid))
+        assert 'ещё не открыл' in json.dumps(hidden_result,ensure_ascii=False)
+        assert '650' not in json.dumps(hidden_result)
+        with closing(sqlite3.connect(pdir/'quiz.sqlite')) as db:
+            db.execute('UPDATE pulse_forms SET published=1 WHERE id=?',(fid,));db.commit()
+        web_result=bot(callback(303,'pr:'+fid))
+        assert '650' in json.dumps(web_result)
+        print('PASS: owner work review, Telegram history, website-linked attempts, private-chat isolation and hidden results')
         # Deletion is owner-only, versioned and removes the published contribution atomically.
         deleting=admin.call('form_results&form='+group['id'])['form']
         a.call('form_delete',{'form':group['id'],'revision':deleting['revision']},404)

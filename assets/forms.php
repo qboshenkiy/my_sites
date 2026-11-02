@@ -86,7 +86,7 @@ function formAdjustedAttempt(array $form,array $attempt): array {
 }
 function formsHandle(string $action,array $input): void {
     global $db,$me;
-    if(!in_array($action,['forms','form_create','form_get','form_submit','form_configure','form_delete','form_results','form_link_attempt','form_telegram_create','form_telegram_command'],true))return;
+    if(!in_array($action,['forms','form_create','form_get','form_submit','form_configure','form_delete','form_results','form_attempt','form_link_attempt','form_telegram_create','form_telegram_command'],true))return;
     formsSchema();
     if(in_array($action,['form_get','form_submit'],true)){
         $token=$input['token']??$_GET['token']??'';
@@ -127,6 +127,12 @@ function formsHandle(string $action,array $input): void {
         communityAudit('create_form',$id,['quiz'=>$q['id']]);out(['id'=>$id,'token'=>$token]);
     }
     $id=(string)($input['form']??$_GET['form']??'');$form=formOwned($id);
+    if($action==='form_attempt'){
+        $attempt=query('SELECT * FROM form_attempts WHERE id=? AND form_id=?',[(string)($input['attempt']??''),$id])->fetch();
+        if(!$attempt)fail('Работа не найдена.',404);
+        $visible=$form;$visible['published']=1;
+        out(formPublic($visible,$attempt));
+    }
     if($action==='form_results'){
         require_once __DIR__.'/forms-bot.php';formsBotSchema();
         $attempts=query('SELECT a.id,a.name,a.points,a.max_points,a.submitted_at,a.user_id,a.source,u.name AS account_name FROM form_attempts a LEFT JOIN pulse_accounts u ON u.id=a.user_id WHERE a.form_id=? ORDER BY a.submitted_at DESC',[$id])->fetchAll();
