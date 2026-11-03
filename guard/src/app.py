@@ -93,7 +93,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if not self.host_valid():return self.send(403,{'error':'Недопустимый адрес'})
         url=urllib.parse.urlsplit(self.path)
-        files={'/':('index.html','text/html; charset=utf-8'),'/app.js':('app.js','text/javascript; charset=utf-8'),'/style.css':('style.css','text/css; charset=utf-8')}
+        files={'/favicon.svg':('favicon.svg','image/svg+xml'),'/favicon.ico':('favicon.svg','image/svg+xml'),'/':('index.html','text/html; charset=utf-8'),'/app.js':('app.js','text/javascript; charset=utf-8'),'/style.css':('style.css','text/css; charset=utf-8')}
         if url.path in files:
             file,kind=files[url.path];return self.send(200,(ROOT/'web'/file).read_bytes(),content_type=kind)
         if url.path=='/health':return self.send(200,{'ok':True,'version':'1.0.0'})
