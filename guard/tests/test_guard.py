@@ -33,6 +33,10 @@ class MonitorTests(unittest.TestCase):
         rows=[{'logger':'http.log.access.log0','ts':120+i,'status':s,'request':{'remote_ip':'1.2.3.4','host':'pulse.vano.sbena.net','uri':'/api/'+('a'*48)+'?token=SECRET','method':'GET'}} for i,s in enumerate([200,404,502])]
         result=monitor.traffic('\n'.join(json.dumps(r) for r in rows),100)
         self.assertEqual(result['requests'],3);self.assertEqual(result['errors'],2);self.assertEqual(result['ips'][0]['peak_per_minute'],3);self.assertNotIn('SECRET',json.dumps(result));self.assertNotIn('a'*48,json.dumps(result))
+    def test_totals_include_addresses_beyond_display_limit(self):
+        rows=[{'logger':'http.log.access.x','ts':120,'status':200,'request':{'remote_ip':'192.0.2.'+str(i),'uri':'/','method':'GET'}} for i in range(1,151)]
+        result=monitor.traffic('\n'.join(json.dumps(r) for r in rows),100)
+        self.assertEqual(len(result['ips']),100);self.assertEqual(result['unique_ips'],150);self.assertEqual(result['requests'],150)
     def test_docker_multiplexed_output(self):
         raw=b'\x01\x00\x00\x00'+struct.pack('>I',3)+b'one'+b'\x02\x00\x00\x00'+struct.pack('>I',3)+b'two'
         self.assertEqual(docker_api.demux(raw),'onetwo')

@@ -31,7 +31,7 @@ def ssh_events(raw):
         if not match:continue
         ip=valid_ip(match[3])
         if ip:events.append({'time':int(row.get('__REALTIME_TIMESTAMP','0'))/1e6,'ip':ip,'user':match[2][:80],'result':'success' if match[1].startswith('Accepted') else 'failed','method':match[1]})
-    return events[-1000:]
+    return events
 
 
 def ssh(since):
@@ -63,12 +63,40 @@ def traffic(raw,since):
     rows=[]
     for entry in addresses.values():
         entry['peak_per_minute']=max(entry.pop('minutes').values(),default=0);rows.append(entry)
-    return {'requests':total,'errors':errors,'ips':sorted(rows,key=lambda r:r['requests'],reverse=True)[:100],'events':events[-200:][::-1],'sample_limit':10000}
+    return {'requests':total,'errors':errors,'unique_ips':len(rows),'peak_per_minute':max((r['peak_per_minute'] for r in rows),default=0),'ips':sorted(rows,key=lambda r:r['requests'],reverse=True)[:100],'events':events[-200:][::-1],'sample_limit':10000}
+
+
+def seed_people(bot):
+    """Import known bindings without inventing any historical conversation."""
+    item=BOTS[bot]
+    if bot in ('marathon','pulse'):
+        if bot=='marathon':
+            location="(getenv('MARATHON_DATA_DIR')?:'/var/lib/marathon').'/marathon.sqlite'"
+            sql="SELECT telegram_id AS id,name,COALESCE(telegram_name,'') AS username FROM users WHERE telegram_id IS NOT NULL"
+        else:
+            location="(getenv('QUIZ_DATA_DIR')?:'/var/lib/pulse').'/quiz.sqlite'"
+            sql="SELECT t.telegram_id AS id,a.name,'' AS username FROM pulse_tg_accounts t JOIN pulse_accounts a ON a.id=t.user_id"
+        script=("require "+json.dumps(item['cli'][1])+";$file="+location+";"
+                "if(is_file($file)){try{$source=new PDO('sqlite:'.$file);$source->exec('PRAGMA query_only=ON;PRAGMA busy_timeout=3000');"
+                "$q=guardDb()->prepare('INSERT OR IGNORE INTO people(id,name,username,last_seen) VALUES(?,?,?,0)');"
+                "foreach($source->query("+json.dumps(sql)+") as $r){if(preg_match('/^[0-9]{1,20}$/',(string)$r['id']))$q->execute([(string)$r['id'],$r['name'],$r['username']]);}"
+                "}catch(Throwable $e){}}echo json_encode(['ok'=>true]);")
+        docker_api.execute(item['container'],['php','-r',script],user='www-data')
+    else:
+        script=("import sys,sqlite3,os,json;sys.path.insert(0,'/app/src');import bot_guard;"
+                "p=os.path.join(os.getenv('DATA_DIR','/data'),'duty.sqlite');"
+                "s=sqlite3.connect('file:'+p+'?mode=ro',uri=True);"
+                "rows=list(s.execute('SELECT chat_id,name FROM people WHERE chat_id IS NOT NULL'));s.close();"
+                "ctx=bot_guard.database();d=ctx.__enter__();"
+                "d.executemany('INSERT OR IGNORE INTO people(id,name,username,last_seen) VALUES(?,?,?,0)',[(str(r[0]),r[1],'') for r in rows]);"
+                "ctx.__exit__(None,None,None);print(json.dumps({'ok':True}))")
+        docker_api.execute(item['container'],['python','-c',script])
 
 
 def bot_action(bot,action,data=None):
     if not isinstance(bot,str) or not isinstance(action,str) or bot not in BOTS or action not in ('people','history','block','unblock','send'):raise ValueError('Выберите бота и действие')
     item=BOTS[bot]
+    if action=='people':seed_people(bot)
     return docker_api.execute(item['container'],item['cli']+[action,json.dumps(data or {},ensure_ascii=False)],user='www-data' if bot!='milk' else None)
 
 
