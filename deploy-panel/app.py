@@ -24,7 +24,7 @@ import threading
 import time
 import urllib.parse
 
-VERSION = '1.9.0'
+VERSION = '1.10.0'
 LAYOUT = {
     'remote': ['server', 'ops', '.dockerignore'],
     'drawing': ['index.php', 'api.php', 'manifest.webmanifest', 'service-worker.js', 'lib', 'assets', 'ops', '.dockerignore'],
@@ -103,6 +103,35 @@ def setup_bookvoice(config, p, job, log):
         status_update(config, job, 'success', sha=sha)
     finally:
         payload_file.unlink(missing_ok=True)
+
+
+def inspect_container(identifier, command, expected_name=None):
+    if command not in ('start','stop','restart') or not isinstance(identifier,str) or not re.fullmatch(r'[a-f0-9]{12,64}',identifier):
+        raise ValueError('Выберите контейнер и действие запуска, остановки или перезапуска')
+    raw,_=monitor_command(['docker','inspect','--type','container','--format','{{.Id}}\n{{.Name}}\n{{.State.Status}}',identifier],timeout=8)
+    fields=raw.strip().splitlines()
+    if len(fields)!=3 or not re.fullmatch(r'[a-f0-9]{64}',fields[0]):
+        raise ValueError('Не удалось проверить контейнер. Обновите список')
+    info={'id':fields[0],'name':fields[1].lstrip('/'),'state':fields[2]}
+    if not info['id'].startswith(identifier) or (expected_name is not None and info['name']!=expected_name):
+        raise ValueError('Контейнер изменился. Обновите список и повторите')
+    return info
+
+
+def control_container(config,job,log):
+    folder=Path(config['state_dir'])/'jobs'/job
+    data=json.loads((folder/'environment.json').read_text())
+    info=inspect_container(data['container'],data['command'],data['name'])
+    status_update(config,job,'installing')
+    log.write(data['command']+' контейнер '+info['name']+' ('+info['id'][:12]+')\n');log.flush()
+    run(['docker',data['command'],info['id']],log,timeout=90)
+    after=inspect_container(info['id'],data['command'],info['name'])
+    if data['command'] in ('start','restart') and after['state']!='running':
+        raise RuntimeError('Контейнер завершился после запуска. Откройте его журнал')
+    if data['command']=='stop' and after['state'] not in ('exited','created','dead'):
+        raise RuntimeError('Контейнер всё ещё активен. Проверьте его состояние')
+    log.write('Состояние после действия: '+after['state']+'\n')
+    status_update(config,job,'success')
 
 
 def validate_service_control(project, command, service):
@@ -1117,7 +1146,9 @@ def work(config, job):
             p['_target_ref'] = row['target_ref']
         with (jobdir / 'output.log').open('a', encoding='utf-8') as log:
             try:
-                if row['action'] == 'service_control':
+                if row['action'] == 'container_control':
+                    control_container(config,job,log)
+                elif row['action'] == 'service_control':
                     payload=json.loads((jobdir/'environment.json').read_text())
                     command=payload.get('command');service=payload.get('service')
                     validate_service_control(p, command, service)
@@ -1291,7 +1322,7 @@ def docker_snapshot():
     for row in rows[:200]:
         usage = stats.get(row.get('Names'), {})
         labels = dict(item.split('=', 1) for item in row.get('Labels', '').split(',') if '=' in item)
-        containers.append({'name': row.get('Names', ''), 'image': row.get('Image', ''), 'state': row.get('State', ''),
+        containers.append({'id':row.get('ID',''), 'name': row.get('Names', ''), 'image': row.get('Image', ''), 'state': row.get('State', ''),
                            'status': row.get('Status', ''), 'ports': row.get('Ports', ''),
                            'project': labels.get('com.docker.compose.project', ''),
                            'service': labels.get('com.docker.compose.service', ''),
@@ -1487,11 +1518,14 @@ class Panel(http.server.BaseHTTPRequestHandler):
         if url.path in ('/api/server', '/api/containers'):
             try:
                 monitor = self.server.monitor
-                result = monitor.containers() if url.path.endswith('containers') else monitor.view(int(urllib.parse.parse_qs(url.query).get('period', ['3600'])[0]))
+                if url.path.endswith('containers') and urllib.parse.parse_qs(url.query).get('fresh')==['1'] and not self.server.demo:
+                    result=docker_snapshot()
+                    with monitor.lock:monitor.docker=result
+                else:result=monitor.containers() if url.path.endswith('containers') else monitor.view(int(urllib.parse.parse_qs(url.query).get('period', ['3600'])[0]))
                 return self.send(200, result)
             except (ValueError, TypeError):
                 return self.send(400, {'error': 'Некорректный период графика'})
-            except (OSError, sqlite3.Error, AttributeError):
+            except (OSError, RuntimeError, sqlite3.Error, AttributeError):
                 return self.send(503, {'error': 'Мониторинг временно недоступен'})
         if url.path == '/api/runtime-log':
             query = urllib.parse.parse_qs(url.query)
@@ -1675,6 +1709,16 @@ class Panel(http.server.BaseHTTPRequestHandler):
                     return self.send(202, {'job': enqueue(self.server, p, 'setup_bookvoice', payload={'password': password})})
                 except (StopIteration, ValueError, OSError, RuntimeError) as error:
                     return self.send(400, {'error': str(error) or 'Карточка «Голос книги» не найдена'})
+        if self.path == '/api/container-control':
+            if self.server.demo:return self.send(403,{'error':'В предпросмотре управление отключено'})
+            with self.mutex:
+                try:
+                    info=inspect_container(data.get('container'),data.get('command'),data.get('name'))
+                    if data.get('name')!=info['name']:raise ValueError('Подтвердите имя контейнера из списка')
+                    payload={'container':info['id'],'name':info['name'],'command':data['command']}
+                    return self.send(202,{'job':enqueue(self.server,{'id':'@docker','name':'Docker · '+info['name']},'container_control',payload=payload)})
+                except (ValueError,OSError,RuntimeError) as error:
+                    return self.send(400,{'error':str(error)})
         if self.path == '/api/service-control':
             if self.server.demo:return self.send(403,{'error':'В предпросмотре управление отключено'})
             with self.mutex:
