@@ -24,7 +24,7 @@ import threading
 import time
 import urllib.parse
 
-VERSION = '1.10.0'
+VERSION = '1.11.0'
 LAYOUT = {
     'remote': ['server', 'ops', '.dockerignore'],
     'drawing': ['index.php', 'api.php', 'manifest.webmanifest', 'service-worker.js', 'lib', 'assets', 'ops', '.dockerignore'],
@@ -450,6 +450,32 @@ def env_revision(text):
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+def telegram_token_hint(token):
+    if not token:return 'Не задан'
+    if not re.fullmatch(r'[0-9]+:[A-Za-z0-9_-]{10,}',token):return 'Задан, но формат некорректный'
+    return 'Бот '+token.split(':')[0]+' · ••••'+token[-4:]
+
+
+def check_telegram_token(token):
+    import urllib.request,urllib.error
+    hint=telegram_token_hint(token)
+    if not re.fullmatch(r'[0-9]+:[A-Za-z0-9_-]{10,}',token):
+        return {'ok':False,'hint':hint,'message':'Токен не задан или имеет неверный формат'}
+    try:
+        with urllib.request.urlopen('https://api.telegram.org/bot'+token+'/getMe',timeout=10) as response:
+            data=json.loads(response.read(65536))
+        user=data.get('result',{})
+        if not data.get('ok') or not user.get('is_bot'):raise ValueError()
+        return {'ok':True,'hint':hint,'username':user.get('username',''),'message':'Telegram подтвердил токен: @'+user.get('username','')}
+    except urllib.error.HTTPError as error:
+        code=error.code;error.close()
+        message='Telegram отклонил токен' if code in (401,404) else 'Telegram вернул HTTP '+str(code)+'. Это не подтверждает неправильность токена'
+        return {'ok':False,'hint':hint,'http':code,'message':message}
+    except Exception:
+        # Never return exception text: it may contain a credential-bearing URL.
+        return {'ok':False,'hint':hint,'message':'Telegram не ответил или соединение недоступно. Токен можно сохранить отдельно от проверки'}
+
+
 def env_settings(p):
     text = env_text(p)
     values = {key: value for key, value, *_ in env_records(text)}
@@ -471,6 +497,7 @@ def env_settings(p):
         secret = key not in PUBLIC_ENV
         fields.append({'key': key, 'secret': secret, 'value': '' if secret else values.get(key, ''),
                        'configured': bool(values.get(key))})
+        if key=='TELEGRAM_BOT_TOKEN':fields[-1]['hint']=telegram_token_hint(values.get(key,''))
         if p['kind'] == 'chrono' and key in ('DB_DATABASE', 'DB_USERNAME', 'DB_PASSWORD'):
             fields[-1]['readonly'] = True
     return {'fields': fields, 'env_revision': env_revision(text)}
@@ -1719,6 +1746,15 @@ class Panel(http.server.BaseHTTPRequestHandler):
                     return self.send(202,{'job':enqueue(self.server,{'id':'@docker','name':'Docker · '+info['name']},'container_control',payload=payload)})
                 except (ValueError,OSError,RuntimeError) as error:
                     return self.send(400,{'error':str(error)})
+        if self.path == '/api/telegram-check':
+            if self.server.demo:return self.send(403,{'error':'В предпросмотре проверка отключена'})
+            try:
+                p=next(p for p in self.server.config['projects'] if p['id']==data.get('project') and p['kind']!='self')
+                token=data.get('token','')
+                if not isinstance(token,str) or len(token)>200:raise ValueError('Некорректный токен')
+                token=token.strip() or dict((k,v) for k,v,*_ in env_records(env_text(p))).get('TELEGRAM_BOT_TOKEN','')
+                return self.send(200,check_telegram_token(token))
+            except (StopIteration,ValueError,OSError):return self.send(400,{'error':'Не удалось прочитать настройки бота'})
         if self.path == '/api/service-control':
             if self.server.demo:return self.send(403,{'error':'В предпросмотре управление отключено'})
             with self.mutex:
