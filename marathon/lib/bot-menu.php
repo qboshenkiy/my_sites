@@ -37,7 +37,8 @@ function telegramMenu(string $text,bool $callback,?array $reader,string $telegra
     }
     if($action==='cancel'){sql('DELETE FROM telegram_menu_states WHERE user_id=?',[$id]);sql('DELETE FROM telegram_reading_requests WHERE user_id=?',[$id]);sql("DELETE FROM requests WHERE user_id=? AND kind IN ('round','weekly_repeat','book_position')",[$id]);$reply('Отменено. Неподтверждённые главы не зачтены.');return true;}
     if($action==='position'){telegramPositionStart($reader,$reply);return true;}
-    if($action==='read'){
+    if($action==='read'||$action==='read_amount'){
+        if($action==='read'&&($positionWeek=telegramPositionWeek($id))&&!empty($positionWeek['books'])){telegramPositionStart($reader,$reply);return true;}
         $eligible=array_filter($s['reports'],fn($v)=>$v['week']<=min(22,$c['current'])&&$v['remaining']>0&&($v['week']===$c['current']||$v['completedCycles']===0));$left=array_sum(array_column($eligible,'remaining'));
         if(!$left){$reply($w?'✅ Недельный план прочитан. Можно повторить его через «🔁 Круги чтения».':'Сейчас нет открытого плана для отметки.',[[['text'=>'🔁 Круги чтения','callback_data'=>'menu:rounds']]]);return true;}
         sql('INSERT INTO telegram_menu_states VALUES (?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET telegram_id=excluded.telegram_id,session_epoch=excluded.session_epoch,round_number=excluded.round_number,expires_at=excluded.expires_at',[$id,$telegramId,(int)$reader['session_epoch'],$c['round'],time()+900]);
@@ -54,10 +55,10 @@ function telegramMenu(string $text,bool $callback,?array $reader,string $telegra
     if($action==='weeks'){$names=['upcoming'=>'⏳','in_progress'=>'📖','overdue'=>'⚠️','completed'=>'✅','completed_late'=>'✅ С опозданием'];$weeks=array_filter($s['reports'],fn($v)=>$reader['role']==='admin'||$v['week']<=$c['current']);$reply('🗓 '.$header."\n".($weeks?implode("\n",array_map(fn($v)=>$names[$v['status']].' Неделя '.$v['week'].': '.$v['chapters'].'/'.$v['goal'].' глав · круг '.$v['cycle'].' · завершено кругов '.$v['completedCycles'],$weeks)):'Недели откроются после старта марафона.'),[[['text'=>'📚 План недели','callback_data'=>'menu:plan']]]);return true;}
     if($action==='plan'){
         if(!$w){$reply($c['current']<1?'Марафон ещё не начался. План откроется в день старта.':'Марафон завершён. Прошедшие планы доступны в «Мои недели».');return true;}
-        $reply('📚 '.$header.' · круг '.$w['cycle']."\n".$w['start'].' — '.$w['end']."\n".implode("\n",telegramBookLines($w['books']))."\n".'Прочитано '.$w['bookProgress']['label']."\n".$w['chapters'].'/'.$w['goal'].' глав. Осталось '.$w['remaining'].'.'.($w['remaining']&&$w['daysLeft']?' Нужно '.$w['perDay'].' глав/день, осталось '.$w['daysLeft'].' дн.':''),[[['text'=>'📖 Отметить чтение','callback_data'=>'menu:read']]]);return true;
+        $reply('📚 '.$header.' · круг '.$w['cycle']."\n".$w['start'].' — '.$w['end']."\n".implode("\n",telegramProgressBookLines($w))."\n".'Прочитано '.$w['bookProgress']['label']."\n".$w['chapters'].'/'.$w['goal'].' глав. Осталось '.$w['remaining'].'.'.($w['remaining']&&$w['daysLeft']?' Нужно '.$w['perDay'].' глав/день, осталось '.$w['daysLeft'].' дн.':''),[[['text'=>'📖 Отметить чтение','callback_data'=>'menu:read']]]);return true;
     }
     $bar=str_repeat('■',min(10,(int)floor($s['progress']/10))).str_repeat('□',max(0,10-(int)floor($s['progress']/10)));
-    $reply('📊 '.$header."\n".($w?'Текущая неделя · круг '.$w['cycle']."\n".$bar.' '.$s['progress'].'%'."\n".$w['bookProgress']['label']."\n".$w['chapters'].'/'.$w['goal'].' глав. '.($w['remaining']?'Осталось '.$w['remaining'].', темп '.$w['perDay'].' глав/день.':'✅ Круг завершён за '.$w['days'].' дн.')."\n".'Завершено кругов недели: '.$w['completedCycles'].'. Всего за неделю: '.$w['totalChapters'].' глав.':'Сейчас нет текущей недели.')."\n".'Всего за марафон: '.$s['totalChapters'].' глав. Недель выполнено: '.$s['goalWeeks'].'/22. Просрочено: '.$s['overdueWeeks'].'.');return true;
+    $reply('📊 '.$header."\n".($w?'Текущая неделя · круг '.$w['cycle']."\n".$bar.' '.$s['progress'].'%'."\n".$w['bookProgress']['label']."\n".implode("\n",telegramProgressBookLines($w))."\nВсего по неделе: ".$w['chapters'].'/'.$w['goal'].' глав. '.($w['remaining']?'Осталось '.$w['remaining'].', темп '.$w['perDay'].' глав/день.':'✅ Круг завершён за '.$w['days'].' дн.')."\n".'Завершено кругов недели: '.$w['completedCycles'].'. Всего за неделю: '.$w['totalChapters'].' глав.':'Сейчас нет текущей недели.')."\n".'Всего за марафон: '.$s['totalChapters'].' глав. Недель выполнено: '.$s['goalWeeks'].'/22. Просрочено: '.$s['overdueWeeks'].'.');return true;
 }
 
 function telegramPositionWeek(string $id): ?array {
@@ -74,7 +75,7 @@ function telegramPositionStart(array $reader,callable $reply): void {
     $token=bin2hex(random_bytes(16));sql("DELETE FROM requests WHERE user_id=? AND kind='book_position'",[$reader['id']]);
     sql('INSERT INTO requests(token_hash,kind,user_id,session_hash,expires_at) VALUES (?,?,?,?,?)',[hash('sha256',$token),'book_position',$reader['id'],telegramPositionBinding($reader,$w),time()+900]);
     $buttons=[];foreach($w['books'] as $i=>$b)$buttons[]=[['text'=>mb_substr($b['title'],0,45).' · '.$b['chapter_from'].'–'.$b['chapter_to'],'callback_data'=>'pb:'.$token.':'.$i.':0']];
-    $buttons[]=[['text'=>'Отмена','callback_data'=>'menu:cancel']];
+    $buttons[]=[['text'=>'Ввести количество новых глав','callback_data'=>'menu:read_amount'],['text'=>'Отмена','callback_data'=>'menu:cancel']];
     $reply('Неделя '.$w['week'].' · круг '.$w['cycle']."\nПоследняя прочитанная: ".$w['bookProgress']['label']."\nВыберите книгу, на которой остановились. Затем укажите последнюю полностью прочитанную главу. Предыдущие книги плана будут считаться прочитанными.",$buttons);
 }
 function telegramPositionChoice(string $text,?array $reader,callable $reply): ?array {
@@ -96,4 +97,9 @@ function telegramPositionChoice(string $text,?array $reader,callable $reply): ?a
         sql('UPDATE requests SET consumed=1 WHERE token_hash=?',[$r['token_hash']]);
         return ['handled'=>false,'chapters'=>$added,'label'=>$b['title'].' · глава '.$chapter];
     }catch(DomainException $e){$reply($e->getMessage());return ['handled'=>true];}
+}
+
+function telegramProgressBookLines(array $week): array {
+    if(empty($week['bookProgress']['books']))return telegramBookLines($week['books']);
+    return array_map(fn($b)=>($b['done']?'✓ ':($b['read']?'📖 ':'○ ')).$b['title'].': '.($b['through']??'—').'/'.$b['chapter_to'].' гл. · план '.$b['chapter_from'].'–'.$b['chapter_to'],$week['bookProgress']['books']);
 }

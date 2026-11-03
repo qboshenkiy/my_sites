@@ -146,8 +146,7 @@ with tempfile.TemporaryDirectory(prefix='marathon-menu-') as folder:
         assert 'Неделя 4:' not in messages(bot('🗓 Мои недели'))
         # Choose a physical book/chapter instead of calculating 27+8 by hand.
         admin.call('week_plan',{'week':3,'books':[{'title':'Левит','chapter_from':1,'chapter_to':27},{'title':'Числа','chapter_from':1,'chapter_to':36}]})
-        opened=bot('menu:read',True)
-        books=bot(button(opened,'Выбрать книгу'),True)
+        books=bot('menu:read',True)
         choose_book=button(books,'Числа')
         denied=bot(choose_book,True,sender=777777)
         assert 'привяжите' in messages(denied).lower()

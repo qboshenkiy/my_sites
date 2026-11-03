@@ -21,7 +21,7 @@ function telegramGroupCommand(array $message): ?array {
 }
 function telegramGroupMenu(string $text,bool $callback,?array $actor,callable $reply): bool {
     if($text!=='📣 Отправить в группу'&&!($callback&&str_starts_with($text,'group:')))return false;
-    if(!$actor||$actor['role']!=='admin'){$reply('Отправлять отчёт в группу может только администратор.');return true;}
+    if(!$actor||$actor['role']!=='admin'||empty($actor['active'])||!empty($actor['deleted_at'])){$reply('Отправлять отчёт в группу может только администратор.');return true;}
     $group=setting('reading_group');if(!$group){$reply('Добавьте бота в нужную группу и отправьте там /reading_here со своего привязанного аккаунта администратора.');return true;}
     telegramGroupSchema();
     if($text==='📣 Отправить в группу'||$text==='group:preview'){
