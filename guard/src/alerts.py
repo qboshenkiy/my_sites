@@ -10,6 +10,7 @@ import time
 import urllib.error
 import urllib.request
 import monitor
+import ip_activity
 
 DEFAULTS={'enabled':True,'http_limit':240,'bot_limit':60,'cooldown':600,'http_errors':True,'bot_errors':True,'telegram_enabled':False,'bot_token':'','bot_username':'','bot_id':'','group_id':'','group_title':'','epoch':''}
 
@@ -176,6 +177,13 @@ class Service:
             except ValueError:
                 raw=monitor.docker_api.logs(monitor.PROXY,max(started,now-180),tail=200)
                 errors['http_sample']='Большой поток запросов: проверена сокращённая выборка журнала.'
+            if not self.state('traffic_backfill_done',False):
+                try:
+                    previous=monitor.docker_api.logs(monitor.PROXY,now-86400,tail=10000)
+                except ValueError:previous=raw
+                ip_activity.record_raw(self.database,previous,now-86400)
+                with self.database() as db:self.put(db,'traffic_backfill_done',True)
+            ip_activity.record_raw(self.database,raw,max(started,now-180))
             self.ingest(http_samples(raw,max(started,now-180)),now)
         except (OSError,ValueError,TimeoutError):errors['http']='Не удалось проверить журнал запросов'
         for bot in monitor.BOTS:

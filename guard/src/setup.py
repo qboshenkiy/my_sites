@@ -39,6 +39,7 @@ def main():
     network=details['networks']['default'].get('name','')
     if not re.fullmatch(r'[A-Za-z0-9_.-]+',network):raise ValueError('Не найдена сеть прокси')
     root=Path(__file__).resolve().parents[1]
+    subprocess.run(['python3',str(root/'src/install_firewall.py')],check=True)
     overlay=root/'compose.gitdeck-https.yaml'
     if overlay.is_symlink():raise ValueError('Ссылка вместо конфигурации')
     overlay.write_text('services:\n  web:\n    networks:\n      default: {}\n      gitdeck_https:\n        aliases: [guard-web]\nnetworks:\n  gitdeck_https:\n    external: true\n    name: '+network+'\n')
@@ -70,6 +71,7 @@ def main():
     subprocess.run(args+['up','-d','--no-deps','proxy'],cwd=proxy['directory'],check=True)
     server=types.SimpleNamespace(config=config,config_path='/etc/gitdeck/config.json')
     panel.register_guard(server)
+    subprocess.run(['python3',str(root/'src/proxy_protection.py')],check=True)
     print('Guard готов: https://'+DOMAIN+'. Первоначальный пароль совпадает с паролем GitDeck.')
 
 if __name__=='__main__':main()

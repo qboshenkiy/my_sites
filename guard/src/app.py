@@ -16,6 +16,9 @@ import threading
 import time
 import urllib.parse
 import monitor
+import ip_activity
+import ip_geo
+import network_control
 import alerts as notifications
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -76,7 +79,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header('Content-Length',str(len(body)));self.send_header('Cache-Control','no-store')
         self.send_header('X-Content-Type-Options','nosniff');self.send_header('X-Frame-Options','DENY')
         self.send_header('Referrer-Policy','no-referrer')
-        self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+        self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-src https://www.openstreetmap.org; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
         if cookie:self.send_header('Set-Cookie',cookie)
         self.end_headers();self.wfile.write(body)
     def session(self):
@@ -93,7 +96,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if not self.host_valid():return self.send(403,{'error':'Недопустимый адрес'})
         url=urllib.parse.urlsplit(self.path)
-        files={'/favicon.svg':('favicon.svg','image/svg+xml'),'/favicon.ico':('favicon.svg','image/svg+xml'),'/':('index.html','text/html; charset=utf-8'),'/app.js':('app.js','text/javascript; charset=utf-8'),'/style.css':('style.css','text/css; charset=utf-8')}
+        files={'/network.js':('network.js','text/javascript; charset=utf-8'),'/favicon.svg':('favicon.svg','image/svg+xml'),'/favicon.ico':('favicon.svg','image/svg+xml'),'/':('index.html','text/html; charset=utf-8'),'/app.js':('app.js','text/javascript; charset=utf-8'),'/style.css':('style.css','text/css; charset=utf-8')}
         if url.path in files:
             file,kind=files[url.path];return self.send(200,(ROOT/'web'/file).read_bytes(),content_type=kind)
         if url.path=='/health':return self.send(200,{'ok':True,'version':'1.0.0'})
@@ -101,6 +104,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not session:return self.send(401,{'error':'Войдите как администратор'})
         query=urllib.parse.parse_qs(url.query)
         try:
+            if url.path=='/api/protection':
+                try:result=network_control.request()
+                except ValueError as error:result={'ready':False,'blocked':[],'protected_ips':[],'error':str(error)}
+                result['client_ip']=self.ip();return self.send(200,result)
+            if url.path=='/api/ip/peers':return self.send(200,{'peers':ip_activity.peers(database,int(query.get('period',['86400'])[0]))})
+            if url.path=='/api/ip/http':return self.send(200,ip_activity.report(database,query.get('ip',[''])[0],int(query.get('period',['86400'])[0])))
+            if url.path=='/api/ip/geo':return self.send(200,ip_geo.lookup(database,query.get('ip',[''])[0]))
+            if url.path=='/api/ip/ssh':
+                ip=network_control.canonical(query.get('ip',[''])[0]);period=int(query.get('period',['86400'])[0])
+                if period not in (3600,86400,604800):raise ValueError('Выберите период')
+                events=CACHE.get(('ip_ssh',period),lambda:monitor.ssh(time.time()-period))
+                with database() as db:guard=[dict(r) for r in db.execute("SELECT action,created FROM audit WHERE ip=? AND created>=? AND action IN ('login_success','login_failed') ORDER BY id DESC LIMIT 100",(ip,time.time()-period))]
+                return self.send(200,{'ssh':[r for r in events if r['ip']==ip][-200:],'guard':guard,'note':'SSH: до 10 000 строк журнала за выбранный период.'})
             if url.path=='/api/alerts':return self.send(200,self.alerts().listing())
             if url.path=='/api/alerts/config':return self.send(200,self.alerts().public())
             if url.path=='/api/session':return self.send(200,{'csrf':session['csrf'],'domain':HOST})
@@ -122,7 +138,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 with database() as db:rows=[dict(r) for r in db.execute('SELECT ip,action,target,created FROM audit ORDER BY id DESC LIMIT 100')]
                 return self.send(200,{'events':rows})
             return self.send(404,{'error':'Не найдено'})
-        except (ValueError,OSError,TimeoutError):return self.send(503,{'error':'Не удалось загрузить данные. Проверьте состояние сервиса или обновление бота.'})
+        except ValueError as error:return self.send(400,{'error':str(error)})
+        except (OSError,TimeoutError,sqlite3.Error):return self.send(503,{'error':'Не удалось загрузить данные. Проверьте состояние сервиса или обновление бота.'})
     def do_POST(self):
         if not self.host_valid():return self.send(403,{'error':'Недопустимый адрес'})
         scheme='https' if self.headers.get('X-Forwarded-Proto')=='https' else 'http'
@@ -153,6 +170,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         session=self.session()
         if not session or not hmac.compare_digest(str(data.get('csrf','')),session['csrf']):return self.send(403,{'error':'Сессия истекла. Войдите снова.'})
         try:
+            if self.path=='/api/protection/action':
+                ip=network_control.canonical(data.get('ip',''));action=data.get('action')
+                if action not in ('block','unblock'):raise ValueError('Выберите действие')
+                if action=='block' and ip==network_control.canonical(self.ip()):raise ValueError('Нельзя заблокировать свой текущий адрес')
+                result=network_control.request(action,ip=ip,requester=self.ip(),duration=data.get('duration',3600));result['client_ip']=self.ip();self.audit('ip_'+action,ip);return self.send(200,result)
             if self.path=='/api/alerts/config':
                 result=self.alerts().save(data);self.audit('alerts_config');return self.send(200,result)
             if self.path=='/api/alerts/pair':

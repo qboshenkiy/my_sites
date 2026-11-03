@@ -118,6 +118,14 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(self.req('/api/alerts/config',{'telegram_enabled':True,'csrf':auth['csrf']})[0],200)
             self.assertEqual(self.req('/api/alerts/pair',{'csrf':auth['csrf']})[0],200)
             self.assertEqual(self.req('/api/alerts/test',{'csrf':auth['csrf']})[0],200);service.deliver.assert_called_once_with(test=True)
+    def test_ip_controls_require_auth_csrf_and_cannot_block_current_ip(self):
+        for endpoint in ['/api/protection','/api/ip/http?ip=34.15.162.36','/api/ip/geo?ip=34.15.162.36']:
+            self.assertEqual(self.req(endpoint)[0],401)
+        _,auth=self.req('/api/login',{'password':'guard-test-password-2026'})
+        with patch.object(app.network_control,'request',return_value={'ready':True,'blocked':[]}) as kernel:
+            self.assertEqual(self.req('/api/protection/action',{'action':'block','ip':'1.1.1.1','duration':3600})[0],403);kernel.assert_not_called()
+            self.assertEqual(self.req('/api/protection/action',{'action':'block','ip':'127.0.0.1','duration':3600,'csrf':auth['csrf']})[0],400);kernel.assert_not_called()
+            self.assertEqual(self.req('/api/protection/action',{'action':'block','ip':'1.1.1.1','duration':3600,'csrf':auth['csrf']})[0],200);kernel.assert_called_once_with('block',ip='1.1.1.1',requester='127.0.0.1',duration=3600)
     def test_password_reset_revokes_session(self):
         status,_=self.req('/api/login',{'password':'guard-test-password-2026'});self.assertEqual(status,200)
         app.set_password('guard-test-password-2026');self.assertEqual(self.req('/api/session')[0],401)
