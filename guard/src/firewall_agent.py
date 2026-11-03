@@ -13,7 +13,7 @@ import threading
 import time
 
 TABLE='guard_protection'
-DURATIONS=(900,3600,86400)
+DURATIONS=(300,900,3600,86400)
 
 
 def canonical(value):
@@ -123,7 +123,7 @@ class Controller:
             if action=='block':
                 if not ipaddress.ip_address(ip).is_global:raise ValueError('Внутренние, служебные и локальные адреса блокировать нельзя')
                 if ip in self.protected() or ip==requester:raise ValueError('Этот адрес защищён: текущий администратор или сам сервер')
-                if isinstance(duration,bool) or not isinstance(duration,int) or duration not in DURATIONS:raise ValueError('Выберите 15 минут, 1 час или 24 часа')
+                if isinstance(duration,bool) or not isinstance(duration,int) or duration not in DURATIONS:raise ValueError('Выберите 5 или 15 минут, 1 час или 24 часа')
             old=copy.deepcopy(self.entries);updated=self.active()
             if action=='block':
                 if ip not in updated and len(updated)>=256:raise ValueError('Достигнут предел 256 активных блокировок')

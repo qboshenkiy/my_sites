@@ -6,9 +6,20 @@ from pathlib import Path
 
 PROXY='glava-marathon-proxy-1'
 IMPORT='    import /data/guard-sensitive.caddy # Guard sensitive files'
-SNIPPET=r'''# Managed by Guard: sensitive file protection
+SNIPPET=r'''# Managed by Guard: shared rate limit and sensitive file protection
+route {
+    forward_auth unix//data/guard-request.sock {
+        uri /check
+        header_up X-Guard-IP {remote_host}
+        header_up -Cookie
+        header_up -Authorization
+        transport http {
+            response_header_timeout 3s
+        }
+    }
 @guard_sensitive path_regexp guard_sensitive `(?i)(?:^|/)(?:\.env(?:[./][^/]*)?|\.git(?:/.*)?|\.svn(?:/.*)?|\.aws(?:/.*)?|\.ssh(?:/.*)?|\.config/gcloud(?:/.*)?|\.kube/config|\.docker/config\.json|application_default_credentials\.json|firebase-adminsdk\.json|firebase-key\.json|phpinfo\.php|\.DS_Store)(?:$|/)`
 respond @guard_sensitive "Not found" 404
+}
 '''
 
 
@@ -41,11 +52,18 @@ def main():
     if not mount:raise ValueError('Не найден bind mount Caddyfile')
     caddy=Path(mount['Source'])
     if caddy.is_symlink() or not caddy.is_file():raise ValueError('Некорректный путь Caddyfile')
+    import install_request_gate
+    install_request_gate.main()
     original=caddy.read_text()
     candidate,count=install_imports(original)
-    run(['sh','-c','cat > /data/guard-sensitive.caddy'],SNIPPET.encode())
-    run(['sh','-c','cat > /tmp/guard-candidate.caddy'],candidate.encode())
-    run(['caddy','validate','--config','/tmp/guard-candidate.caddy','--adapter','caddyfile'])
+    previous=run(['sh','-c','cat /data/guard-sensitive.caddy 2>/dev/null || true'])
+    try:
+        run(['sh','-c','cat > /data/guard-sensitive.caddy'],SNIPPET.encode())
+        run(['sh','-c','cat > /tmp/guard-candidate.caddy'],candidate.encode())
+        run(['caddy','validate','--config','/tmp/guard-candidate.caddy','--adapter','caddyfile'])
+    except Exception:
+        run(['sh','-c','cat > /data/guard-sensitive.caddy'],previous)
+        raise
     if caddy.read_text()!=original:raise ValueError('Конфигурация прокси изменилась параллельно; повторите настройку')
     backup='/data/Caddyfile.before-guard-protection-'+str(int(time.time()))
     run(['sh','-c','cat > '+backup],original.encode())
@@ -54,6 +72,7 @@ def main():
         run(['caddy','reload','--config','/etc/caddy/Caddyfile','--adapter','caddyfile'])
     except Exception:
         caddy.write_text(original)
+        run(['sh','-c','cat > /data/guard-sensitive.caddy'],previous)
         run(['caddy','reload','--config','/etc/caddy/Caddyfile','--adapter','caddyfile'])
         raise
     print('Sensitive file protection active:',count,'sites')

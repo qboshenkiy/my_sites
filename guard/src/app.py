@@ -117,6 +117,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 events=CACHE.get(('ip_ssh',period),lambda:monitor.ssh(time.time()-period))
                 with database() as db:guard=[dict(r) for r in db.execute("SELECT action,created FROM audit WHERE ip=? AND created>=? AND action IN ('login_success','login_failed') ORDER BY id DESC LIMIT 100",(ip,time.time()-period))]
                 return self.send(200,{'ssh':[r for r in events if r['ip']==ip][-200:],'guard':guard,'note':'SSH: до 10 000 строк журнала за выбранный период.'})
+            if url.path=='/api/ssh':
+                period=int(query.get('period',['86400'])[0])
+                if period not in (3600,86400,604800):raise ValueError('Выберите час, сутки или неделю')
+                events=CACHE.get(('ip_ssh',period),lambda:monitor.ssh(time.time()-period))
+                return self.send(200,{'events':events[-500:][::-1],'total':len(events),'success':sum(r['result']=='success' for r in events),'failed':sum(r['result']=='failed' for r in events),'note':'До 10 000 строк системного журнала; показаны последние 500 событий. Заблокированные сетевым экраном подключения до SSH не доходят.'})
             if url.path=='/api/alerts':return self.send(200,self.alerts().listing())
             if url.path=='/api/alerts/config':return self.send(200,self.alerts().public())
             if url.path=='/api/session':return self.send(200,{'csrf':session['csrf'],'domain':HOST})

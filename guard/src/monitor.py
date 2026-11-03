@@ -30,7 +30,11 @@ def ssh_events(raw):
         match=re.search(r'(Accepted (?:password|publickey)|Failed password|Invalid user) (?:for (?:invalid user )?)?([^ ]+) from ([0-9a-fA-F:.]+)',message)
         if not match:continue
         ip=valid_ip(match[3])
-        if ip:events.append({'time':int(row.get('__REALTIME_TIMESTAMP','0'))/1e6,'ip':ip,'user':match[2][:80],'result':'success' if match[1].startswith('Accepted') else 'failed','method':match[1]})
+        if ip:
+            try:stamp=int(row.get('__REALTIME_TIMESTAMP','0'))/1e6
+            except (ValueError,TypeError):continue
+            port=re.search(r' from [0-9a-fA-F:.]+ port ([0-9]{1,5})',message)
+            events.append({'time':stamp,'ip':ip,'user':match[2][:80],'result':'success' if match[1].startswith('Accepted') else 'failed','method':match[1],'port':int(port[1]) if port else None})
     return events
 
 
