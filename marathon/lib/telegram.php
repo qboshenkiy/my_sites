@@ -45,18 +45,18 @@ function telegramUpdate(array $update): array {
         elseif($callback&&preg_match('/^r_([yn])_([a-f0-9]{32})$/',$text,$confirmation)){
             $request=sql('SELECT * FROM telegram_reading_requests WHERE token_hash=?',[hash('sha256',$confirmation[2])])->fetch();
             $reader=$request?user($request['user_id']):null;
-            if(!$request||$request['consumed']||$request['expires_at']<time()||!$reader||!$reader['active']||$reader['telegram_id']!==$telegramId||$request['telegram_id']!==$telegramId||(int)$reader['session_epoch']!==(int)$request['session_epoch'])$reply('Подтверждение недоступно, уже использовано или истекло. Отправьте число глав заново.');
+            if(!$request||$request['consumed']||$request['expires_at']<time()||!$reader||!$reader['active']||$reader['telegram_id']!==$telegramId||$request['telegram_id']!==$telegramId||(int)$reader['session_epoch']!==(int)$request['session_epoch'])$reply('Подтверждение недоступно: оно уже использовано или истекло. Нажмите «📖 Отметить чтение» и выберите книгу заново.');
             else {
                 sql('DELETE FROM telegram_menu_states WHERE user_id=?',[$reader['id']]);
                 sql('UPDATE telegram_reading_requests SET consumed=1 WHERE token_hash=?',[$request['token_hash']]);
-                if($confirmation[1]==='n')$reply('Отменено. Главы не добавлены. Можно отправить правильное число: прочитал 5');
+                if($confirmation[1]==='n')$reply('Отменено. Отметка не сохранена. Нажмите «📖 Отметить чтение», чтобы выбрать другую книгу или главу.');
                 else {try{
                     $plan=telegramReadingPlan($reader['id'],(int)$request['chapters']);
-                    if(!hash_equals($request['snapshot'],json_encode(['today'=>calendar($reader['id'])['today'],'plan'=>$plan],JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR)))$reply('Результаты или план изменились после запроса. Ничего не добавлено. Отправьте число глав заново и проверьте распределение.');
-                    else {$weeks=addTelegramReading($reader['id'],(int)$request['chapters'],$updateId);$lines=['Зачтено '.$request['chapters'].' глав.'];
-                        foreach($weeks as $week)$lines[]='Неделя '.$week['week'].' · круг '.$week['cycle'].': +'.$week['added'].' глав, всего '.$week['chapters'].' из '.$week['goal'].'. '.($week['completed']?'План выполнен за '.$week['days'].' дн.'.($week['late']?' С опозданием.':''):'Осталось '.$week['remaining'].' глав.');
+                    if(!hash_equals($request['snapshot'],json_encode(['today'=>calendar($reader['id'])['today'],'plan'=>$plan],JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR)))$reply('Результаты чтения изменились или план обновлён. Отметка не сохранена. Нажмите «📖 Отметить чтение» и выберите книгу заново.');
+                    else {$weeks=addTelegramReading($reader['id'],(int)$request['chapters'],$updateId);$lines=['✅ Чтение сохранено'];
+                        foreach($weeks as $week)$lines[]="\n".telegramReadingWeekMessage($week);
                         $current=stats($reader['id'])['pace'];$reply(implode("\n",$lines),$current&&$current['completed']?[[['text'=>'🔁 Прочитать план ещё раз','callback_data'=>'repeat:new']]]:[[['text'=>'📊 Мой прогресс','callback_data'=>'menu:progress']]]);}
-                }catch(DomainException $e){$reply($e->getMessage().' Отправьте число глав заново.');}}
+                }catch(DomainException $e){$reply($e->getMessage().' Нажмите «📖 Отметить чтение» и выберите книгу заново.');}}
                 if(isset($message['message_id']))$out[]=['method'=>'editMessageReplyMarkup','args'=>['chat_id'=>$chat['id'],'message_id'=>$message['message_id'],'reply_markup'=>['inline_keyboard'=>[]]]];
             }
         } elseif($kind&&$token){
@@ -84,9 +84,10 @@ function telegramUpdate(array $update): array {
             if(!$reader)$reply('Сначала привяжите Telegram к своему аккаунту по персональной ссылке от команды марафона.');
             else {sql('INSERT INTO telegram_menu_states VALUES (?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET telegram_id=excluded.telegram_id,session_epoch=excluded.session_epoch,round_number=excluded.round_number,expires_at=excluded.expires_at',[$reader['id'],$telegramId,(int)$reader['session_epoch'],calendar($reader['id'])['round'],time()+900]);sql('DELETE FROM telegram_reading_requests WHERE user_id=? OR expires_at<?',[$reader['id'],time()]);try{$plan=telegramReadingPlan($reader['id'],(int)$reading[1]);$token=bin2hex(random_bytes(16));
                 sql('INSERT INTO telegram_reading_requests(token_hash,user_id,telegram_id,session_epoch,chapters,snapshot,expires_at) VALUES (?,?,?,?,?,?,?)',[hash('sha256',$token),$reader['id'],$telegramId,(int)$reader['session_epoch'],(int)$reading[1],json_encode(['today'=>calendar($reader['id'])['today'],'plan'=>$plan],JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR),time()+900]);
-                $lines=[(isset($position['label'])?'Отмечаем: '.$position['label']."\n":'').'Добавить '.$reading[1].' глав? Сначала непрочитанный план предыдущей недели, затем текущая.'];
-                foreach($plan as $week)$lines[]='Неделя '.$week['week'].' · круг '.$week['cycle'].': +'.$week['added'].' глав → '.($week['chapters']+$week['added']).' из '.$week['goal'].'.';
-                $lines[]='Пока ничего не зачтено. Проверьте число и подтвердите. Кнопки действуют 15 минут; новый ввод заменяет предыдущий запрос.';
+                $lines=['📖 Проверьте отметку'];
+                foreach($plan as $week)$lines[]="\n".telegramReadingWeekMessage($week,true);
+                $lines[]="\nПока ничего не сохранено. Нажмите «Подтвердить», если место чтения указано верно.";
+                $lines[]='Выбор действует 15 минут. «Отмена» оставит прогресс прежним.';
                 $reply(implode("\n",$lines),[[['text'=>'✓ Подтвердить','callback_data'=>'r_y_'.$token],['text'=>'Отмена','callback_data'=>'r_n_'.$token]]]);
             }catch(DomainException $e){$reply($e->getMessage());}}
         } else $reply("Бот привязывает Telegram и подтверждает вход.\nЧтобы добавить прочитанные главы, напишите: прочитал 5\nГлавы сначала закрывают самые ранние непрочитанные недели, остаток идёт в текущую. Перед зачётом нажмите «Подтвердить» или «Отмена».\nГрафики, планы и отчёты доступны на сайте.",$base!==''?[[['text'=>'Открыть сайт','url'=>$base]]]:null);

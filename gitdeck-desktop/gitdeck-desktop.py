@@ -13,7 +13,7 @@ def terminate(process):
 
 class Window(Gtk.Window):
     def __init__(self):
-        super().__init__(title='GitDeck');self.set_default_size(1160,820)
+        super().__init__(title='GitDeck 1.1.1');self.set_default_size(1160,820)
         self.path=Path.home()/'.config/gitdeck-desktop/settings.json';self.values=load(self.path)
         self.process=None;self.stop_event=threading.Event();self.generation=0
         self.connect('delete-event',self.close)
@@ -43,7 +43,15 @@ class Window(Gtk.Window):
     def show_error(self,text):
         self.status.set_text(text);d=Gtk.MessageDialog(transient_for=self,modal=True,message_type=Gtk.MessageType.ERROR,buttons=Gtk.ButtonsType.CLOSE,text=text);d.run();d.destroy()
     def begin(self,*_):
-        try:self.values=self.current();save(self.path,self.values)
+        try:
+            self.values=self.current();original=self.values['local_port']
+            for candidate in range(original,min(65535,original+20)+1):
+                try:
+                    with socket.socket() as sock:sock.bind(('127.0.0.1',candidate))
+                    self.values['local_port']=candidate;self.fields['local_port'].set_text(str(candidate));break
+                except OSError:continue
+            else:raise ValueError('Нет свободного локального порта. Укажите другой порт.')
+            save(self.path,self.values)
         except (ValueError,OSError) as error:self.show_error(str(error));return
         self.stop_event=threading.Event();self.generation+=1;generation=self.generation
         self.connect_button.set_sensitive(False);self.status.set_text('Подключение… Введите пароль в окне SSH.')
