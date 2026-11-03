@@ -14,7 +14,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
-from unittest.mock import patch
+from unittest.mock import patch,Mock
 
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'guard/src'))
@@ -61,6 +61,13 @@ class ModerationTests(unittest.TestCase):
         self.assertTrue(milk.incoming(self.update));people=milk.cli('people',{})['people'];self.assertEqual(people[0]['name'],'Alice')
         history=milk.cli('history',{'person':'123'})['events'];self.assertNotIn('a'*48,history[0]['text'])
         milk.cli('block',{'person':'123'});self.assertFalse(milk.incoming(self.update));milk.cli('unblock',{'person':'123'});self.assertTrue(milk.incoming(self.update))
+    def test_update_replays_and_incremental_errors(self):
+        self.update['update_id']=500
+        milk.incoming(self.update);milk.incoming(self.update)
+        self.assertEqual(len(milk.cli('history',{'person':'123'})['events']),1)
+        cursor=milk.cli('activity',{'after':None})['cursor'];milk.failure(self.update)
+        feed=milk.cli('activity',{'after':cursor});self.assertEqual(len(feed['events']),1);self.assertEqual(feed['events'][0]['direction'],'error')
+        self.assertEqual(milk.cli('activity',{'after':feed['cursor']})['events'],[])
     def test_unknown_people_cannot_be_messaged(self):
         with self.assertRaises(ValueError):milk.cli('send',{'person':'888','text':'hello'})
     def test_retention_and_no_group_history(self):
@@ -101,6 +108,16 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(self.req('/api/bot/action',{'bot':'pulse','action':'stop'})[0],403);control.assert_not_called()
             self.assertEqual(self.req('/api/bot/action',{'bot':'pulse','action':'stop','csrf':auth['csrf']})[0],200)
         self.assertEqual(self.req('/api/logout',{'csrf':auth['csrf']})[0],200);self.assertEqual(self.req('/api/session')[0],401)
+    def test_alert_settings_and_test_delivery_require_auth_and_csrf(self):
+        self.assertEqual(self.req('/api/alerts')[0],401)
+        _,auth=self.req('/api/login',{'password':'guard-test-password-2026'})
+        service=Mock();service.save.return_value={'token_set':True};service.listing.return_value={'alerts':[]};service.pair.return_value={'command':'/guard secret','expires':1}
+        with patch.object(self.server,'alerts',service,create=True):
+            self.assertEqual(self.req('/api/alerts/config',{'telegram_enabled':True})[0],403);service.save.assert_not_called()
+            self.assertEqual(self.req('/api/alerts/test',{'csrf':auth['csrf']},origin='https://evil.test')[0],403);service.deliver.assert_not_called()
+            self.assertEqual(self.req('/api/alerts/config',{'telegram_enabled':True,'csrf':auth['csrf']})[0],200)
+            self.assertEqual(self.req('/api/alerts/pair',{'csrf':auth['csrf']})[0],200)
+            self.assertEqual(self.req('/api/alerts/test',{'csrf':auth['csrf']})[0],200);service.deliver.assert_called_once_with(test=True)
     def test_password_reset_revokes_session(self):
         status,_=self.req('/api/login',{'password':'guard-test-password-2026'});self.assertEqual(status,200)
         app.set_password('guard-test-password-2026');self.assertEqual(self.req('/api/session')[0],401)

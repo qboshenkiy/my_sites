@@ -44,22 +44,31 @@ def ssh(since):
     return ssh_events(result.stdout.decode(errors='replace'))
 
 
+def http_events(raw,since):
+    for line in raw.splitlines():
+        try:
+            row=json.loads(line)
+            if not isinstance(row,dict) or not str(row.get('logger','')).startswith('http.log.access'):continue
+            stamp=float(row.get('ts',0))
+            if stamp<since:continue
+            request=row.get('request',{});ip=valid_ip(str(request.get('remote_ip','')))
+            if not ip:continue
+            status=int(row.get('status',0))
+            path=urlsplit(str(request.get('uri','/'))).path
+            parts=[re.sub(r'[^a-zA-Z0-9_.-]','',p)[:40] for p in path.split('/')[:3]]
+            path='/'.join('[id]' if len(p)>24 or re.fullmatch(r'[0-9]+',p or '-') else p for p in parts)
+            host=re.sub(r'[^a-zA-Z0-9.:-]','',str(request.get('host','')))[:180]
+            yield {'time':stamp,'ip':ip,'host':host,'path':path,'status':status,'method':str(request.get('method',''))[:10]}
+        except (ValueError,TypeError,AttributeError):continue
+
+
 def traffic(raw,since):
     addresses={};events=[];total=0;errors=0
-    for line in raw.splitlines():
-        try:row=json.loads(line)
-        except ValueError:continue
-        if not str(row.get('logger','')).startswith('http.log.access') or row.get('ts',0)<since:continue
-        request=row.get('request',{});ip=valid_ip(str(request.get('remote_ip','')))
-        if not ip:continue
-        stamp=float(row['ts']);status=int(row.get('status',0));total+=1;errors+=int(status>=400)
+    for event in http_events(raw,since):
+        ip=event['ip'];stamp=event['time'];status=event['status'];total+=1;errors+=int(status>=400)
         entry=addresses.setdefault(ip,{'ip':ip,'requests':0,'errors':0,'minutes':collections.Counter(),'last_seen':0})
         entry['requests']+=1;entry['errors']+=int(status>=400);entry['minutes'][int(stamp//60)]+=1;entry['last_seen']=max(entry['last_seen'],stamp)
-        # Do not expose path segments, query tokens, cookies, headers or request bodies.
-        path=urlsplit(str(request.get('uri','/'))).path
-        parts=[re.sub(r'[^a-zA-Z0-9_.-]','',p)[:40] for p in path.split('/')[:3]]
-        path='/'.join('[id]' if len(p)>24 or re.fullmatch(r'[0-9]+',p or '-') else p for p in parts)
-        events.append({'time':stamp,'ip':ip,'host':str(request.get('host',''))[:180],'path':path,'status':status,'method':str(request.get('method',''))[:10]})
+        events.append(event)
     rows=[]
     for entry in addresses.values():
         entry['peak_per_minute']=max(entry.pop('minutes').values(),default=0);rows.append(entry)
@@ -94,7 +103,7 @@ def seed_people(bot):
 
 
 def bot_action(bot,action,data=None):
-    if not isinstance(bot,str) or not isinstance(action,str) or bot not in BOTS or action not in ('people','history','block','unblock','send'):raise ValueError('Выберите бота и действие')
+    if not isinstance(bot,str) or not isinstance(action,str) or bot not in BOTS or action not in ('people','history','block','unblock','send','activity','identity'):raise ValueError('Выберите бота и действие')
     item=BOTS[bot]
     if action=='people':seed_people(bot)
     return docker_api.execute(item['container'],item['cli']+[action,json.dumps(data or {},ensure_ascii=False)],user='www-data' if bot!='milk' else None)
@@ -116,3 +125,20 @@ def bot_control(bot,action):
     if bot=='milk':raise ValueError('Бот «Молоко» работает внутри сайта. Управляйте контейнером через GitDeck.')
     docker_api.request('POST','/containers/'+BOTS[bot]['container']+'/'+action+'?t=15')
     return {'ok':True}
+
+
+def installed_bot_ids():
+    result=set()
+    for bot,item in BOTS.items():
+        try:
+            if bot!='milk':
+                info=json.loads(docker_api.request('GET','/containers/'+item['container']+'/json'))
+                for entry in info.get('Config',{}).get('Env',[]):
+                    if entry.startswith('TELEGRAM_BOT_TOKEN='):
+                        identity=entry.split('=',1)[1].split(':',1)[0]
+                        if identity.isdecimal():result.add(identity)
+            else:
+                identity=bot_action(bot,'identity').get('bot_id')
+                if identity:result.add(str(identity))
+        except (OSError,ValueError,TimeoutError):continue
+    return result

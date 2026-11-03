@@ -166,6 +166,7 @@ class Application:
 
     def worker(self):
         while not self.stop.is_set():
+            guard_recorded=False
             try:
                 with self.lock:
                     self.store.schedule()
@@ -183,12 +184,18 @@ class Application:
                         if self.store.settings(db).get('bot_token') != token:
                             continue
                     for update in updates:
-                        self.handle_update(token, update)
+                        try:
+                            self.handle_update(token, update)
+                        except Exception:
+                            bot_guard.failure(update)
+                            guard_recorded=True
+                            raise
                         with self.store.db() as db:
                             self.store.put(db, offset_key, update['update_id']+1)
                     with self.store.db() as db:
                         self.store.put(db, 'worker_error', '')
             except Exception:
+                if not guard_recorded:bot_guard.failure({},'connection')
                 # Never log Telegram request URLs: they contain the token.
                 with self.store.db() as db:
                     self.store.put(db, 'worker_error', 'Нет связи с Telegram. Проверьте токен, интернет и отсутствие второго запущенного экземпляра бота.')

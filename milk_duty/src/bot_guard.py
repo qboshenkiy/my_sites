@@ -26,7 +26,7 @@ def database():
     (folder/'bot-guard.sqlite').chmod(0o600)
     db.row_factory = sqlite3.Row
     try:
-        db.executescript('CREATE TABLE IF NOT EXISTS people(id TEXT PRIMARY KEY,name TEXT,username TEXT,blocked INTEGER NOT NULL DEFAULT 0,last_seen REAL); CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY,person TEXT,direction TEXT,text TEXT,created REAL); CREATE INDEX IF NOT EXISTS events_person ON events(person,id);')
+        db.executescript('CREATE TABLE IF NOT EXISTS people(id TEXT PRIMARY KEY,name TEXT,username TEXT,blocked INTEGER NOT NULL DEFAULT 0,last_seen REAL); CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY,person TEXT,direction TEXT,text TEXT,created REAL); CREATE INDEX IF NOT EXISTS events_person ON events(person,id); CREATE TABLE IF NOT EXISTS guard_seen(id INTEGER PRIMARY KEY,created REAL);')
         with db:
             yield db
     finally:
@@ -46,9 +46,13 @@ def incoming(update):
         if not person.isdecimal() or sender.get('is_bot'):
             return True
         with database() as db:
+            fresh=True
+            if isinstance(update.get('update_id'),int):
+                fresh=db.execute('INSERT OR IGNORE INTO guard_seen VALUES(?,?)',(update['update_id'],time.time())).rowcount>0
+                db.execute('DELETE FROM guard_seen WHERE created<?',(time.time()-30*86400,))
             db.execute('INSERT INTO people(id,name,username,last_seen) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,username=excluded.username,last_seen=excluded.last_seen', (person, (sender.get('first_name','')+' '+sender.get('last_name','')).strip(), sender.get('username',''), time.time()))
             blocked = db.execute('SELECT blocked FROM people WHERE id=?', (person,)).fetchone()[0]
-            if message.get('chat', {}).get('type') == 'private':
+            if fresh and message.get('chat', {}).get('type') == 'private':
                 event(db, person, 'blocked' if blocked else 'in', message.get('text','[вложение]'))
             return not blocked
     except (OSError, sqlite3.Error):
@@ -66,8 +70,30 @@ def outgoing(method, args):
         print('Guard audit unavailable', file=sys.stderr)
 
 
+def failure(update,stage='processing'):
+    try:
+        person=str(update.get('message',{}).get('from',{}).get('id','0'))
+        if not person.isdecimal():person='0'
+        with database() as db:event(db,person,'error','Нет связи с Telegram или ошибка фоновой обработки бота.' if stage=='connection' else 'Ошибка обработки сообщения или отправки ответа Telegram.')
+    except (OSError,sqlite3.Error):
+        print('Guard error audit unavailable',file=sys.stderr)
+
+
 def cli(action, data):
     with database() as db:
+        if action == 'identity':
+            source=sqlite3.connect('file:'+str(Path(os.getenv('DATA_DIR','/data'))/'duty.sqlite')+'?mode=ro',uri=True)
+            try:
+                row=source.execute("SELECT value FROM config WHERE key='bot_token'").fetchone()
+                return {'bot_id':str(json.loads(row[0])).split(':')[0] if row else ''}
+            finally:source.close()
+        if action == 'activity':
+            after=data.get('after')
+            maximum=db.execute('SELECT COALESCE(MAX(id),0) FROM events').fetchone()[0]
+            if after is None or (isinstance(after,int) and after>maximum):return {'events':[],'cursor':maximum}
+            if isinstance(after,bool) or not isinstance(after,int) or after<0:raise ValueError('Некорректный курсор')
+            events=[dict(r) for r in db.execute("SELECT e.id,e.person,e.direction,e.created,CASE WHEN e.direction='error' THEN e.text ELSE '' END AS text,COALESCE(p.name,'') AS name FROM events e LEFT JOIN people p ON p.id=e.person WHERE e.id>? ORDER BY e.id LIMIT 1000",(after,))]
+            return {'events':events,'cursor':events[-1]['id'] if events else after}
         if action == 'people':
             return {'people': [dict(r) for r in db.execute('SELECT * FROM people ORDER BY last_seen DESC LIMIT 500')]}
         person = str(data.get('person',''))

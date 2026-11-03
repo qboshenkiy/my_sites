@@ -20,15 +20,16 @@ if($miniApp=telegramMiniAppUrl()){
 }else fwrite(STDERR,"Mini App needs an HTTPS APP_URL. Browser and bot reading remain available.\n");
 echo "Telegram authorization worker started.\n";
 while(true){
+    $guardRecorded=false;
     try {
         telegramGroupDeliveries();
         telegramDailyReminders();
         $last=(int)(sql("SELECT value FROM settings WHERE key='bot_offset'")->fetchColumn()?:0);
         $updates=telegramCall('getUpdates',['offset'=>$last,'timeout'=>25,'allowed_updates'=>['message','callback_query']])['result'];
         foreach($updates as $update){
-            $messages=telegramUpdate($update);
-            foreach($messages as $message){try{telegramCall($message['method'],$message['args']);}catch(Throwable $e){fwrite(STDERR,"Could not deliver a bot response. The authorization request is still saved.\n");}}
+            try{$messages=telegramUpdate($update);}catch(Throwable $e){guardFailure($update,'processing',$e);$guardRecorded=true;throw $e;}
+            foreach($messages as $message){try{telegramCall($message['method'],$message['args']);}catch(Throwable $e){guardFailure($update,'response',$e);fwrite(STDERR,"Could not deliver a bot response. The authorization request is still saved.\n");}}
             sql("INSERT INTO settings VALUES ('bot_offset',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[(string)($update['update_id']+1)]);
         }
-    } catch(Throwable $e){fwrite(STDERR,"Bot connection unavailable. Retrying in 5 seconds.\n");sleep(5);}
+    } catch(Throwable $e){if(!$guardRecorded)guardFailure([],'connection',$e);fwrite(STDERR,"Bot connection unavailable. Retrying in 5 seconds.\n");sleep(5);}
 }

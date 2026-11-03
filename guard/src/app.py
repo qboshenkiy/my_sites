@@ -16,6 +16,7 @@ import threading
 import time
 import urllib.parse
 import monitor
+import alerts as notifications
 
 ROOT=Path(__file__).resolve().parents[1]
 DATA=Path(os.getenv('DATA_DIR','/data'))
@@ -57,6 +58,11 @@ CACHE=Cache()
 
 class Handler(http.server.BaseHTTPRequestHandler):
     server_version='Guard'
+    alerts_lock=threading.Lock()
+    def alerts(self):
+        with self.alerts_lock:
+            if not hasattr(self.server,'alerts'):self.server.alerts=notifications.Service(database)
+            return self.server.alerts
     def log_message(self,*args):pass
     def host_valid(self):
         host=self.headers.get('Host','')
@@ -95,6 +101,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not session:return self.send(401,{'error':'Войдите как администратор'})
         query=urllib.parse.parse_qs(url.query)
         try:
+            if url.path=='/api/alerts':return self.send(200,self.alerts().listing())
+            if url.path=='/api/alerts/config':return self.send(200,self.alerts().public())
             if url.path=='/api/session':return self.send(200,{'csrf':session['csrf'],'domain':HOST})
             if url.path=='/api/security':
                 period=int(query.get('period',['3600'])[0])
@@ -145,6 +153,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         session=self.session()
         if not session or not hmac.compare_digest(str(data.get('csrf','')),session['csrf']):return self.send(403,{'error':'Сессия истекла. Войдите снова.'})
         try:
+            if self.path=='/api/alerts/config':
+                result=self.alerts().save(data);self.audit('alerts_config');return self.send(200,result)
+            if self.path=='/api/alerts/pair':
+                result=self.alerts().pair();self.audit('alerts_pair');return self.send(200,result)
+            if self.path=='/api/alerts/test':
+                self.alerts().deliver(test=True);self.audit('alerts_test');return self.send(200,{'ok':True})
+            if self.path=='/api/alerts/read':
+                self.alerts().acknowledge(data.get('id',0));return self.send(200,{'ok':True})
             if self.path=='/api/logout':
                 with database() as db:db.execute('DELETE FROM sessions WHERE hash=?',(session['hash'],))
                 return self.send(200,{'ok':True},cookie='guard=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0')
@@ -166,5 +182,9 @@ def main():
         password=getpass.getpass('Новый пароль Guard (от 12 символов): ')
         if password!=getpass.getpass('Повторите пароль: '):raise SystemExit('Пароли не совпадают')
         set_password(password);print('Пароль сохранён.');return
-    http.server.ThreadingHTTPServer(('0.0.0.0',8150),Handler).serve_forever()
+    server=http.server.ThreadingHTTPServer(('0.0.0.0',8150),Handler)
+    server.alerts=notifications.Service(database);server.alerts.start()
+    (DATA/'guard.sqlite').chmod(0o600)
+    try:server.serve_forever()
+    finally:server.alerts.stop.set();server.server_close()
 if __name__=='__main__':main()

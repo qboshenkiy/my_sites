@@ -35,6 +35,7 @@ try{
     $offset=(int)(query('SELECT value FROM settings WHERE key=?',['telegram_offset_'.$botId])->fetchColumn()?:0);
     $menuConfigured=false;
     while(true){
+        $guardRecorded=false;
         try{
             if(!$menuConfigured){
                 $menu=pulseMiniAppMenu();
@@ -43,12 +44,14 @@ try{
             }
             formsBotTick();pulseGameBotTick();
             foreach(pulseBotCall('getUpdates',['offset'=>$offset,'timeout'=>5,'allowed_updates'=>['message','callback_query','poll_answer']]) as $update){
+                try{
                 if(guardIncoming($update)){
                 if(!pulseGameBotUpdate($update,$botId)&&!formsBotUpdate($update,$botId))foreach(pulseTelegramUpdate($update,$botId) as $action)pulseBotCall($action['method'],$action['args']);
                 }
+                }catch(Throwable $error){guardFailure($update,'processing',$error);$guardRecorded=true;throw $error;}
                 $offset=(int)$update['update_id']+1;query('INSERT OR REPLACE INTO settings VALUES (?,?)',['telegram_offset_'.$botId,(string)$offset]);
             }
             formsBotTick();pulseGameBotTick();
-        }catch(Throwable $error){formsBotRollback();fwrite(STDERR,"Ошибка связи бота Пульса. Повтор через 5 секунд.\n");sleep(5);}
+        }catch(Throwable $error){if(!$guardRecorded)guardFailure([],'connection',$error);formsBotRollback();fwrite(STDERR,"Ошибка связи бота Пульса. Повтор через 5 секунд.\n");sleep(5);}
     }
 }catch(Throwable $error){fwrite(STDERR,$error->getMessage()."\n");exit(1);}
