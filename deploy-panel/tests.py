@@ -330,6 +330,11 @@ class GitDeckTests(unittest.TestCase):
                     return exc.code, json.load(exc)
         self.assertEqual(request('/api/state')[0], 401)
         self.assertEqual(request('/health', host='attacker.invalid')[0], 403)
+        for host in ('localhost:8121', '127.0.0.1:1223'):
+            self.assertEqual(request('/health', host=host)[0], 200)
+        for host in ('127.0.0.1.attacker.invalid:8121', 'localhost:0', 'localhost:65536', 'localhost:8121@attacker.invalid', 'localhost:8121:80'):
+            self.assertEqual(request('/health', host=host)[0], 403)
+        self.assertEqual(request('/api/login', {'password': 'test-password-2026'}, host='localhost:8121')[0], 403)
         self.assertEqual(request('/api/login', {'password': 'wrong'})[0], 401)
         self.assertEqual(request('/api/login', {'password': 'test-password-2026'})[0], 200)
         code, state = request('/api/state')

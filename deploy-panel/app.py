@@ -1513,7 +1513,10 @@ class Panel(http.server.BaseHTTPRequestHandler):
             return Panel.sessions.get(key)
 
     def valid_host(self):
-        return self.headers.get('Host', '') in ('localhost:' + str(self.server.server_port), '127.0.0.1:' + str(self.server.server_port))
+        # An SSH tunnel may use a different local port than the server listener.
+        # Keep literal loopback hosts only; POST still requires a matching Origin.
+        match = re.fullmatch(r'(?:localhost|127\.0\.0\.1):([0-9]{1,5})', self.headers.get('Host', ''))
+        return match is not None and 1 <= int(match.group(1)) <= 65535
 
     def do_GET(self):
         if not self.valid_host():
