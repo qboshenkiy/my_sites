@@ -35,6 +35,7 @@ def epoch():
 def protect():
     if request.path.startswith('/api/'):
         if request.method=='POST':
+            if not isinstance(request.get_json(silent=True),dict):return jsonify(error='Ожидается JSON-объект'),400
             origin=request.headers.get('Origin','');host=request.host
             if origin not in ('https://'+host,'http://'+host):return jsonify(error='Недопустимый источник'),403
         if request.path!='/api/login':
