@@ -24,7 +24,7 @@ import threading
 import time
 import urllib.parse
 
-VERSION = '1.11.0'
+VERSION = '1.12.0'
 LAYOUT = {
     'remote': ['server', 'ops', '.dockerignore'],
     'drawing': ['index.php', 'api.php', 'manifest.webmanifest', 'service-worker.js', 'lib', 'assets', 'ops', '.dockerignore'],
@@ -49,6 +49,41 @@ BOOKVOICE = {
     'subdir': 'bookvoice', 'directory': '/opt/bookvoice', 'compose': 'compose.yaml',
     'profiles': [], 'services': ['web'], 'main_service': 'web',
     'paths': ['src', 'web', 'requirements.txt'], 'wait_health': True, 'ssh_key': ''}
+
+
+KOPILKA = {
+    'id': 'kopilka', 'name': 'Копилка · личные финансы', 'kind': 'docker',
+    'repo': 'https://github.com/qboshenkiy/my_sites.git', 'branch': 'main',
+    'subdir': 'kopilka', 'directory': '/opt/kopilka', 'compose': 'compose.yaml',
+    'profiles': [], 'services': ['web', 'bot'], 'main_service': 'web',
+    'paths': ['src', 'web', 'requirements.txt'], 'wait_health': True, 'ssh_key': ''}
+
+
+def register_kopilka(server):
+    if any(p['id'] == 'kopilka' for p in server.config['projects']):
+        return
+    project = project_from_form(dict(KOPILKA), None, server.config)
+    save_config(server, [*server.config['projects'], project], config_revision(server.config))
+
+
+def setup_kopilka(config, p, job, log):
+    if any(p.get(k) != KOPILKA[k] for k in ('id', 'kind', 'repo', 'subdir', 'directory', 'compose')):
+        raise ValueError('Настройка доступна только для стандартного Guard')
+    source_project = dict(KOPILKA, paths=[*KOPILKA['paths'], 'Dockerfile', 'compose.yaml', '.dockerignore'])
+    source = Path(config['state_dir']) / 'jobs' / job / 'setup-source'
+    sha = checkout(source_project, config, source, log)
+    dest = Path(p['directory']);dest.mkdir(parents=True, exist_ok=True)
+    for name in source_project['paths']:
+        target = validate_destination(dest, name)
+        if target.exists():
+            continue
+        if (source / name).is_dir():
+            shutil.copytree(source / name, target)
+        else:
+            shutil.copy2(source / name, target)
+    status_update(config, job, 'installing', sha=sha)
+    run([sys.executable, str(dest / 'src/setup.py')], log, timeout=600)
+    status_update(config, job, 'success', sha=sha)
 
 
 GUARD = {
@@ -517,6 +552,8 @@ def env_settings(p):
     text = env_text(p)
     values = {key: value for key, value, *_ in env_records(text)}
     defaults = ['DOMAIN', 'APP_URL', 'APP_PORT', 'APP_BIND']
+    if p['id'] == 'kopilka':
+        defaults += ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME']
     if p['kind'] == 'marathon':
         defaults += ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME']
     if p['kind'] == 'pulse':
@@ -1219,6 +1256,8 @@ def work(config, job):
                     status_update(config,job,'installing')
                     compose(p,[command,service],log)
                     status_update(config,job,'success')
+                elif row['action'] == 'setup_kopilka':
+                    setup_kopilka(config, p, job, log)
                 elif row['action'] == 'setup_guard':
                     setup_guard(config, p, job, log)
                 elif row['action'] == 'setup_bookvoice':
@@ -1766,6 +1805,14 @@ class Panel(http.server.BaseHTTPRequestHandler):
                     return self.send(202,{'job':enqueue(self.server,p,'pulse_bot')})
                 except (StopIteration,ValueError,OSError,RuntimeError) as error:
                     return self.send(400,{'error':str(error) or 'Выберите Пульс'})
+        if self.path == '/api/kopilka/setup':
+            if self.server.demo:return self.send(403, {'error': 'В предпросмотре установка отключена'})
+            with self.mutex:
+                try:
+                    p = next(p for p in self.server.config['projects'] if p['id'] == 'kopilka')
+                    return self.send(202, {'job': enqueue(self.server, p, 'setup_kopilka')})
+                except (StopIteration, ValueError, OSError, RuntimeError) as error:
+                    return self.send(400, {'error': str(error) or 'Карточка Копилка не найдена'})
         if self.path == '/api/guard/setup':
             if self.server.demo:return self.send(403, {'error': 'В предпросмотре установка отключена'})
             with self.mutex:
@@ -1840,6 +1887,7 @@ def serve(config, config_path, demo=False):
         try:
             register_bookvoice(server)
             register_guard(server)
+            register_kopilka(server)
         except (ValueError, OSError) as error:
             print('Не удалось добавить карточку «Голос книги»: ' + str(error), file=sys.stderr, flush=True)
     config = server.config
