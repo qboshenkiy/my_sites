@@ -24,3 +24,5 @@ body.miniapp{padding-top:var(--miniapp-safe-top,0px);padding-left:var(--miniapp-
 .miniapp input,.miniapp textarea,.miniapp select{font-size:16px}
 
 .pulse-integration-actions{display:grid;gap:4px;margin:10px 0}.pulse-integration-actions .nav{font-size:12px;white-space:normal;line-height:1.5}
+
+.book-reading-position{margin:18px 0;padding:16px;border:1px solid #d6dfcf;border-radius:12px;background:#f4f7ef}.book-reading-position p{margin:8px 0}.book-progress-rows>div{display:flex;justify-content:space-between;gap:16px;padding:10px 0;border-bottom:1px solid #dfe5d8}.book-progress-rows small,.matrix-book-position{display:block;font-size:12px;margin-top:5px;color:#657366}.book-position-picker{display:grid;gap:12px;margin:18px 0}.book-position-picker input,.book-position-picker select{max-width:100%;min-height:44px}

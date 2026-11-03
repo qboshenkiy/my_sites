@@ -17,7 +17,7 @@ function telegramAdminList(int $page,int $week,bool $report,callable $reply): vo
     $lines=[($report?'📋 Общий отчёт':'👥 Участники').' · неделя '.$week,'Страница '.($page+1).' из '.$pages.' · Всего: '.count($people)];
     if($report){$complete=count(array_filter($people,fn($u)=>$u['weekly'][$week-1]['completedCycles']>0));$chapters=array_sum(array_map(fn($u)=>$u['weekly'][$week-1]['totalChapters'],$people));$lines[]='Выполнили хотя бы один круг: '.$complete.'/'.count($people).'. Всего с повторами: '.$chapters.' глав. За весь марафон: '.array_sum(array_column($people,'chapters')).' глав.';}
     $buttons=[];foreach(array_slice($people,$page*8,8) as $u){$w=$u['weekly'][$week-1];$status=$w['completed']?'✅':($w['completedCycles']>0?'🔁':($w['status']==='overdue'?'⚠️':'📖'));
-        $lines[]=$status.' '.$u['name'].(!$u['active']?' [отключён]':'').' — '.$w['chapters'].'/'.$w['goal'].' глав · '.$w['days'].' дн. · круг '.$w['cycle'].' · завершено '.$w['completedCycles'].($report?' · за марафон '.$u['chapters'].' глав, недель выполнено '.$u['completed']:'');
+        $lines[]=$status.' '.$u['name'].(!$u['active']?' [отключён]':'').' — '.$w['bookProgress']['label'].' · '.$w['chapters'].'/'.$w['goal'].' глав · '.$w['days'].' дн. · круг '.$w['cycle'].' · завершено '.$w['completedCycles'].($report?' · за марафон '.$u['chapters'].' глав, недель выполнено '.$u['completed']:'');
         $buttons[]=[['text'=>mb_substr($u['name'],0,45),'callback_data'=>'ad:u:'.$u['id'].':'.$week]];
     }
     $kind=$report?'r':'l';$nav=[];if($page>0)$nav[]=['text'=>'← Назад','callback_data'=>'ad:'.$kind.':'.($page-1).':'.$week];if($page<$pages-1)$nav[]=['text'=>'Далее →','callback_data'=>'ad:'.$kind.':'.($page+1).':'.$week];if($nav)$buttons[]=$nav;
@@ -27,7 +27,7 @@ function telegramAdminList(int $page,int $week,bool $report,callable $reply): vo
 }
 function telegramAdminCard(string $id,int $week,callable $reply): void {
     $u=user($id);$w=telegramAdminWeek($id,$week);$status=$w['completed']?'Выполнен':($w['status']==='overdue'?'Просрочен':($w['status']==='upcoming'?'Неделя ещё не началась':'В процессе'));
-    $lines=['👤 '.$u['name'].(!$u['active']?' · аккаунт отключён':''),'Неделя '.$week.' · '.$w['start'].' — '.$w['end'],'Круг '.$w['cycle'].' · '.$status,$w['chapters'].'/'.$w['goal'].' глав · '.$w['days'].' дн.','Всего за неделю: '.$w['totalChapters'].' глав. Завершено кругов: '.$w['completedCycles'].'.',planBookText($w['books'])];
+    $lines=['👤 '.$u['name'].(!$u['active']?' · аккаунт отключён':''),'Неделя '.$week.' · '.$w['start'].' — '.$w['end'],'Круг '.$w['cycle'].' · '.$status,$w['bookProgress']['label'].' · '.$w['chapters'].'/'.$w['goal'].' глав · '.$w['days'].' дн.','Всего за неделю: '.$w['totalChapters'].' глав. Завершено кругов: '.$w['completedCycles'].'.',planBookText($w['books'])];
     $buttons=[];if($u['active']&&$w['editable'])$buttons[]=[['text'=>'✏️ Изменить главы и дни','callback_data'=>'ad:e:'.$id.':'.$week]];
     if($u['active']&&$w['canComplete']&&!$w['completed'])$buttons[]=[['text'=>'✅ Отметить план прочитанным','callback_data'=>'ad:c:'.$id.':'.$week]];
     if(!$w['editable']&&$w['canComplete'])$lines[]='Неделя закрыта для исправлений. Администратор может открыть её на сайте. Поздняя отметка выполнения доступна отдельно.';

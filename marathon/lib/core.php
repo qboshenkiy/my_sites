@@ -106,7 +106,7 @@ function weekResults(string $id): array {
         $autoDays=readingPlanDays($w,$finish);
         $actualDays=$days!==null&&(int)$days>0?(int)$days:($chapters>0?$autoDays:0);
         $late=$completed&&$completedOn&&$completedOn>$w['end'];$status=$completed?($late?'completed_late':'completed'):($c['today']<$w['start']?'upcoming':($overdueDays?'overdue':'in_progress'));
-        $result[]=array_merge($w,['cycle'=>$cycle,'nextCycle'=>nextWeeklyCycle($id,$n),'completedCycles'=>count(array_filter($repeats,fn($r)=>$r['completed']))+($completed?1:0),'repeats'=>$repeats,'deletedRepeats'=>weeklyRepeats($id,$n,true),'totalChapters'=>array_sum(array_column($repeats,'chapters'))+$chapters,'week'=>$n,'chapters'=>$chapters,'chaptersOverride'=>isset($r['chapters_override'])?(int)$r['chapters_override']:null,'chaptersDaily'=>(int)($d['chapters']??0),'days'=>$actualDays,'daysAuto'=>$autoDays,'dailyMarkedDays'=>(int)($d['days']??0),'durationFrom'=>$durationStart,'recordedOn'=>$completedOn??$recordedOn,'daysAtToday'=>readingPlanDays($w,$c['today']),'daysManual'=>$days,'completed'=>$completed,'completedOn'=>$completedOn,'completedBooks'=>$completion?json_decode($completion['plan_snapshot'],true):[],'status'=>$status,'late'=>(bool)$late,'overdueDays'=>$completed&&$completedOn?max(0,(int)(new DateTimeImmutable($w['end']))->diff(new DateTimeImmutable($completedOn))->format('%r%a')):$overdueDays,'elapsedDays'=>$elapsed,'plannedByToday'=>$plannedByToday,'behindChapters'=>max(0,$plannedByToday-$chapters),'plannedPerDay'=>round($w['goal']/7,2),'actualPerDay'=>$actualDays?round($chapters/$actualDays,2):0,'remaining'=>$remaining,'daysLeft'=>$daysLeft,'perDay'=>$remaining&&$daysLeft?(int)ceil($remaining/$daysLeft):0,'recorded'=>isset($rmap[$n])||isset($dmap[$n]),'title'=>$r['title']??'','note'=>$r['note']??'','editor'=>$r['editor']??'','legacyPages'=>(int)($r['pages']??0),'legacyMinutes'=>(int)($r['minutes']??0)]);
+        $result[]=array_merge($w,['cycle'=>$cycle,'nextCycle'=>nextWeeklyCycle($id,$n),'completedCycles'=>count(array_filter($repeats,fn($r)=>$r['completed']))+($completed?1:0),'repeats'=>$repeats,'deletedRepeats'=>weeklyRepeats($id,$n,true),'totalChapters'=>array_sum(array_column($repeats,'chapters'))+$chapters,'week'=>$n,'chapters'=>$chapters,'bookPlanKey'=>readingBookPlanKey($w['books']),'bookProgress'=>readingBookProgress($completion?json_decode($completion['plan_snapshot'],true):$w['books'],$chapters),'chaptersOverride'=>isset($r['chapters_override'])?(int)$r['chapters_override']:null,'chaptersDaily'=>(int)($d['chapters']??0),'days'=>$actualDays,'daysAuto'=>$autoDays,'dailyMarkedDays'=>(int)($d['days']??0),'durationFrom'=>$durationStart,'recordedOn'=>$completedOn??$recordedOn,'daysAtToday'=>readingPlanDays($w,$c['today']),'daysManual'=>$days,'completed'=>$completed,'completedOn'=>$completedOn,'completedBooks'=>$completion?json_decode($completion['plan_snapshot'],true):[],'status'=>$status,'late'=>(bool)$late,'overdueDays'=>$completed&&$completedOn?max(0,(int)(new DateTimeImmutable($w['end']))->diff(new DateTimeImmutable($completedOn))->format('%r%a')):$overdueDays,'elapsedDays'=>$elapsed,'plannedByToday'=>$plannedByToday,'behindChapters'=>max(0,$plannedByToday-$chapters),'plannedPerDay'=>round($w['goal']/7,2),'actualPerDay'=>$actualDays?round($chapters/$actualDays,2):0,'remaining'=>$remaining,'daysLeft'=>$daysLeft,'perDay'=>$remaining&&$daysLeft?(int)ceil($remaining/$daysLeft):0,'recorded'=>isset($rmap[$n])||isset($dmap[$n]),'title'=>$r['title']??'','note'=>$r['note']??'','editor'=>$r['editor']??'','legacyPages'=>(int)($r['pages']??0),'legacyMinutes'=>(int)($r['minutes']??0)]);
     }return $result;
 }
 function readingPlanDays(array $week,string $on): int {
@@ -218,3 +218,26 @@ require_once __DIR__.'/rounds.php';
 require_once __DIR__.'/audit.php';
 
 require_once __DIR__.'/miniapp.php';
+
+// Existing cumulative totals describe sequential reading through the weekly plan.
+function readingBookProgress(array $books,int $chapters): array {
+    $left=max(0,$chapters);$last=null;$next=null;$rows=[];
+    foreach($books as $index=>$book){
+        $length=(int)$book['chapter_to']-(int)$book['chapter_from']+1;
+        $read=min($left,$length);$left-=$read;
+        $through=$read?(int)$book['chapter_from']+$read-1:null;
+        $rows[]=array_merge($book,['index'=>$index,'read'=>$read,'total'=>$length,'through'=>$through,'done'=>$read===$length]);
+        if($through!==null)$last=$book['title'].' · глава '.$through;
+        if($next===null&&$read<$length)$next=$book['title'].' · глава '.((int)$book['chapter_from']+$read);
+    }
+    return ['books'=>$rows,'last'=>$last,'next'=>$next,'label'=>$last??($books?'Ещё не начато':$chapters.' глав · книги не указаны')];
+}
+
+function readingBookPlanKey(array $books): string {
+    return hash('sha256',json_encode(array_map(fn($b)=>[$b['title'],(int)$b['chapter_from'],(int)$b['chapter_to']],$books),JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR));
+}
+function readingBookTotal(array $books,int $index,int $chapter): int {
+    $book=$books[$index]??null;
+    if(!$book||$chapter<$book['chapter_from']||$chapter>$book['chapter_to'])throw new DomainException('Выберите книгу и главу из плана недели.');
+    return array_sum(array_map(fn($b)=>$b['chapter_to']-$b['chapter_from']+1,array_slice($books,0,$index)))+$chapter-$book['chapter_from']+1;
+}

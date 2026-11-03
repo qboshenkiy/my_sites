@@ -35,7 +35,10 @@ function telegramUpdate(array $update): array {
         if($callback&&preg_match('/^([ai])_([a-f0-9]{48})$/',$text,$match)){$kind=$match[1]==='a'?'login':'invite';$token=$match[2];}
         elseif(!$callback&&preg_match('/^\/start(?:@\w+)? ([ai])_([a-f0-9]{48})$/',$text,$match)){$kind=$match[1]==='a'?'login':'invite';$token=$match[2];}
         if($callback)$out[]=['method'=>'answerCallbackQuery','args'=>['callback_query_id'=>$callback['id']]];
-        if(telegramAuditMenu($text,(bool)$callback,$linked,$reply)){}
+        $position=$callback?telegramPositionChoice($text,$linked,$reply):null;
+        if(isset($position['chapters']))$readingText='прочитал '.$position['chapters'];
+        if($position&&$position['handled']){}
+        elseif(telegramAuditMenu($text,(bool)$callback,$linked,$reply)){}
         elseif(telegramGroupMenu($text,(bool)$callback,$linked,$reply)){}
         elseif(telegramAdminMenu($text,(bool)$callback,$linked,$telegramId,$reply)){}
         elseif(telegramMenu($text,(bool)$callback,$linked,$telegramId,$reply)){}
@@ -76,12 +79,12 @@ function telegramUpdate(array $update): array {
                     $reply($kind==='invite'?(telegramMiniAppUrl()?'Telegram привязан. Нажмите «Открыть марафон» для входа в приложение.':'Telegram привязан. Откройте сайт и нажмите «Войти через Telegram».'):'Вход подтверждён. Вернитесь на сайт или в Android-приложение — кабинет откроется автоматически.',$keyboard);
                 }
             }
-        } elseif((!$callback||str_starts_with($text,'amount:'))&&preg_match('/^(?:прочитал(?:а)?|\/read(?:@\w+)?)\s+(\d+)\s*(?:глав(?:у|ы)?\s*)?$/iu',trim($readingText),$reading)) {
+        } elseif((!$callback||str_starts_with($text,'amount:')||isset($position['chapters']))&&preg_match('/^(?:прочитал(?:а)?|\/read(?:@\w+)?)\s+(\d+)\s*(?:глав(?:у|ы)?\s*)?$/iu',trim($readingText),$reading)) {
             $reader=sql('SELECT * FROM users WHERE telegram_id=? AND active=1 AND deleted_at IS NULL',[$telegramId])->fetch();
             if(!$reader)$reply('Сначала привяжите Telegram к своему аккаунту по персональной ссылке от команды марафона.');
             else {sql('INSERT INTO telegram_menu_states VALUES (?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET telegram_id=excluded.telegram_id,session_epoch=excluded.session_epoch,round_number=excluded.round_number,expires_at=excluded.expires_at',[$reader['id'],$telegramId,(int)$reader['session_epoch'],calendar($reader['id'])['round'],time()+900]);sql('DELETE FROM telegram_reading_requests WHERE user_id=? OR expires_at<?',[$reader['id'],time()]);try{$plan=telegramReadingPlan($reader['id'],(int)$reading[1]);$token=bin2hex(random_bytes(16));
                 sql('INSERT INTO telegram_reading_requests(token_hash,user_id,telegram_id,session_epoch,chapters,snapshot,expires_at) VALUES (?,?,?,?,?,?,?)',[hash('sha256',$token),$reader['id'],$telegramId,(int)$reader['session_epoch'],(int)$reading[1],json_encode(['today'=>calendar($reader['id'])['today'],'plan'=>$plan],JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR),time()+900]);
-                $lines=['Добавить '.$reading[1].' глав? Сначала непрочитанный план предыдущей недели, затем текущая.'];
+                $lines=[(isset($position['label'])?'Отмечаем: '.$position['label']."\n":'').'Добавить '.$reading[1].' глав? Сначала непрочитанный план предыдущей недели, затем текущая.'];
                 foreach($plan as $week)$lines[]='Неделя '.$week['week'].' · круг '.$week['cycle'].': +'.$week['added'].' глав → '.($week['chapters']+$week['added']).' из '.$week['goal'].'.';
                 $lines[]='Пока ничего не зачтено. Проверьте число и подтвердите. Кнопки действуют 15 минут; новый ввод заменяет предыдущий запрос.';
                 $reply(implode("\n",$lines),[[['text'=>'✓ Подтвердить','callback_data'=>'r_y_'.$token],['text'=>'Отмена','callback_data'=>'r_n_'.$token]]]);

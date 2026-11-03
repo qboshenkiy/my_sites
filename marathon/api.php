@@ -132,6 +132,11 @@ try {
         if($me['role']!=='admin'&&($input['days']??'')!=='')fail('Менять дни вручную может только администратор.',403);
         $id=$input['user']??$me['id'];if($id!==$me['id'])guard();$u=user($id);if(!$u||!(int)$u['active']||$u['deleted_at']!==null)fail('Участник не найден.',404);$week=number($input['week']??0,1,22);
         db()->exec('BEGIN IMMEDIATE');assertInputRound($id,$input);$w=assertWeekEditable($week,$id);$total=number($input['chapters']??0,0,$w['goal']);
+        if(isset($input['book_plan_key'])){
+            if(!is_string($input['book_plan_key'])||!hash_equals(readingBookPlanKey($w['books']),$input['book_plan_key']))fail('План книг изменился. Откройте результат недели заново.',409);
+            if(($input['book_index']??'')==='')$total=0;
+            else $total=readingBookTotal($w['books'],number($input['book_index'],0,max(0,count($w['books'])-1)),number($input['book_chapter']??0,1,100000));
+        }
         $before=weekResults($id)[$week-1];
         $days=$me['role']!=='admin'?($total>0?$before['daysManual']:null):(($input['days']??'')===''?null:number($input['days'],$total?1:0,3660));$title=text($input['title']??'',200,false);$note=text($input['note']??'',1000,false);
         $result=saveWeeklyResult($id,$me['id'],$week,$total,$days,$title,$note);db()->exec('COMMIT');send(['ok'=>true,'week'=>$result]);

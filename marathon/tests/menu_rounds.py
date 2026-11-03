@@ -144,6 +144,40 @@ with tempfile.TemporaryDirectory(prefix='marathon-menu-') as folder:
         plan=bot('прочитал 2');assert 'Неделя 3' in messages(plan) and 'Неделя 2 ·' not in messages(plan)
         bot(button(plan,'Подтвердить'),True)
         assert 'Неделя 4:' not in messages(bot('🗓 Мои недели'))
+        # Choose a physical book/chapter instead of calculating 27+8 by hand.
+        admin.call('week_plan',{'week':3,'books':[{'title':'Левит','chapter_from':1,'chapter_to':27},{'title':'Числа','chapter_from':1,'chapter_to':36}]})
+        opened=bot('menu:read',True)
+        books=bot(button(opened,'Выбрать книгу'),True)
+        choose_book=button(books,'Числа')
+        denied=bot(choose_book,True,sender=777777)
+        assert 'привяжите' in messages(denied).lower()
+        chapters=bot(choose_book,True)
+        choose_chapter=button(chapters,'8')
+        preview=bot(choose_chapter,True)
+        assert 'Числа · глава 8' in messages(preview)
+        assert profile(admin)['stats']['reports'][2]['chapters']==2
+        confirm=button(preview,'Подтвердить');bot(confirm,True)
+        position=profile(admin)['stats']['reports'][2]['bookProgress']
+        assert position['last']=='Числа · глава 8' and position['next']=='Числа · глава 9'
+        assert [b['read'] for b in position['books']]==[27,8]
+        assert profile(admin)['stats']['reports'][2]['chapters']==35
+        bot(confirm,True);assert profile(admin)['stats']['reports'][2]['chapters']==35
+        assert 'изменился' in messages(bot(choose_book,True)).lower()
+        # Non-1 ranges are converted relative to their plan start, and exact boundaries remain in the first book.
+        code='require $argv[1];echo json_encode([readingBookProgress([["title"=>"A","chapter_from"=>5,"chapter_to"=>7],["title"=>"B","chapter_from"=>10,"chapter_to"=>12]],3),readingBookProgress([["title"=>"A","chapter_from"=>5,"chapter_to"=>7],["title"=>"B","chapter_from"=>10,"chapter_to"=>12]],4)]);'
+        bounds=json.loads(subprocess.check_output([PHP,'-r',code,str(ROOT/'lib/core.php')],env=env,text=True))
+        assert bounds[0]['last']=='A · глава 7' and bounds[0]['next']=='B · глава 10'
+        assert bounds[1]['last']=='B · глава 10'
+        # Website submissions are translated on the server, including non-1 ranges.
+        admin.call('week_plan',{'week':2,'books':[{'title':'Первая','chapter_from':5,'chapter_to':7},{'title':'Вторая','chapter_from':10,'chapter_to':13}]})
+        other_week=admin.call('profile',suffix='&user='+other)['stats']['reports'][1]
+        payload={'user':other,'week':2,'cycle':other_week['cycle'],'chapters':0,'book_plan_key':other_week['bookPlanKey'],'book_index':1,'book_chapter':11}
+        saved=admin.call('week_result',payload)['week']
+        assert saved['chapters']==5 and saved['bookProgress']['last']=='Вторая · глава 11'
+        admin.call('week_result',dict(payload,book_plan_key='stale'),409)
+        admin.call('week_result',dict(payload,book_chapter=99),400)
+        assert admin.call('profile',suffix='&user='+other)['stats']['reports'][1]['chapters']==5
+        print('PASS: book/chapter selection, preview/confirm, replay/stale/owner checks, per-book progress and non-1 ranges')
         print('PASS: weekly repeats, history and days, unchanged calendar and other weeks, weekly progress, participant future privacy, confirmations, replay/stale guards, next-week reset.')
     finally:
         server.terminate();server.wait(timeout=5)
