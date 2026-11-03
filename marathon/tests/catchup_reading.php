@@ -19,5 +19,7 @@ $text=telegramCatchupText($calendar,$weeks,10);
 check(str_contains($text,'Левит: главы 21–27')&&str_contains($text,'Числа: главы 1–3'),'Chosen pace shows physical reading ranges');
 check(str_contains($text,'23.10.2026')&&str_contains($text,'43 глав'),'Forecast includes a shorter final day');
 check(str_contains(telegramCatchupText($calendar,$weeks),'темп 6'),'Own pace is discoverable');
+check(str_contains(telegramCatchupText($calendar,$weeks),'Что читать сегодня:'),'Opening catchup immediately shows a daily assignment');
+check(str_contains(telegramCatchupText($calendar,$weeks),'Левит: главы 21–27'),'Opening catchup shows concrete chapters without another click');
 check(str_contains(telegramCatchupText($calendar,$weeks,0),'от 1 до 200'),'Invalid pace rejected');
 echo "PASS: chosen pace, readable catchup date, precise daily assignment and custom pace validation\n";

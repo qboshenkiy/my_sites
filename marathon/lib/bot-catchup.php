@@ -30,19 +30,16 @@ function telegramCatchupText(array $calendar,array $weeks,?int $pace=null): stri
     $lines=['🧭 Как догнать?','Расчёт на '.(new DateTimeImmutable($today))->format('d.m.Y').'.'];
     if(!$behind)return implode("\n",array_merge($lines,['Вы на графике к концу сегодняшнего дня. Долга по первому чтению нет.','Продолжайте по плану недели; повторные круги не создают нового долга.']));
     $lines[]='До ориентира на сегодня: '.$behind.' глав.';
-    if($pace===null){
-        $lines[]='';$lines[]='Выберите посильный темп — покажу, что читать сегодня и к какой дате догоните.';
-        foreach(telegramCatchupPaces($calendar,$weeks) as $suggested){$r=telegramCatchupForecast($weeks,$today,$suggested);$lines[]='• '.$suggested.' глав/день → '.($r?(new DateTimeImmutable($r['date']))->format('d.m.Y').($r['date']>$calendar['end']?' · после конца марафона':''):'не догоните за год');}
-        $lines[]='';$lines[]='Для своего темпа напишите, например: темп 6';
-    }else{
-        if($pace<1||$pace>200)return 'Укажите темп от 1 до 200 глав в день: например, темп 6';
-        $r=telegramCatchupForecast($weeks,$today,$pace);$lines[]='Ваш темп: '.$pace.' глав в день.';$lines[]='';
-        $lines[]='📖 Сегодня прочитайте:';
-        foreach(telegramCatchupTodayReading($weeks,$today,$pace) as $range)$lines[]='• '.$range;
-        $lines[]='';
-        if($r){$lines[]='🗓 Догоните '.(new DateTimeImmutable($r['date']))->format('d.m.Y').' — за '.$r['days'].' дн.';$lines[]='За это время: '.$r['chapters'].' глав, включая новый план.';if($r['date']>$calendar['end'])$lines[]='Этот темп приведёт к завершению после конца марафона. Для более ранней даты выберите темп выше.';}
-        else $lines[]='Таким темпом не получится догнать план за ближайший год. Выберите темп выше.';
-    }
+    $default=$pace===null;
+    if($default){$suggested=telegramCatchupPaces($calendar,$weeks);$pace=$suggested[1]??$suggested[0];}
+    if($pace<1||$pace>200)return 'Укажите темп от 1 до 200 глав в день: например, темп 6';
+    $r=telegramCatchupForecast($weeks,$today,$pace);$lines[]='';
+    $lines[]='📖 Что читать сегодня:';
+    foreach(telegramCatchupTodayReading($weeks,$today,$pace) as $range)$lines[]='• '.$range;
+    $lines[]='';$lines[]=($default?'Показан вариант: ':'Ваш темп: ').$pace.' глав в день.';
+    if($r){$lines[]='🗓 Догоните '.(new DateTimeImmutable($r['date']))->format('d.m.Y').' — за '.$r['days'].' дн.';$lines[]='До этой даты: '.$r['chapters'].' глав с учётом нового плана.';if($r['date']>$calendar['end'])$lines[]='Этот темп приведёт к завершению после конца марафона. Для более ранней даты выберите темп выше.';}
+    else $lines[]='Таким темпом не получится догнать план за ближайший год. Выберите темп выше.';
+    $lines[]='Объём можно поменять кнопками ниже или написать: темп 6';
     $lines[]='';$lines[]='Считаем с сегодняшнего дня, по графику на 7 дней и с учётом новых недель. Последний день может быть короче. Длина глав разная; темп выбираете вы.';
     $lines[]='Если уже читали эти главы — сначала отметьте их, затем пересчитайте.';
     return implode("\n",$lines);
