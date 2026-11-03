@@ -12,6 +12,8 @@ function telegramReaderHeader(array $reader,array $c): string {return $reader['n
 function telegramMenu(string $text,bool $callback,?array $reader,string $telegramId,callable $reply): bool {
     $actions=['🧭 Как догнать?'=>'catchup','Как догнать?'=>'catchup','📖 Отметить чтение'=>'read','📊 Мой прогресс'=>'progress','📚 План недели'=>'plan','🗓 Мои недели'=>'weeks','🔁 Круги чтения'=>'rounds','🌐 Открыть сайт'=>'site','📱 Марафон'=>'site','/app'=>'site','❓ Помощь'=>'help','Отмена'=>'cancel','🏠 Меню'=>'home','/start'=>'home','/menu'=>'home','/help'=>'help','/cancel'=>'cancel'];
     $action=$callback&&str_starts_with($text,'menu:')?substr($text,5):($actions[preg_replace('~^(/(?:start|menu|help|cancel|app))@\w+$~i','$1',trim($text))]??null);
+    $catchupPace=($callback&&preg_match('/^catchup:pace:([0-9]{1,3})$/D',$text,$paceMatch))||(!$callback&&preg_match('/^(?:темп|\/pace(?:@\w+)?)\s+([0-9]{1,3})$/iu',trim($text),$paceMatch));
+    if($catchupPace)$action='catchup';
     if($action==='site'){$base=rtrim(getenv('APP_URL')?:'','/');$reply($base?'Планы, исправление глав и подробная история доступны на сайте.':'Администратор ещё не указал адрес сайта.',telegramAppButtons());return true;}
     if($action==='help'){$reply("❓ Как отмечать чтение\n1. Нажмите «📖 Отметить чтение».\n2. Введите число новых глав или выберите кнопку.\n3. Проверьте распределение и подтвердите.\n\nСначала закрываются самые ранние непрочитанные недели, затем текущая. Исправить главы можно на сайте.\n\n🔁 Круг — повтор того же недельного плана. Завершите план и начните следующий круг: книги и сроки недели остаются прежними, результаты каждого прохода сохраняются. Прогресс показывает текущий круг текущей недели.");return true;}
     $repeatCallback=$callback&&($text==='repeat:new'||preg_match('/^w_([yn])_([a-f0-9]{32})$/',$text,$match));
@@ -19,7 +21,11 @@ function telegramMenu(string $text,bool $callback,?array $reader,string $telegra
     if($action===null&&!$repeatCallback)return false;
     if(!$reader){$reply('Сначала получите персональное приглашение и привяжите Telegram. После этого кнопки откроют ваш план и прогресс.');return true;}
     $id=$reader['id'];$c=calendar($id);$s=stats($id);$w=$s['pace'];$header=telegramReaderHeader($reader,$c);
-    if($action==='catchup'){$reply(telegramCatchupText($c,$s['reports']),[[['text'=>'📖 Отметить чтение','callback_data'=>'menu:read'],['text'=>'📚 План недели','callback_data'=>'menu:plan']]]);return true;}
+    if($action==='catchup_custom'){$reply('Напишите удобное количество глав в день, например: темп 6. Бот покажет книги и главы на сегодня и дату, когда догоните. Отметки чтения эта команда не меняет.');return true;}
+    if($action==='catchup'){
+        $buttons=[];foreach(telegramCatchupPaces($c,$s['reports']) as $pace)$buttons[]=['text'=>$pace.' глав/день','callback_data'=>'catchup:pace:'.$pace];
+        $reply(telegramCatchupText($c,$s['reports'],$catchupPace?(int)$paceMatch[1]:null),[$buttons,[['text'=>'Свой темп','callback_data'=>'menu:catchup_custom']],[['text'=>'📖 Отметить чтение','callback_data'=>'menu:read'],['text'=>'📚 План недели','callback_data'=>'menu:plan']]]);return true;
+    }
     if($repeatCallback){
         if(!$w){$reply('Новый круг доступен только в текущей неделе марафона.');return true;}
         $binding=$reader['session_epoch'].':'.$w['week'].':'.$w['cycle'].':'.$c['today'];

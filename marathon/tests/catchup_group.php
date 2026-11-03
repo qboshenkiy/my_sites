@@ -20,6 +20,7 @@ check(bot('/reading_here',300,'supergroup',-902)===[],'Moderator cannot bind a g
 check(str_contains(bot('📣 Отправить в группу',300,'private',300)[0]['args']['text'],'только администратор'),'Moderator cannot send notifications');
 check(!str_contains(json_encode(telegramReplyKeyboard(false),JSON_UNESCAPED_UNICODE),'Отправить в группу'),'Non-admin keyboard hides send button');
 $blocked=[];telegramGroupMenu('📣 Отправить в группу',false,array_merge($admin,['active'=>0]),function($text)use(&$blocked){$blocked[]=$text;});check(str_contains($blocked[0],'только администратор'),'Disabled admin cannot create preview');
+$before=(int)sql('SELECT count(*) FROM reading_entries')->fetchColumn();check(str_contains(json_encode(bot('темп 6',200,'private',200),JSON_UNESCAPED_UNICODE),'Ваш темп: 6'),'Personal pace command reaches forecast');check((int)sql('SELECT count(*) FROM reading_entries')->fetchColumn()===$before,'Forecast does not mark reading');
 $reply=bot('📣 Отправить в группу');$last=$reply[count($reply)-1];$action=$last['args']['reply_markup']['inline_keyboard'][0][0]['callback_data'];
 check(str_contains(json_encode(bot($action,300,'private',300,true),JSON_UNESCAPED_UNICODE),'только администратор'),'Moderator cannot forge a send callback');
 check(str_starts_with($action,'group:send:'),'Preview confirmation');$delivered=[];$send=function($args)use(&$delivered){$delivered[]=$args;};
