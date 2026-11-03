@@ -9,10 +9,10 @@ import json
 
 class GateTests(unittest.TestCase):
  def setUp(self):
-  self.now=100.;self.bans=[];self.g=request_gate.Gate(self.bans.append,clock=lambda:self.now)
+  self.now=100.;self.bans=[];self.g=request_gate.Gate(lambda ip,duration,reason:self.bans.append((ip,duration,reason)),clock=lambda:self.now)
  def test_31st_request_bans_for_exactly_five_minutes(self):
   for _ in range(30):self.assertEqual(self.g.check('8.8.8.8'),(204,0))
-  self.assertEqual(self.g.check('8.8.8.8'),(429,300));self.assertEqual(self.bans,['8.8.8.8'])
+  self.assertEqual(self.g.check('8.8.8.8'),(429,300));self.assertEqual(self.bans,[('8.8.8.8',300,'rate_limit')])
   self.now+=299;self.assertEqual(self.g.check('8.8.8.8'),(429,1))
   self.now+=1;self.assertEqual(self.g.check('8.8.8.8'),(204,0));self.assertEqual(len(self.bans),1)
  def test_sliding_window_and_independent_ips(self):
@@ -23,11 +23,20 @@ class GateTests(unittest.TestCase):
   self.g.protected=lambda:{'8.8.8.8'}
   for _ in range(30):self.g.check('8.8.8.8')
   self.assertEqual(self.g.check('8.8.8.8')[0],429);self.assertFalse(self.bans)
- def test_scanner_banned_and_local_health_checks_exempt(self):
-  for path in ('/.env','/.env.local','/.git/config','/.env.test'):
-   self.assertEqual(self.g.check('8.8.8.8',path)[0],204)
-  self.assertEqual(self.g.check('8.8.8.8','/.env.production'),(429,300))
+ def test_first_secret_probe_permanently_banned_and_unblock_works(self):
+  self.assertEqual(self.g.check('8.8.8.8','/.env'),(403,0))
+  self.assertEqual(self.bans,[('8.8.8.8',0,'secret_probe')])
+  self.g.clear_block('8.8.8.8')
+  self.assertEqual(self.g.check('8.8.8.8','/'),(204,0))
   for _ in range(100):self.assertEqual(self.g.check('127.0.0.1'),(204,0))
+ def test_high_confidence_paths_encoding_and_ordinary_requests(self):
+  for path in ['/a/.git/config','/%252eenv','/.config/gcloud/application_default_credentials.json','/.docker/config.json','/a/../../etc/passwd','/vendor/phpunit/phpunit/src/Util/PHP/eval-stdin.php','/wp-login.php']:
+   self.assertIsNotNone(request_gate.classify(path),path)
+  for path in ['/api/results','/missing-page','/books/.environment','/?search=/.env','/api/export?name=.env','/app.js']:
+   self.assertIsNone(request_gate.classify(path),path)
+ def test_protected_admin_secret_request_denied_without_ban(self):
+  self.g.protected=lambda:{'8.8.8.8'}
+  self.assertEqual(self.g.check('8.8.8.8','/.git/config'),(403,0));self.assertFalse(self.bans)
  def test_bounded_memory_and_ipv6(self):
   with patch.object(request_gate,'MAX_IPS',2):
    for ip in ('1.1.1.1','8.8.8.8','2001:4860:4860::8888'):self.g.check(ip)

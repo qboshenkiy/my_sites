@@ -20,10 +20,10 @@ class FakeNft:
     def __call__(self,args,script=None):
         if args[0]=='-j':
             if not self.exists:raise ValueError('not found')
-            return json.dumps({'nftables':[{'set':{'name':'deny4','elem':[{'elem':{'val':ip}} for ip in self.ips if ':' not in ip]}},{'set':{'name':'deny6','elem':[{'elem':{'val':ip}} for ip in self.ips if ':' in ip]}}]})
+            return json.dumps({'nftables':[{'set':{'name':'deny4','elem':[{'elem':{'val':ip}} for ip in self.ips if ':' not in ip]}},{'set':{'name':'deny6','elem':[{'elem':{'val':ip}} for ip in self.ips if ':' in ip]}},{'set':{'name':'permanent4','elem':[]}},{'set':{'name':'permanent6','elem':[]}}]})
         self.scripts.append(script)
         if self.fail:self.fail=False;raise ValueError('nft failed')
-        self.exists=True;self.ips=set(re.findall(r'([0-9a-fA-F:.]+) timeout [0-9]+s',script));return ''
+        self.exists=True;self.ips=set(re.findall(r'(?:[0-9]{1,3}\.){3}[0-9]{1,3}|[0-9a-fA-F]*:[0-9a-fA-F:]+',script));return ''
 
 
 class FirewallTests(unittest.TestCase):
@@ -51,10 +51,22 @@ class FirewallTests(unittest.TestCase):
         self.c.change('block','::ffff:1.1.1.1','9.9.9.9',900)
         expiry=self.c.entries['1.1.1.1']['expires']
         with patch.object(fw.time,'time',return_value=expiry+1):self.assertEqual(self.c.status()['blocked'],[])
+    def test_permanent_ban_survives_restart_and_cannot_be_shortened(self):
+        self.c.change('block','1.1.1.1','9.9.9.9',0,'secret_probe')
+        self.assertIsNone(self.c.entries['1.1.1.1']['expires'])
+        restored=fw.Controller(self.c.state,self.c.config,self.nft)
+        with patch.object(fw.time,'time',return_value=time.time()+365*86400):
+            self.assertIn('1.1.1.1',restored.active())
+        with self.assertRaises(ValueError):restored.change('block','1.1.1.1','9.9.9.9',300)
+        rules=fw.rules(restored.active(),time.time())
+        self.assertIn('ip saddr @permanent4 counter drop',rules)
+        self.assertIn('elements = { 1.1.1.1 }',rules)
+        restored.change('unblock','1.1.1.1','9.9.9.9')
+        self.assertNotIn('1.1.1.1',restored.active())
     def test_proxy_imports_preserve_routes_idempotently(self):
         source='{$DOMAIN} {\n reverse_proxy marathon:80\n}\nfinance.example.com {\n reverse_proxy finance:8160\n}\n'
         updated,count=proxy_protection.install_imports(source)
-        self.assertEqual(count,2);self.assertIn('reverse_proxy finance:8160',updated);self.assertEqual(updated.count('/data/guard-sensitive.caddy'),2)
+        self.assertEqual(count,3);self.assertIn('reverse_proxy finance:8160',updated);self.assertEqual(updated.count('/data/guard-sensitive.caddy'),3)
         self.assertEqual(proxy_protection.install_imports(updated)[0],updated)
 
 

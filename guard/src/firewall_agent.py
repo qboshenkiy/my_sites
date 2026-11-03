@@ -13,7 +13,8 @@ import threading
 import time
 
 TABLE='guard_protection'
-DURATIONS=(300,900,3600,86400)
+DURATIONS=(0,300,900,3600,86400)
+SETS=("deny4","deny6","permanent4","permanent6")
 
 
 def canonical(value):
@@ -36,16 +37,17 @@ def atomic_json(path,data):
 def rules(active,now,replace=False):
     lines=[f'delete table inet {TABLE}'] if replace else []
     lines += [f'table inet {TABLE} {{',' comment "Guard managed IP protection"']
-    for version,name in [(4,'deny4'),(6,'deny6')]:
+    for version,name,permanent in [(4,'deny4',False),(6,'deny6',False),(4,'permanent4',True),(6,'permanent6',True)]:
         elements=[]
         for ip,row in active.items():
-            if ipaddress.ip_address(ip).version==version:
-                remaining=max(1,math.ceil(row['expires']-now));elements.append(ip+' timeout '+str(remaining)+'s')
-        lines += [f' set {name} {{',f'  type ipv{version}_addr','  flags timeout','  timeout 24h']
+            if ipaddress.ip_address(ip).version==version and (row['expires'] is None)==permanent:
+                elements.append(ip if permanent else ip+' timeout '+str(max(1,math.ceil(row['expires']-now)))+'s')
+        lines += [f' set {name} {{',f'  type ipv{version}_addr']
+        if not permanent:lines += ['  flags timeout','  timeout 24h']
         if elements:lines.append('  elements = { '+', '.join(elements)+' }')
         lines.append(' }')
     for chain in ('input','forward'):
-        lines += [f' chain {chain} {{',f'  type filter hook {chain} priority -200; policy accept;', '  ip saddr @deny4 counter drop','  ip6 saddr @deny6 counter drop',' }']
+        lines += [f' chain {chain} {{',f'  type filter hook {chain} priority -200; policy accept;', '  ip saddr @permanent4 counter drop','  ip6 saddr @permanent6 counter drop','  ip saddr @deny4 counter drop','  ip6 saddr @deny6 counter drop',' }']
     lines.append('}')
     return '\n'.join(lines)+'\n'
 
@@ -74,7 +76,7 @@ class Controller:
             ip=canonical(raw)
             if ip in protected:continue
             if not ipaddress.ip_address(ip).is_global:continue
-            if row.get('expires',0)>now:result[ip]=row
+            if row.get('expires',0) is None or row.get('expires',0)>now:result[ip]=row
         return result
     def table(self):
         try:return json.loads(self.runner(['-j','list','table','inet',TABLE]))
@@ -90,21 +92,24 @@ class Controller:
                 elif 'val' in value:extract(value['val'])
         for row in (data or {}).get('nftables',[]):
             item=row.get('set',{})
-            if item.get('name') in ('deny4','deny6'):
+            if item.get('name') in SETS:
                 for value in item.get('elem',[]):extract(value)
             item=row.get('element',{})
-            if item.get('name') in ('deny4','deny6'):
+            if item.get('name') in SETS:
                 for value in item.get('elem',[]):extract(value)
         return result
     def apply(self,active,reset=False):
         current=self.table()
-        if reset or current is None:
+        existing={r.get('set',{}).get('name') for r in (current or {}).get('nftables',[])}
+        if reset or current is None or not set(SETS)<=existing:
             self.runner(['-f','-'],rules(active,time.time(),replace=current is not None));return
-        lines=[f'flush set inet {TABLE} deny4',f'flush set inet {TABLE} deny6']
+        lines=[f'flush set inet {TABLE} {name}' for name in SETS]
         now=time.time()
         for ip,row in active.items():
-            name='deny4' if ipaddress.ip_address(ip).version==4 else 'deny6'
-            lines.append(f'add element inet {TABLE} {name} {{ {ip} timeout {max(1,math.ceil(row["expires"]-now))}s }}')
+            permanent=row['expires'] is None
+            name=('permanent' if permanent else 'deny')+str(ipaddress.ip_address(ip).version)
+            element=ip if permanent else ip+' timeout '+str(max(1,math.ceil(row['expires']-now)))+'s'
+            lines.append(f'add element inet {TABLE} {name} {{ {element} }}')
         self.runner(['-f','-'],'\n'.join(lines)+'\n')
     def status(self):
         with self.lock:
@@ -115,24 +120,29 @@ class Controller:
             for item in (data or {}).get('nftables',[]):
                 for expr in item.get('rule',{}).get('expr',[]):
                     counter=expr.get('counter',{});packets+=counter.get('packets',0);bytes_+=counter.get('bytes',0)
-            return {'ready':data is not None,'scope':'all_ports','blocked':[dict(ip=ip,**row) for ip,row in active.items()],'protected_ips':sorted(self.protected()),'dropped_packets':packets,'dropped_bytes':bytes_}
-    def change(self,action,raw,requester,duration=3600):
+            try:country=json.loads(Path('/var/lib/guard-firewall/ssh-country.json').read_text());country.pop('resources',None)
+            except (OSError,ValueError):country={'enabled':False}
+            return {'ssh_country':country,'ready':data is not None,'scope':'all_ports','blocked':[dict(ip=ip,**row) for ip,row in active.items()],'protected_ips':sorted(self.protected()),'dropped_packets':packets,'dropped_bytes':bytes_}
+    def change(self,action,raw,requester,duration=3600,reason='manual'):
         ip=canonical(raw);requester=canonical(requester)
+        if reason not in ('manual','secret_probe','rate_limit','exploit_probe','history_probe'):raise ValueError('Неизвестная причина блокировки')
         if action not in ('block','unblock'):raise ValueError('Неизвестное действие')
         with self.lock:
             if action=='block':
                 if not ipaddress.ip_address(ip).is_global:raise ValueError('Внутренние, служебные и локальные адреса блокировать нельзя')
                 if ip in self.protected() or ip==requester:raise ValueError('Этот адрес защищён: текущий администратор или сам сервер')
-                if isinstance(duration,bool) or not isinstance(duration,int) or duration not in DURATIONS:raise ValueError('Выберите 5 или 15 минут, 1 час или 24 часа')
+                if isinstance(duration,bool) or not isinstance(duration,int) or duration not in DURATIONS:raise ValueError('Выберите Бессрочно, 5 или 15 минут, 1 час или 24 часа')
             old=copy.deepcopy(self.entries);updated=self.active()
             if action=='block':
-                if ip not in updated and len(updated)>=256:raise ValueError('Достигнут предел 256 активных блокировок')
-                updated[ip]={'created':time.time(),'expires':time.time()+duration}
+                if ip not in updated and len(updated)>=4096:raise ValueError('Достигнут предел 4096 активных блокировок')
+                existing=updated.get(ip,{})
+                if existing.get('expires','absent') is None and duration:raise ValueError('Сначала снимите бессрочную блокировку')
+                updated[ip]={'created':existing.get('created',time.time()),'expires':None if duration==0 else time.time()+duration,'reason':reason}
             else:updated.pop(ip,None)
             try:
                 self.apply(updated);atomic_json(self.state,updated);self.entries=updated
             except Exception:
-                try:self.apply({k:v for k,v in old.items() if v.get('expires',0)>time.time()})
+                try:self.apply({k:v for k,v in old.items() if v.get('expires',0) is None or v.get('expires',0)>time.time()})
                 except Exception:pass
                 raise
             return self.status()
@@ -148,7 +158,7 @@ class Handler(socketserver.StreamRequestHandler):
             if not isinstance(data,dict):raise ValueError('Некорректный запрос')
             action=data.get('action')
             if action=='status':result=self.server.controller.status()
-            elif action in ('block','unblock'):result=self.server.controller.change(action,data.get('ip'),data.get('requester'),data.get('duration',3600))
+            elif action in ('block','unblock'):result=self.server.controller.change(action,data.get('ip'),data.get('requester'),data.get('duration',3600),data.get('reason','manual'))
             else:raise ValueError('Неизвестное действие')
             response={'ok':True,'result':result}
         except (ValueError,TypeError):response={'ok':False,'error':'Неверный адрес, защищённый IP, срок или параметры блокировки'}

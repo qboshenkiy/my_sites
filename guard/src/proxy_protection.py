@@ -35,6 +35,9 @@ def install_imports(source):
                 if not any('/data/guard-sensitive.caddy' in item and item.lstrip().startswith('import ') for item in block):block.insert(1,IMPORT)
                 if not any(item.lstrip().startswith('log ') or item.strip()=='log' for item in block):block.insert(2,'    log {\n        output stdout\n        format json\n    }')
             result.extend(block);block=[]
+    if '# Guard HTTP gateway BEGIN' not in source:
+        count+=1
+        result += ['# Guard HTTP gateway BEGIN',':80 {',IMPORT,'    log {','        output stdout','        format json','    }','    redir https://{host}{uri} 308','}','# Guard HTTP gateway END']
     if depth or block:raise ValueError('Не удалось безопасно разобрать Caddyfile')
     if not count:raise ValueError('В прокси не найдены сайты')
     return '\n'.join(result).rstrip()+'\n',count
