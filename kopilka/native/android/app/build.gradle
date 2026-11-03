@@ -7,3 +7,5 @@ android {
     buildTypes { release { minifyEnabled false } }
     lint { abortOnError true }
 }
+
+dependencies { implementation 'androidx.activity:activity:1.13.0' }
