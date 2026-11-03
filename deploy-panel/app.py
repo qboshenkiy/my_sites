@@ -24,7 +24,7 @@ import threading
 import time
 import urllib.parse
 
-VERSION = '1.8.0'
+VERSION = '1.9.0'
 LAYOUT = {
     'remote': ['server', 'ops', '.dockerignore'],
     'drawing': ['index.php', 'api.php', 'manifest.webmanifest', 'service-worker.js', 'lib', 'assets', 'ops', '.dockerignore'],
@@ -103,6 +103,13 @@ def setup_bookvoice(config, p, job, log):
         status_update(config, job, 'success', sha=sha)
     finally:
         payload_file.unlink(missing_ok=True)
+
+
+def validate_service_control(project, command, service):
+    if project['kind']=='self' or command not in ('start','stop','restart'):
+        raise ValueError('Разрешено запускать, останавливать и перезапускать сервисы сайтов')
+    if not isinstance(service,str) or service not in project_services(project):
+        raise ValueError('Выберите сервис подключённого проекта')
 
 
 def valid_ref(ref):
@@ -1110,7 +1117,14 @@ def work(config, job):
             p['_target_ref'] = row['target_ref']
         with (jobdir / 'output.log').open('a', encoding='utf-8') as log:
             try:
-                if row['action'] == 'setup_bookvoice':
+                if row['action'] == 'service_control':
+                    payload=json.loads((jobdir/'environment.json').read_text())
+                    command=payload.get('command');service=payload.get('service')
+                    validate_service_control(p, command, service)
+                    status_update(config,job,'installing')
+                    compose(p,[command,service],log)
+                    status_update(config,job,'success')
+                elif row['action'] == 'setup_bookvoice':
                     setup_bookvoice(config, p, job, log)
                 elif row['action'] == 'configure':
                     apply_environment(config, p, job, log)
@@ -1661,6 +1675,15 @@ class Panel(http.server.BaseHTTPRequestHandler):
                     return self.send(202, {'job': enqueue(self.server, p, 'setup_bookvoice', payload={'password': password})})
                 except (StopIteration, ValueError, OSError, RuntimeError) as error:
                     return self.send(400, {'error': str(error) or 'Карточка «Голос книги» не найдена'})
+        if self.path == '/api/service-control':
+            if self.server.demo:return self.send(403,{'error':'В предпросмотре управление отключено'})
+            with self.mutex:
+                try:
+                    p=next(p for p in self.server.config['projects'] if p['id']==data.get('project'))
+                    validate_service_control(p,data.get('command'),data.get('service'))
+                    return self.send(202,{'job':enqueue(self.server,p,'service_control',payload={'command':data['command'],'service':data['service']})})
+                except (StopIteration,ValueError,OSError,RuntimeError) as error:
+                    return self.send(400,{'error':str(error) or 'Проект не найден'})
         if self.path == '/api/update':
             if self.server.demo:
                 return self.send(403, {'error': 'Предпросмотр: команды на сервере отключены'})
