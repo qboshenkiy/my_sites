@@ -2,6 +2,7 @@
 declare(strict_types=1);
 if(PHP_SAPI!=='cli'){http_response_code(404);exit;}
 ini_set('display_errors','0');
+require_once __DIR__.'/bot-guard.php';
 function fail(string $message,int $status=400): never {throw new RuntimeException($message,$status);}
 function query(string $sql,array $args=[]): PDOStatement {global $db;$s=$db->prepare($sql);$s->execute($args);return $s;}
 class PulseBotApiException extends RuntimeException {public function __construct(public string $telegramDescription){parent::__construct('Telegram не принял запрос. Проверьте права бота и настройки.');}}
@@ -12,6 +13,7 @@ function pulseBotCall(string $method,array $args=[]): mixed {
     $raw=@file_get_contents('https://api.telegram.org/bot'.$token.'/'.$method,false,$context,0,2000000);$data=$raw!==false?json_decode($raw,true):null;
     if(!$data)throw new RuntimeException('Нет подтверждения от Telegram. Проверьте подключение.');
     if(empty($data['ok']))throw new PulseBotApiException((string)($data['description']??''));
+    guardOutgoing($method,$args);
     return $data['result'];
 }
 function pulseBotIdentity(): array {
@@ -41,7 +43,9 @@ try{
             }
             formsBotTick();pulseGameBotTick();
             foreach(pulseBotCall('getUpdates',['offset'=>$offset,'timeout'=>5,'allowed_updates'=>['message','callback_query','poll_answer']]) as $update){
+                if(guardIncoming($update)){
                 if(!pulseGameBotUpdate($update,$botId)&&!formsBotUpdate($update,$botId))foreach(pulseTelegramUpdate($update,$botId) as $action)pulseBotCall($action['method'],$action['args']);
+                }
                 $offset=(int)$update['update_id']+1;query('INSERT OR REPLACE INTO settings VALUES (?,?)',['telegram_offset_'.$botId,(string)$offset]);
             }
             formsBotTick();pulseGameBotTick();

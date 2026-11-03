@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/core.php';
+require_once __DIR__.'/bot-guard.php';
 require_once __DIR__.'/bot-menu.php';
 require_once __DIR__.'/bot-admin.php';
 require_once __DIR__.'/bot-audit.php';
@@ -11,6 +12,7 @@ require_once __DIR__.'/bot-group.php';
 function telegramUpdate(array $update): array {
     $updateId=$update['update_id']??null;
     if(!is_int($updateId))return [];
+    if(!guardIncoming($update))return [];
     $GLOBALS['audit_transport']=['source'=>'telegram','request_id'=>bin2hex(random_bytes(8))];
     $out=[];db()->exec('BEGIN IMMEDIATE');
     try {
@@ -102,5 +104,6 @@ function telegramCall(string $method,array $args): array {
     $raw=curl_exec($curl);$code=curl_getinfo($curl,CURLINFO_RESPONSE_CODE);curl_close($curl);
     $result=is_string($raw)?json_decode($raw,true):null;
     if($code!==200||!is_array($result)||!($result['ok']??false))throw new RuntimeException('Telegram request failed (HTTP '.$code.').');
+    guardOutgoing($method,$args);
     return $result;
 }

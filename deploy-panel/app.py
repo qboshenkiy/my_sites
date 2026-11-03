@@ -51,6 +51,41 @@ BOOKVOICE = {
     'paths': ['src', 'web', 'requirements.txt'], 'wait_health': True, 'ssh_key': ''}
 
 
+GUARD = {
+    'id': 'guard', 'name': 'Guard · защита и боты', 'kind': 'docker',
+    'repo': 'https://github.com/qboshenkiy/my_sites.git', 'branch': 'main',
+    'subdir': 'guard', 'directory': '/opt/guard', 'compose': 'compose.yaml',
+    'profiles': [], 'services': ['web'], 'main_service': 'web',
+    'paths': ['src', 'web'], 'wait_health': True, 'ssh_key': ''}
+
+
+def register_guard(server):
+    if any(p['id'] == 'guard' for p in server.config['projects']):
+        return
+    project = project_from_form(dict(GUARD), None, server.config)
+    save_config(server, [*server.config['projects'], project], config_revision(server.config))
+
+
+def setup_guard(config, p, job, log):
+    if any(p.get(k) != GUARD[k] for k in ('id', 'kind', 'repo', 'subdir', 'directory', 'compose')):
+        raise ValueError('Настройка доступна только для стандартного Guard')
+    source_project = dict(GUARD, paths=[*GUARD['paths'], 'Dockerfile', 'compose.yaml', '.dockerignore'])
+    source = Path(config['state_dir']) / 'jobs' / job / 'setup-source'
+    sha = checkout(source_project, config, source, log)
+    dest = Path(p['directory']);dest.mkdir(parents=True, exist_ok=True)
+    for name in source_project['paths']:
+        target = validate_destination(dest, name)
+        if target.exists():
+            continue
+        if (source / name).is_dir():
+            shutil.copytree(source / name, target)
+        else:
+            shutil.copy2(source / name, target)
+    status_update(config, job, 'installing', sha=sha)
+    run([sys.executable, str(dest / 'src/setup.py')], log, timeout=600)
+    status_update(config, job, 'success', sha=sha)
+
+
 def register_bookvoice(server):
     # Updating GitDeck adds a discoverable card, without provisioning or touching data.
     if any(p['id'] == 'bookvoice' for p in server.config['projects']):
@@ -337,6 +372,8 @@ def compose_command(p):
         command += ['-f', 'compose.gitdeck-https.yaml']
     if (Path(p['directory']) / 'compose.gitdeck-community.yaml').is_file():
         command += ['-f', 'compose.gitdeck-community.yaml']
+    if (Path(p['directory']) / 'compose.gitdeck-guard.yaml').is_file():
+        command += ['-f', 'compose.gitdeck-guard.yaml']
     if (Path(p['directory']) / 'compose.gitdeck-telegram.yaml').is_file():
         command += ['-f', 'compose.gitdeck-telegram.yaml']
     for profile in p.get('profiles', []):
@@ -1182,6 +1219,8 @@ def work(config, job):
                     status_update(config,job,'installing')
                     compose(p,[command,service],log)
                     status_update(config,job,'success')
+                elif row['action'] == 'setup_guard':
+                    setup_guard(config, p, job, log)
                 elif row['action'] == 'setup_bookvoice':
                     setup_bookvoice(config, p, job, log)
                 elif row['action'] == 'configure':
@@ -1727,6 +1766,14 @@ class Panel(http.server.BaseHTTPRequestHandler):
                     return self.send(202,{'job':enqueue(self.server,p,'pulse_bot')})
                 except (StopIteration,ValueError,OSError,RuntimeError) as error:
                     return self.send(400,{'error':str(error) or 'Выберите Пульс'})
+        if self.path == '/api/guard/setup':
+            if self.server.demo:return self.send(403, {'error': 'В предпросмотре установка отключена'})
+            with self.mutex:
+                try:
+                    p = next(p for p in self.server.config['projects'] if p['id'] == 'guard')
+                    return self.send(202, {'job': enqueue(self.server, p, 'setup_guard')})
+                except (StopIteration, ValueError, OSError, RuntimeError) as error:
+                    return self.send(400, {'error': str(error) or 'Карточка Guard не найдена'})
         if self.path == '/api/bookvoice/setup':
             if self.server.demo:
                 return self.send(403, {'error': 'В предпросмотре установка отключена'})
@@ -1792,6 +1839,7 @@ def serve(config, config_path, demo=False):
     if not demo:
         try:
             register_bookvoice(server)
+            register_guard(server)
         except (ValueError, OSError) as error:
             print('Не удалось добавить карточку «Голос книги»: ' + str(error), file=sys.stderr, flush=True)
     config = server.config

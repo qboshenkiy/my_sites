@@ -19,6 +19,7 @@ import urllib.request
 from zoneinfo import ZoneInfo
 
 from core import Store, Invalid
+import bot_guard
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -60,6 +61,7 @@ def telegram(token, method, args=None):
         raise TelegramError() from None
     if not result.get('ok'):
         raise TelegramError(result.get('error_code',0))
+    bot_guard.outgoing(method,args or {})
     return result['result']
 
 
@@ -84,6 +86,8 @@ class Application:
             self.store.put(db, 'worker_error', '')
 
     def handle_update(self, token, update):
+        if not bot_guard.incoming(update):
+            return
         message = update.get('message', {})
         chat, sender = message.get('chat', {}), message.get('from', {})
         if chat.get('type') != 'private' or chat.get('id') != sender.get('id') or sender.get('is_bot'):
