@@ -28,14 +28,18 @@ def handle(update):
         elif text.startswith(('/expense ','/income ')):
             parts=text.split(maxsplit=2);kind='expense' if parts[0]=='/expense' else 'income'
             try:
-                operation(db,{'kind':kind,'amount':parts[1],'category':'Другое' if kind=='expense' else 'Доход','note':parts[2] if len(parts)>2 else ''},'telegram',str(uid));reply='Операция сохранена. Она уже доступна в приложении.'
+                wid=1;note=parts[2] if len(parts)>2 else ''
+                if note.startswith('@'):
+                    selected,*rest=note.split(maxsplit=1);wid=selected[1:];note=rest[0] if rest else ''
+                operation(db,{'kind':kind,'amount':parts[1],'category':'Другое' if kind=='expense' else 'Доход','note':note,'wallet_id':wid},'telegram',str(uid));reply='Операция сохранена. Она уже доступна в приложении.'
             except ValueError as e:reply=str(e)
-        elif text in ('/balance','/goals','/tips'):
+        elif text in ('/balance','/goals','/tips','/wallets'):
             result=overview(db,date.today().strftime('%Y-%m'));currency=result['settings'].get('currency','KGS')
             if text=='/balance':reply=f'Баланс: {result["balance"]/100:,.2f} {currency}\nДоходы месяца: {result["income"]/100:,.2f}\nРасходы месяца: {result["expense"]/100:,.2f}'
+            elif text=='/wallets':reply='\n'.join(f'@{w["id"]} · {w["name"]}: {w["balance"]/100:,.2f} {currency}' for w in result['wallets'])+'\n\nПример: /expense 250 @1 Продукты. Без @номера используется основной кошелёк.'
             elif text=='/tips':reply='\n\n'.join(result['tips']) or 'Добавьте операции для анализа.'
             else:reply='\n'.join(f'{g["name"]}: {g["saved"]/100:,.2f} / {g["target"]/100:,.2f} {currency}' for g in result['goals']) or 'Пока нет целей. Создайте их в приложении.'
-        else:reply='/expense 250 Продукты — расход\n/income 50000 Зарплата — доход\n/balance — баланс\n/goals — цели\n/tips — рекомендации\nhttps://finance.vano.sbena.net'
+        else:reply='/expense 250 Продукты — расход\n/income 50000 Зарплата — доход\n/balance — баланс\n/goals — цели\n/wallets — кошельки\n/tips — рекомендации\nhttps://finance.vano.sbena.net'
         db.execute('INSERT OR IGNORE INTO bot_updates VALUES(?)',(uid,));db.execute('DELETE FROM bot_updates WHERE id<?',(uid-10000,))
     respond(cid,reply)
 def main():

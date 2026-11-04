@@ -4,13 +4,15 @@ from pathlib import Path
 from contextlib import contextmanager
 from datetime import date
 from flask import Flask,request,jsonify,session,send_from_directory
-from core import CATEGORIES,money,operation,overview
+from core import CATEGORIES,money,operation,overview,transfer,wallet_id
 ROOT=Path(__file__).resolve().parents[1];DATA=Path(os.getenv('DATA_DIR',str(ROOT/'data')));DATA.mkdir(parents=True,exist_ok=True,mode=0o700)
 @contextmanager
 def database():
     db=sqlite3.connect(DATA/'finance.sqlite',timeout=15);db.row_factory=sqlite3.Row
     try:
         db.executescript('''CREATE TABLE IF NOT EXISTS transactions(id INTEGER PRIMARY KEY,kind TEXT,amount INTEGER,category TEXT,day TEXT,note TEXT,source TEXT,external TEXT UNIQUE);
+CREATE TABLE IF NOT EXISTS wallets(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,opening INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS transfers(id INTEGER PRIMARY KEY,from_wallet INTEGER NOT NULL,to_wallet INTEGER NOT NULL,amount INTEGER NOT NULL,day TEXT NOT NULL,note TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS goals(id INTEGER PRIMARY KEY,name TEXT,target INTEGER,saved INTEGER DEFAULT 0,deadline TEXT);
 CREATE TABLE IF NOT EXISTS contributions(id INTEGER PRIMARY KEY,goal INTEGER,amount INTEGER,created REAL);
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);
@@ -19,6 +21,15 @@ CREATE TABLE IF NOT EXISTS links(code TEXT PRIMARY KEY,expires REAL);
 CREATE TABLE IF NOT EXISTS telegram(chat TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS bot_updates(id INTEGER PRIMARY KEY);
 ''')
+        # Both gunicorn workers and the bot may start together. Serialize migration.
+        with db:
+            db.execute('BEGIN IMMEDIATE')
+            db.execute("INSERT OR IGNORE INTO wallets(id,name,opening) VALUES(1,'Основной',0)")
+            if 'wallet_id' not in {r[1] for r in db.execute('PRAGMA table_info(transactions)')}:
+                db.execute('ALTER TABLE transactions ADD COLUMN wallet_id INTEGER NOT NULL DEFAULT 1')
+            db.execute('CREATE INDEX IF NOT EXISTS transactions_wallet ON transactions(wallet_id)')
+            db.execute('CREATE INDEX IF NOT EXISTS transfers_source ON transfers(from_wallet)')
+            db.execute('CREATE INDEX IF NOT EXISTS transfers_target ON transfers(to_wallet)')
         with db:yield db
     finally:db.close()
 secret=DATA/'session-secret'
@@ -84,9 +95,41 @@ def transaction():
     return jsonify(ok=True)
 @app.post('/api/delete')
 def delete():
-    d=request.get_json();table={'transaction':'transactions','goal':'goals'}.get(d.get('type'))
+    d=request.get_json();table={'transaction':'transactions','goal':'goals','transfer':'transfers'}.get(d.get('type'))
     if not table:raise ValueError('Неизвестный тип записи')
     with database() as db:db.execute(f'DELETE FROM {table} WHERE id=?',(int(d['id']),))
+    return jsonify(ok=True)
+@app.post('/api/wallet')
+def save_wallet():
+    d=request.get_json();name=str(d.get('name','')).strip()
+    if not name or len(name)>60:raise ValueError('Название кошелька — от 1 до 60 символов')
+    with database() as db:
+        db.execute('BEGIN IMMEDIATE')
+        wid=wallet_id(db,d['id']) if d.get('id') else None
+        if db.execute('SELECT 1 FROM wallets WHERE lower(name)=lower(?) AND id!=?',(name,wid or 0)).fetchone():raise ValueError('Кошелёк с таким названием уже есть')
+        if wid:
+            db.execute('UPDATE wallets SET name=? WHERE id=?',(name,wid))
+            if 'opening' in d:
+                opening=money(d['opening']) if str(d['opening']) not in ('','0','0.00') else 0
+                db.execute('UPDATE wallets SET opening=? WHERE id=?',(opening,wid))
+        else:
+            opening=money(d['opening']) if str(d.get('opening','0')) not in ('','0','0.00') else 0
+            db.execute('INSERT INTO wallets(name,opening) VALUES(?,?)',(name,opening))
+    return jsonify(ok=True)
+@app.post('/api/wallet/delete')
+def delete_wallet():
+    d=request.get_json()
+    with database() as db:
+        db.execute('BEGIN IMMEDIATE');wid=wallet_id(db,d.get('id'))
+        if wid==1:raise ValueError('Основной кошелёк удалить нельзя')
+        used=db.execute('SELECT 1 FROM transactions WHERE wallet_id=? UNION ALL SELECT 1 FROM transfers WHERE from_wallet=? OR to_wallet=? LIMIT 1',(wid,wid,wid)).fetchone()
+        if used or db.execute('SELECT opening FROM wallets WHERE id=?',(wid,)).fetchone()[0]:raise ValueError('Можно удалить только пустой кошелёк без операций и начального остатка')
+        db.execute('DELETE FROM wallets WHERE id=?',(wid,))
+    return jsonify(ok=True)
+@app.post('/api/transfer')
+def make_transfer():
+    with database() as db:
+        db.execute('BEGIN IMMEDIATE');transfer(db,request.get_json())
     return jsonify(ok=True)
 @app.post('/api/goal')
 def goal():
@@ -113,13 +156,13 @@ def settings():
     budget=money(d['budget']) if str(d.get('budget','0')) not in ('','0') else 0
     with database() as db:
         old=dict(db.execute('SELECT key,value FROM settings'))
-        if old.get('currency','KGS')!=currency and (db.execute('SELECT COUNT(*) FROM transactions').fetchone()[0] or db.execute('SELECT COUNT(*) FROM goals').fetchone()[0]):raise ValueError('Для смены валюты нужны пустая история и отсутствие целей. Конвертация не выполняется.')
+        if old.get('currency','KGS')!=currency and (db.execute('SELECT COUNT(*) FROM transactions').fetchone()[0] or db.execute('SELECT COUNT(*) FROM goals').fetchone()[0] or db.execute('SELECT COUNT(*) FROM transfers').fetchone()[0] or db.execute('SELECT COALESCE(SUM(opening),0) FROM wallets').fetchone()[0]):raise ValueError('Для смены валюты нужны пустая история и отсутствие целей. Конвертация не выполняется.')
         for k,v in [('currency',currency),('budget',str(budget))]:db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',(k,v))
     return jsonify(ok=True)
 @app.get('/api/export')
 def export():
-    with database() as db:result={t:[dict(r) for r in db.execute('SELECT * FROM '+t)] for t in ('transactions','goals','contributions','settings')}
-    r=jsonify(version=1,**result);r.headers['Content-Disposition']='attachment; filename=kopilka-backup.json';return r
+    with database() as db:result={t:[dict(r) for r in db.execute('SELECT * FROM '+t)] for t in ('transactions','goals','contributions','settings','wallets','transfers')}
+    r=jsonify(version=2,**result);r.headers['Content-Disposition']='attachment; filename=kopilka-backup.json';return r
 @app.post('/api/telegram/link')
 def link():
     code=secrets.token_hex(12)
