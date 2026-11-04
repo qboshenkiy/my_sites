@@ -15,11 +15,32 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Toast;
+import android.widget.FrameLayout;
+import android.graphics.Color;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
 public class MainActivity extends ComponentActivity {
  private WebView web;
  private static final String URL="https://finance.vano.sbena.net/";
- @Override public void onCreate(Bundle state){super.onCreate(state);web=new WebView(this);setContentView(web);getOnBackPressedDispatcher().addCallback(this,new OnBackPressedCallback(true){@Override public void handleOnBackPressed(){if(web.canGoBack())web.goBack();else finish();}});
- if(android.os.Build.VERSION.SDK_INT>=30){getWindow().setDecorFitsSystemWindows(false);web.setOnApplyWindowInsetsListener((v,insets)->{android.graphics.Insets area=insets.getInsets(android.view.WindowInsets.Type.systemBars()|android.view.WindowInsets.Type.ime());v.setPadding(area.left,area.top,area.right,area.bottom);return insets;});}
+ @Override public void onCreate(Bundle state){super.onCreate(state);// Resize the WebView itself: padding on WebView does not move fixed CSS menus.
+ WindowCompat.setDecorFitsSystemWindows(getWindow(),false);
+ FrameLayout viewport=new FrameLayout(this);
+ viewport.setId(android.R.id.custom);
+ viewport.setBackgroundColor(Color.rgb(245,246,241));
+ web=new WebView(this);
+ viewport.addView(web,new FrameLayout.LayoutParams(-1,-1));
+ ViewCompat.setOnApplyWindowInsetsListener(viewport,(view,insets)->{
+  int handled=WindowInsetsCompat.Type.systemBars()|WindowInsetsCompat.Type.displayCutout()|WindowInsetsCompat.Type.ime();
+  Insets safe=insets.getInsets(handled);
+  view.setPadding(safe.left,safe.top,safe.right,safe.bottom);
+  // Forward zeroes so WebView clears previous keyboard/safe-area offsets as well.
+  return new WindowInsetsCompat.Builder(insets).setInsets(handled,Insets.NONE).build();
+ });
+ setContentView(viewport);
+ ViewCompat.requestApplyInsets(viewport);
+ getOnBackPressedDispatcher().addCallback(this,new OnBackPressedCallback(true){@Override public void handleOnBackPressed(){if(web.canGoBack())web.goBack();else finish();}});
  WebSettings s=web.getSettings();s.setJavaScriptEnabled(true);s.setDomStorageEnabled(true);s.setAllowFileAccess(false);s.setAllowContentAccess(false);s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);CookieManager.getInstance().setAcceptThirdPartyCookies(web,false);
  web.setWebViewClient(new WebViewClient(){@Override public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){Uri u=r.getUrl();if("https".equals(u.getScheme())&&"finance.vano.sbena.net".equals(u.getHost())&&u.getPort()==-1&&u.getUserInfo()==null)return false;if("https".equals(u.getScheme()))try{startActivity(new Intent(Intent.ACTION_VIEW,u));}catch(ActivityNotFoundException ignored){}return true;}});
  web.setWebChromeClient(new WebChromeClient(){@Override public boolean onJsConfirm(WebView v,String url,String message,android.webkit.JsResult result){new AlertDialog.Builder(MainActivity.this).setMessage(message).setPositiveButton("Да",(d,w)->result.confirm()).setNegativeButton("Отмена",(d,w)->result.cancel()).setOnCancelListener(d->result.cancel()).show();return true;}});
