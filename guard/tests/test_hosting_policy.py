@@ -17,8 +17,9 @@ class HostingTests(unittest.TestCase):
   for ip in ['34.15.127.255','5.59.101.12','34.15.162.37','34.15.162.38','149.154.160.1']:self.assertFalse(self.registry.blocked(ip),ip)
  def test_exception_reload_and_missing_policy(self):
   self.assertTrue(self.registry.blocked('34.15.162.36'))
-  self.exc.write_text(json.dumps({'allowed_ips':['34.15.162.36']}));self.registry.checked=-100
-  self.assertFalse(self.registry.blocked('34.15.162.36'))
+  self.exc.write_text(json.dumps({'allowed_ips':['34.15.162.36']}))
+  with patch.object(hp,'intervals',side_effect=AssertionError('Allowlist update must reuse network index')):
+   self.assertFalse(self.registry.blocked('34.15.162.36'))
   self.assertFalse(hp.Registry(self.state.parent/'missing',self.exc,self.protected).blocked('34.15.162.36'))
  def test_first_hosting_request_is_denied_and_permanently_banned(self):
   jobs=[];gate=Gate(lambda *args:jobs.append(args),provider=self.registry.blocked)

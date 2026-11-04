@@ -60,20 +60,21 @@ class Registry:
         self.paths=(Path(state),Path(exceptions),Path(protected));self.checked=-100;self.stamp=None
         self.enabled=False;self.index={};self.allowed=set();self.allowed_nets=[ipaddress.ip_network(v) for v in TELEGRAM];self.summary={}
     def reload(self):
-        if time.monotonic()-self.checked<2:return
         self.checked=time.monotonic()
         stamp=tuple(p.stat().st_mtime_ns if p.exists() else None for p in self.paths)
         if stamp==self.stamp:return
-        data=read(self.paths[0],{});enabled=data.get('enabled',False)
-        index={}
-        if enabled:
-            for version,key in ((4,'ipv4'),(6,'ipv6')):index[version]=intervals(data['resources'][key])
+        if self.stamp is None or stamp[0]!=self.stamp[0]:
+            data=read(self.paths[0],{});enabled=data.get('enabled',False)
+            index={}
+            if enabled:
+                for version,key in ((4,'ipv4'),(6,'ipv6')):index[version]=intervals(data['resources'][key])
+            summary={k:v for k,v in data.items() if k!='resources'}
+        else:enabled=self.enabled;index=self.index;summary=dict(self.summary)
         exceptions=read(self.paths[1],{}).get('allowed_ips',[])
         protected=read(self.paths[2],{}).get('protected_ips',[])
         allowed={canonical(ip) for ip in exceptions+protected}
         self.index=index;self.enabled=enabled;self.allowed=allowed;self.stamp=stamp
-        self.summary={k:v for k,v in data.items() if k!='resources'}
-        self.summary['allowed_ips']=exceptions
+        self.summary=summary;self.summary['allowed_ips']=exceptions
     def contains(self,raw):
         self.reload()
         if not self.enabled:return False
