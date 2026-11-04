@@ -53,7 +53,8 @@ def rules(data,replace=False):
         if ips:lines.append(' elements = { '+', '.join(ips)+' }')
         lines.append(' }')
     dports='{ '+', '.join(map(str,sorted(set(ports))))+' }'
-    lines += [' chain input {',' type filter hook input priority -190; policy accept;',' iifname "lo" return',f' tcp dport {dports} ip saddr @admin4 return',f' tcp dport {dports} ip6 saddr @admin6 return',f' tcp dport {dports} ip saddr != @kg4 counter drop',f' tcp dport {dports} ip6 saddr != @kg6 counter drop',' }','}']
+    lines += [' chain closed_ssh {',' type filter hook prerouting priority -190; policy accept;',' fib daddr type local tcp dport 22 counter drop',' }']
+    lines += [' chain input {',' type filter hook input priority -190; policy accept;',' tcp dport 22 counter drop',' iifname "lo" return',f' tcp dport {dports} ip saddr @admin4 return',f' tcp dport {dports} ip6 saddr @admin6 return',f' tcp dport {dports} ip saddr != @kg4 counter drop',f' tcp dport {dports} ip6 saddr != @kg6 counter drop',' }','}']
     return '\n'.join(lines)+'\n'
 
 
@@ -73,7 +74,8 @@ def refresh():
     if payload.get('status')!='ok' or payload.get('data_call_name')!='country-resource-list':raise ValueError('Некорректная база страны')
     ns=networks(payload['data']['resources'])
     configured=subprocess.check_output(['/usr/sbin/sshd','-T'],text=True)
-    ports=sorted({22,*[int(line.split()[1]) for line in configured.splitlines() if line.startswith('port ')]})
+    ports=sorted({int(line.split()[1]) for line in configured.splitlines() if line.startswith('port ')}-{22})
+    if not ports:raise ValueError('Сначала настройте и проверьте SSH на порту, отличном от 22')
     data={'enabled':True,'country':'KG','source':URL,'updated_at':time.time(),'resources':ns,'admin_ips':admin_ips(),'ports':ports,'ipv4_prefixes':len(ns['ipv4']),'ipv6_prefixes':len(ns['ipv6'])}
     peer=os.getenv('SSH_CONNECTION','').split()
     if peer:

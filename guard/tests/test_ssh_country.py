@@ -18,3 +18,12 @@ class CountryTests(unittest.TestCase):
   self.assertIn('elements = { 5.59.101.12 }',rules)
   self.assertLess(rules.index('ip saddr @admin4 return'),rules.index('ip saddr != @kg4 counter drop'))
   self.assertLess(rules.index('ip6 saddr @admin6 return'),rules.index('ip6 saddr != @kg6 counter drop'))
+
+ def test_port_22_denied_before_allowlists_and_docker_nat(self):
+  rules=ssh_country.rules({'resources':self.resources(),'ports':[22222],'admin_ips':['5.59.101.12']})
+  self.assertIn('hook prerouting priority -190',rules)
+  self.assertIn('fib daddr type local tcp dport 22 counter drop',rules)
+  chain=rules[rules.index(' chain input {'):]
+  self.assertLess(chain.index('tcp dport 22 counter drop'),chain.index('iifname "lo" return'))
+  self.assertLess(chain.index('tcp dport 22 counter drop'),chain.index('ip saddr @admin4 return'))
+  self.assertNotIn('dport 22222 counter drop',rules)
