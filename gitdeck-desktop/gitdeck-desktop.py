@@ -13,7 +13,7 @@ def terminate(process):
 
 class Window(Gtk.Window):
     def __init__(self):
-        super().__init__(title='GitDeck 1.1.1');self.set_default_size(1160,820)
+        super().__init__(title='GitDeck 1.1.2');self.set_default_size(1160,820)
         self.path=Path.home()/'.config/gitdeck-desktop/settings.json';self.values=load(self.path)
         self.process=None;self.stop_event=threading.Event();self.generation=0
         self.connect('delete-event',self.close)
@@ -31,7 +31,7 @@ class Window(Gtk.Window):
         self.remember=Gtk.CheckButton(label='Запомнить пароль SSH в системной связке ключей');self.remember.set_active(self.values['remember']);form.pack_start(self.remember,False,False,0)
         forget=Gtk.Button(label='Забыть сохранённый пароль');forget.connect('clicked',self.forget);form.pack_start(forget,False,False,0)
         self.connect_button=Gtk.Button(label='Сохранить и подключиться');self.connect_button.connect('clicked',self.begin);form.pack_start(self.connect_button,False,False,0)
-        form.pack_start(Gtk.Label(label='Пароль запрашивается в отдельном окне. Все поля подключения сохраняются.\nЗакрытие приложения отключает SSH-туннель.',xalign=0),False,False,0)
+        form.pack_start(Gtk.Label(label='SSH использует настроенный ключ и при необходимости запрашивает пароль. Все поля сохраняются.\nЗакрытие приложения отключает SSH-туннель.',xalign=0),False,False,0)
         self.stack.add_named(form,'settings')
         data=Path.home()/'.local/share/gitdeck-desktop/web';cache=Path.home()/'.cache/gitdeck-desktop/web';data.mkdir(parents=True,exist_ok=True);cache.mkdir(parents=True,exist_ok=True)
         manager=WebKit2.WebsiteDataManager(base_data_directory=str(data),base_cache_directory=str(cache))
@@ -54,7 +54,7 @@ class Window(Gtk.Window):
             save(self.path,self.values)
         except (ValueError,OSError) as error:self.show_error(str(error));return
         self.stop_event=threading.Event();self.generation+=1;generation=self.generation
-        self.connect_button.set_sensitive(False);self.status.set_text('Подключение… Введите пароль в окне SSH.')
+        self.connect_button.set_sensitive(False);self.status.set_text('Подключение… Если появится окно SSH, введите пароль пользователя сервера.')
         threading.Thread(target=self.connect_tunnel,args=(dict(self.values),generation,self.stop_event),daemon=True).start()
     def deliver(self,generation,ready,text):
         if generation!=self.generation:return False

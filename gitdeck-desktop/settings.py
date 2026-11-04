@@ -1,12 +1,18 @@
 """Connection preferences contain no passwords."""
 import json,os,re
 from pathlib import Path
-DEFAULTS={'host':'2.28.57.159','user':'root','ssh_port':22,'local_port':8120,'remote_port':8120,'remember':False}
+DEFAULTS={'host':'2.28.57.159','user':'vano-admin','ssh_port':22222,'local_port':8120,'remote_port':8120,'remember':False}
 def load(path):
     try:data=json.loads(Path(path).read_text())
     except (OSError,ValueError):data={}
     # Migrate the first version's host/user preferences.
-    return {**DEFAULTS,**{k:v for k,v in data.items() if k in DEFAULTS}}
+    result={**DEFAULTS,**{k:v for k,v in data.items() if k in DEFAULTS}}
+    if result['host']=='2.28.57.159':
+        if result['user']=='root':result['user']='vano-admin'
+        if result['ssh_port'] in (22,'22'):result['ssh_port']=22222
+    elif 'ssh_port' not in data:
+        result['ssh_port']=22
+    return result
 def validate(values):
     result=dict(values)
     for name,pattern in [('host',r'[A-Za-z0-9][A-Za-z0-9.-]{0,252}'),('user',r'[A-Za-z_][A-Za-z0-9_-]{0,63}')]:
