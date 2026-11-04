@@ -11,3 +11,10 @@ class CountryTests(unittest.TestCase):
  def test_empty_invalid_and_overbroad_feeds_rejected(self):
   for resources in [{},{'ipv4':['0.0.0.0/0'],'ipv6':['::/0']},{'ipv4':['127.0.0.0/8'],'ipv6':['2a00::/16']}]:
    with self.assertRaises(ValueError):ssh_country.networks(resources)
+
+ def test_admin_exception_survives_rule_restore(self):
+  data={'resources':self.resources(),'ports':[22222],'admin_ips':['5.59.101.12','2001:4860:4860::8888']}
+  rules=ssh_country.rules(data,True)
+  self.assertIn('elements = { 5.59.101.12 }',rules)
+  self.assertLess(rules.index('ip saddr @admin4 return'),rules.index('ip saddr != @kg4 counter drop'))
+  self.assertLess(rules.index('ip6 saddr @admin6 return'),rules.index('ip6 saddr != @kg6 counter drop'))

@@ -105,7 +105,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         query=urllib.parse.parse_qs(url.query)
         try:
             if url.path=='/api/protection':
-                try:result=network_control.request()
+                try:result=network_control.request(ip=query.get('ip',[None])[0])
                 except ValueError as error:result={'ready':False,'blocked':[],'protected_ips':[],'error':str(error)}
                 result['client_ip']=self.ip();return self.send(200,result)
             if url.path=='/api/ip/peers':return self.send(200,{'peers':ip_activity.peers(database,int(query.get('period',['86400'])[0]))})

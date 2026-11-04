@@ -15,6 +15,7 @@ from urllib.parse import urlsplit, unquote
 from firewall_agent import canonical
 
 import network_control
+import hosting_policy
 
 LIMIT = 30
 WINDOW = 10
@@ -36,15 +37,16 @@ def classify(uri):
 
 
 class Gate:
-    def __init__(self, ban=None, protected=None, clock=time.monotonic):
+    def __init__(self, ban=None, protected=None, clock=time.monotonic,provider=None):
         self.clock=clock;self.ban=ban or (lambda ip,duration,reason: None)
         self.protected=protected or (lambda: set())
+        self.provider=provider or (lambda ip:False)
         self.clients=collections.OrderedDict();self.lock=threading.Lock()
 
     def check(self, raw_ip, uri='/'):
         ip=canonical(raw_ip)
         if not ipaddress.ip_address(ip).is_global:return 204,0
-        now=self.clock();should_ban=False;reason=classify(uri);duration=300
+        now=self.clock();should_ban=False;reason=classify(uri) or ('cloud_provider' if ip not in self.protected() and self.provider(ip) else None);duration=300
         with self.lock:
             row=self.clients.pop(ip,None)
             if row is None:row={'times':collections.deque(maxlen=31),'blocked_until':0,'blocked_status':429}
@@ -119,7 +121,8 @@ def main():
                     if attempt==2:print(json.dumps({'event':'automatic_ip_block_failed','ip':ip}),flush=True)
                     else:time.sleep(1)
             pending.task_done()
-    gate=Gate(ban,protect)
+    registry=hosting_policy.Registry()
+    gate=Gate(ban,protect,provider=registry.blocked)
     threading.Thread(target=worker,daemon=True).start()
     with Server(str(path),Handler) as server:
         os.chmod(path,0o600);server.gate=gate

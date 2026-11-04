@@ -54,7 +54,7 @@ def rules(active,now,replace=False):
 
 class Controller:
     def __init__(self,state='/var/lib/guard-firewall/state.json',config='/etc/guard-firewall.json',runner=None):
-        self.state=Path(state);self.config=Path(config);self.lock=threading.RLock();self.runner=runner or self.run
+        self.state=Path(state);self.config=Path(config);self.lock=threading.RLock();self.runner=runner or self.run;self.hosting=None
         try:self.entries=json.loads(self.state.read_text())
         except FileNotFoundError:self.entries={}
         if not isinstance(self.entries,dict):raise ValueError('Некорректное состояние сетевой защиты')
@@ -111,7 +111,7 @@ class Controller:
             element=ip if permanent else ip+' timeout '+str(max(1,math.ceil(row['expires']-now)))+'s'
             lines.append(f'add element inet {TABLE} {name} {{ {element} }}')
         self.runner(['-f','-'],'\n'.join(lines)+'\n')
-    def status(self):
+    def status(self,ip=None):
         with self.lock:
             active=self.active();data=self.table()
             if data is None or self.members(data)!=set(active):
@@ -122,10 +122,13 @@ class Controller:
                     counter=expr.get('counter',{});packets+=counter.get('packets',0);bytes_+=counter.get('bytes',0)
             try:country=json.loads(Path('/var/lib/guard-firewall/ssh-country.json').read_text());country.pop('resources',None)
             except (OSError,ValueError):country={'enabled':False}
-            return {'ssh_country':country,'ready':data is not None,'scope':'all_ports','blocked':[dict(ip=ip,**row) for ip,row in active.items()],'protected_ips':sorted(self.protected()),'dropped_packets':packets,'dropped_bytes':bytes_}
+            import hosting_policy
+            if self.hosting is None:self.hosting=hosting_policy.Registry()
+            hosting=self.hosting.public(ip)
+            return {'hosting_policy':hosting,'ssh_country':country,'ready':data is not None,'scope':'all_ports','blocked':[dict(ip=ip,**row) for ip,row in active.items()],'protected_ips':sorted(self.protected()),'dropped_packets':packets,'dropped_bytes':bytes_}
     def change(self,action,raw,requester,duration=3600,reason='manual'):
         ip=canonical(raw);requester=canonical(requester)
-        if reason not in ('manual','secret_probe','rate_limit','exploit_probe','history_probe'):raise ValueError('Неизвестная причина блокировки')
+        if reason not in ('manual','secret_probe','rate_limit','exploit_probe','history_probe','cloud_provider'):raise ValueError('Неизвестная причина блокировки')
         if action not in ('block','unblock'):raise ValueError('Неизвестное действие')
         with self.lock:
             if action=='block':
@@ -140,7 +143,12 @@ class Controller:
                 updated[ip]={'created':existing.get('created',time.time()),'expires':None if duration==0 else time.time()+duration,'reason':reason}
             else:updated.pop(ip,None)
             try:
-                self.apply(updated);atomic_json(self.state,updated);self.entries=updated
+                self.apply(updated)
+                if action=='unblock':
+                    import hosting_policy
+                    hosting_policy.allow_ip(ip)
+                    if self.hosting:self.hosting.checked=-100
+                atomic_json(self.state,updated);self.entries=updated
             except Exception:
                 try:self.apply({k:v for k,v in old.items() if v.get('expires',0) is None or v.get('expires',0)>time.time()})
                 except Exception:pass
@@ -157,7 +165,7 @@ class Handler(socketserver.StreamRequestHandler):
             data=json.loads(line)
             if not isinstance(data,dict):raise ValueError('Некорректный запрос')
             action=data.get('action')
-            if action=='status':result=self.server.controller.status()
+            if action=='status':result=self.server.controller.status(data.get('ip'))
             elif action in ('block','unblock'):result=self.server.controller.change(action,data.get('ip'),data.get('requester'),data.get('duration',3600),data.get('reason','manual'))
             else:raise ValueError('Неизвестное действие')
             response={'ok':True,'result':result}
