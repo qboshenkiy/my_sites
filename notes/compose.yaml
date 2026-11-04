@@ -4,6 +4,8 @@ services:
     restart: unless-stopped
     environment:
       DATA_DIR: /data
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
       COOKIE_SECURE: ${COOKIE_SECURE:-1}
     ports: ["127.0.0.1:8170:8170"]
     volumes: ["notes-data:/data"]
@@ -11,6 +13,22 @@ services:
     tmpfs: [/tmp]
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options: {max-size: "5m", max-file: "2"}
+  bot:
+    build: .
+    restart: unless-stopped
+    command: ["python", "src/bot.py"]
+    environment:
+      DATA_DIR: /data
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    volumes: ["notes-data:/data"]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck: {disable: true}
     logging:
       driver: json-file
       options: {max-size: "5m", max-file: "2"}

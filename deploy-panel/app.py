@@ -24,7 +24,7 @@ import threading
 import time
 import urllib.parse
 
-VERSION = '1.13.0'
+VERSION = '1.14.0'
 LAYOUT = {
     'remote': ['server', 'ops', '.dockerignore'],
     'drawing': ['index.php', 'api.php', 'manifest.webmanifest', 'service-worker.js', 'lib', 'assets', 'ops', '.dockerignore'],
@@ -55,12 +55,16 @@ NOTES = {
     'id': 'notes', 'name': 'Заметки · место для мыслей', 'kind': 'docker',
     'repo': 'https://github.com/qboshenkiy/my_sites.git', 'branch': 'main',
     'subdir': 'notes', 'directory': '/opt/notes', 'compose': 'compose.yaml',
-    'profiles': [], 'services': ['web'], 'main_service': 'web',
+    'profiles': [], 'services': ['web', 'bot'], 'main_service': 'web',
     'paths': ['src', 'web', 'requirements.txt'], 'wait_health': True, 'ssh_key': ''}
 
 
 def register_notes(server):
-    if any(p['id'] == 'notes' for p in server.config['projects']):
+    old = next((p for p in server.config['projects'] if p['id'] == 'notes'), None)
+    if old:
+        if all(old.get(k) == NOTES[k] for k in ('kind','repo','subdir','directory','compose')) and 'bot' not in old.get('services',[]):
+            updated = dict(old, services=[*old.get('services',['web']), 'bot'])
+            save_config(server, [updated if p['id']=='notes' else p for p in server.config['projects']], config_revision(server.config))
         return
     project = project_from_form(dict(NOTES), None, server.config)
     save_config(server, [*server.config['projects'], project], config_revision(server.config))
@@ -71,7 +75,7 @@ def setup_notes(config, p, job, log):
         raise ValueError('Настройка доступна только для стандартного приложения «Заметки»')
     source_project = dict(NOTES, paths=[*NOTES['paths'], 'Dockerfile', 'compose.yaml', '.dockerignore'])
     source = Path(config['state_dir']) / 'jobs' / job / 'setup-source'
-    sha = checkout(source_project, config, source, log)
+    sha = checkout(source_project, config, source, log, p['_target_ref']) if p.get('_target_ref') else checkout(source_project, config, source, log)
     dest = Path(p['directory']);dest.mkdir(parents=True, exist_ok=True)
     for name in source_project['paths']:
         target = validate_destination(dest, name)
@@ -589,7 +593,7 @@ def env_settings(p):
     text = env_text(p)
     values = {key: value for key, value, *_ in env_records(text)}
     defaults = ['DOMAIN', 'APP_URL', 'APP_PORT', 'APP_BIND']
-    if p['id'] == 'kopilka':
+    if p['id'] in ('kopilka','notes'):
         defaults += ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME']
     if p['kind'] == 'marathon':
         defaults += ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME']
@@ -695,7 +699,9 @@ def prepare_chrono_https(config, p, text, log):
         marker = '# GitDeck ' + p['id']
         original = previous[caddy].decode('utf-8')
         upstream_port = '8080' if p['kind'] == 'remote' else '80'
-        block = marker + ' BEGIN\nhttps://' + url.netloc + ' {\n    encode gzip zstd\n    reverse_proxy ' + alias + ':' + upstream_port + '\n}\n' + marker + ' END'
+        protection = ('    import /data/guard-sensitive.caddy # Guard sensitive files\n    log {\n        output stdout\n        format json\n    }\n'
+                      if re.search(r'(?m)^\s*import /data/guard-sensitive\.caddy(?:\s|$)', original) else '')
+        block = marker + ' BEGIN\nhttps://' + url.netloc + ' {\n' + protection + '    encode gzip zstd\n    reverse_proxy ' + alias + ':' + upstream_port + '\n}\n' + marker + ' END'
         pattern = re.escape(marker + ' BEGIN') + r'.*?' + re.escape(marker + ' END')
         updated = re.sub(pattern, lambda _: block, original, flags=re.S) if marker + ' BEGIN' in original else original.rstrip() + '\n\n' + block + '\n'
         # Compose adds the service-name alias "web" to every attached network,
@@ -1180,6 +1186,8 @@ def bootstrap_chrono(p, source):
 
 
 def deploy(config, p, job, log):
+    if p['id'] == 'notes' and not (Path(p['directory']) / p.get('compose', 'compose.yaml')).is_file():
+        return setup_notes(config, p, job, log)
     jobdir = Path(config['state_dir']) / 'jobs' / job
     source = jobdir / 'new'
     old = jobdir / 'previous'

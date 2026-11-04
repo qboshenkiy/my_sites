@@ -5,11 +5,15 @@ from pathlib import Path
 from urllib.parse import urlsplit
 gi.require_version('Gtk','3.0');gi.require_version('WebKit2','4.1')
 from gi.repository import Gtk,WebKit2,Gio,GLib
+APP_ID='net.sbena.vano.kopilka'
+GLib.set_prgname(APP_ID)
+GLib.set_application_name('Копилка')
+Gtk.Window.set_default_icon_name(APP_ID)
 class Kopilka(Gtk.Application):
-    def __init__(self):super().__init__(application_id='net.sbena.vano.kopilka')
+    def __init__(self):super().__init__(application_id=APP_ID)
     def do_activate(self):
         if self.get_active_window():self.get_active_window().present();return
-        window=Gtk.ApplicationWindow(application=self,title='Копилка · Личные финансы');window.set_default_size(1180,820)
+        window=Gtk.ApplicationWindow(application=self,title='Копилка · Личные финансы');window.set_default_size(1180,820);window.set_icon_name(APP_ID)
         root=Path(GLib.get_user_data_dir())/'kopilka';root.mkdir(parents=True,exist_ok=True,mode=0o700)
         manager=WebKit2.WebsiteDataManager(base_data_directory=str(root/'web'),base_cache_directory=str(root/'cache'))
         context=WebKit2.WebContext.new_with_website_data_manager(manager);cookies=context.get_cookie_manager();cookies.set_persistent_storage(str(root/'cookies.sqlite'),WebKit2.CookiePersistentStorage.SQLITE)

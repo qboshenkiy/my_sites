@@ -9,6 +9,8 @@ const context={console,Intl,URLSearchParams,URL,Blob,Date,Error,Promise,Number,S
   if(url==='/api/note/save')return new Promise(resolve=>saves.push({data:JSON.parse(options.body),resolve}));
   return {ok:true,json:async()=>state};
  }};
+context.TelegramNotes={isMini:()=>false,autoLogin:async()=>false};
+context.NotesOffline={request:async(url,data)=>{const r=await context.fetch(url,{body:JSON.stringify(data)});const v=await r.json();if(!r.ok)throw Object.assign(Error(v.error),{status:r.status});return v},state:async()=>({active:false,pending:0})};
 vm.createContext(context);vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/app.js'),'utf8'),context);
 const run=code=>vm.runInContext(code,context),settle=()=>new Promise(resolve=>setImmediate(resolve));
 function resolveSave(index,status=200){const request=saves[index];request.resolve({ok:status===200,status,json:async()=>status===200?{...request.data,revision:request.data.revision+1}:{error:'conflict'}})}

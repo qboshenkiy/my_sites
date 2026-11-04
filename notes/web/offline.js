@@ -1,0 +1,44 @@
+'use strict';
+// Durable note snapshots and FIFO mutations. Only the application shell is cached by SW.
+window.NotesOffline=(()=>{
+ const DB='vano-notes-offline-v1',KEY='state';let database,serial=Promise.resolve(),syncing=null,net=true,auth=false,lastAttempt=0,syncTimer;
+ const channel='BroadcastChannel'in window?new BroadcastChannel('vano-notes-changes'):null;
+ const initial=()=>({active:false,notes:{},folders:[],queue:[],csrf:'',lastSync:0});
+ const uid=()=>Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');
+ function openDB(){return database||(database=new Promise((resolve,reject)=>{const r=indexedDB.open(DB,1);r.onupgradeneeded=()=>r.result.createObjectStore('data');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(Error('Локальное хранилище недоступно. Проверьте настройки браузера.'))}))}
+ async function read(){const db=await openDB();return new Promise((resolve,reject)=>{const tx=db.transaction('data','readonly'),r=tx.objectStore('data').get(KEY);r.onsuccess=()=>resolve(r.result||initial());r.onerror=()=>reject(r.error)})}
+ async function write(s){const db=await openDB();return new Promise((resolve,reject)=>{const tx=db.transaction('data','readwrite');tx.objectStore('data').put(s,KEY);tx.oncomplete=()=>resolve();tx.onabort=tx.onerror=()=>reject(Error('Не удалось сохранить на устройстве: проверьте свободное место.'))})}
+ function lock(fn){const job=serial.then(async()=>{if(navigator.locks)return navigator.locks.request(DB,fn);return fn()});serial=job.catch(()=>{});return job}
+ function changed(detail={}){window.dispatchEvent(new CustomEvent('notes-local-change',{detail}));channel?.postMessage(detail)}
+ channel?.addEventListener('message',e=>window.dispatchEvent(new CustomEvent('notes-local-change',{detail:e.data})));
+ async function raw(url,data){const r=await fetch(url,{method:data?'POST':'GET',headers:data?{'Content-Type':'application/json'}:{},body:data?JSON.stringify(data):undefined,cache:'no-store'});const value=await r.json();if(!r.ok){const error=Error(value.error||'Ошибка синхронизации');error.status=r.status;throw error}return value}
+ const error=(message,status=400)=>Object.assign(Error(message),{status});
+ function merge(s,snapshot){const pending=new Set(s.queue.map(q=>q.entity.id));const seen=new Set();for(const remote of snapshot.notes){seen.add(remote.id);if(pending.has(remote.id))continue;const old=s.notes[remote.id];s.notes[remote.id]={...remote,revision:old?old.revision+(old._remote_revision===remote.revision?0:1):remote.revision,_remote_revision:remote.revision,_head:null}}
+  for(const id of Object.keys(s.notes))if(!seen.has(id)&&!pending.has(id))delete s.notes[id];s.folders=snapshot.folders;s.csrf=snapshot.csrf;s.active=true;s.lastSync=Date.now();}
+ async function pull(){const snapshot=await raw('/api/offline');await lock(async()=>{const s=await read();merge(s,snapshot);await write(s)});auth=false;net=true;}
+ async function bootstrap(){const s=await read();if(s.active){navigator.storage?.persist?.().catch(()=>{});schedule();return}try{await pull()}catch(e){if(!e.status)throw error('Первый вход нужен с интернетом. После него заметки будут доступны офлайн.',401);throw e}}
+ function queueNote(s,note){const mutation={mutation_id:uid(),entity:{id:note.id,title:note.title,body:note.body,folder_id:note.folder_id,pinned:!!note.pinned,deleted:note.deleted},base_revision:note._remote_revision||0,after:note._head||null};note._head=mutation.mutation_id;s.queue.push(mutation);}
+ function schedule(force=false){if(syncing||(!force&&Date.now()-lastAttempt<15000))return;clearTimeout(syncTimer);syncTimer=setTimeout(()=>sync().catch(()=>{}),force?900:0)}
+ async function sync(){clearTimeout(syncTimer);if(syncing)return syncing;lastAttempt=Date.now();syncing=(async()=>{try{const active=await read();if(!active.active)return;await pull();while(true){const s=await read(),op=s.queue[0];if(!op)break;const result=await raw('/api/sync',{...op,csrf:s.csrf});let rekey;
+    await lock(async()=>{const latest=await read(),index=latest.queue.findIndex(x=>x.mutation_id===op.mutation_id);if(index<0)return;const from=op.entity.id;let n=latest.notes[from];if(result.id!==from&&n){delete latest.notes[from];n={...n,id:result.id,title:n.title.endsWith(' (конфликт)')?n.title:n.title.slice(0,180)+' (конфликт)'};latest.notes[result.id]=n;for(const q of latest.queue)if(q.entity.id===from){q.entity.id=result.id;if(!q.entity.title.endsWith(' (конфликт)'))q.entity.title=q.entity.title.slice(0,180)+' (конфликт)';}rekey={from,to:result.id};}latest.queue.splice(index,1);if(n){n._remote_revision=result.revision;if(!latest.queue.some(q=>q.entity.id===n.id))n._head=null;}await write(latest)});changed(rekey?{rekey,conflict:true}:{});
+   }await pull();changed({synced:true});
+  }catch(e){if(e.status===401){auth=true;changed({auth:true})}else{net=false;changed({offline:true,error:e.message})}throw e}})();try{return await syncing}finally{syncing=null}}
+ async function mutate(url,d){return lock(async()=>{const s=await read();if(!s.active)throw error('Сначала войдите в приложение',401);let n,rekey;
+   if(url==='/api/note/create'){const id=uid(),now=Date.now()/1000;n={id,title:'',body:'',folder_id:d.folder_id?Number(d.folder_id):null,pinned:0,revision:1,created:now,updated:now,deleted:null,_remote_revision:0,_head:null};s.notes[id]=n;}
+   else{n=s.notes[d.id];if(!n)throw error('Заметка не найдена',404);if(n.revision!==Number(d.revision)){if(url!=='/api/note/save')throw error('Заметка изменена в другом окне. Обновите список.',409);const from=n.id,id=uid();n={...n,id,revision:0,created:Date.now()/1000,deleted:null,_remote_revision:0,_head:null};s.notes[id]=n;rekey={from,to:id};}if(url==='/api/note/save'){if(n.deleted)throw error('Заметка в корзине',409);if(typeof d.title!=='string'||typeof d.body!=='string'||d.title.length>200||d.body.length>200000)throw error('Превышен размер заметки');Object.assign(n,{title:d.title,body:d.body,folder_id:d.folder_id?Number(d.folder_id):null,pinned:d.pinned?1:0});}else n.deleted=d.restore===true?null:Date.now()/1000;n.revision++;n.updated=Date.now()/1000;}
+   if(rekey)n.title=n.title.slice(0,180)+' (конфликт)';queueNote(s,n);await write(s);changed(rekey?{rekey,conflict:true}:{});schedule(true);return {...n};})}
+ async function request(url,data){
+  if(url==='/api/login'||url==='/api/telegram/login'){const response=await raw(url,data);await pull();schedule();return response}
+  await bootstrap();
+  if(url==='/api/logout'){try{await sync()}catch{throw error('Для выхода подключитесь к интернету. Локальные заметки пока сохранены на устройстве.')}return lock(async()=>{const s=await read();if(s.queue.length)throw error('Есть несинхронизированные заметки. Подключитесь к интернету перед выходом.');const response=await raw(url,{...data,csrf:s.csrf});await write(initial());changed();return response})}
+  if(data&&['/api/note/create','/api/note/save','/api/note/trash'].includes(url))return mutate(url,data);
+  if(data){try{await sync()}catch{throw error('Для изменения папок нужно подключение к интернету. Заметки можно продолжать писать офлайн.')}const s=await read();if(s.queue.length)throw error('Для изменения папок подключитесь к интернету.');const result=await raw(url,{...data,csrf:s.csrf});await pull();changed();return result}
+  const s=await read(),parsed=new URL(url,location.origin);
+  if(parsed.pathname==='/api/notes'){const q=(parsed.searchParams.get('q')||'').trim().toLocaleLowerCase('ru'),view=parsed.searchParams.get('view')||'all',folder=parsed.searchParams.get('folder');const all=Object.values(s.notes),notes=all.filter(n=>(view==='trash'?!!n.deleted:!n.deleted)&&(view!=='pinned'||n.pinned)&&(!folder||String(n.folder_id)===folder)&&(!q||(n.title+' '+n.body).toLocaleLowerCase('ru').includes(q))).sort((a,b)=>b.pinned-a.pinned||b.updated-a.updated||b.id.localeCompare(a.id));return {notes:notes.slice(0,200).map(n=>({...n,preview:n.body.slice(0,160)})),total:notes.length,counts:{all:all.filter(n=>!n.deleted).length,pinned:all.filter(n=>!n.deleted&&n.pinned).length,trash:all.filter(n=>n.deleted).length},folders:s.folders.map(f=>({...f,count:all.filter(n=>!n.deleted&&n.folder_id===f.id).length})),csrf:s.csrf};}
+  const match=parsed.pathname.match(/^\/api\/note\/([a-f0-9]+)$/);if(match){const n=s.notes[match[1]];if(!n)throw error('Заметка не найдена',404);return {...n}}
+  if(parsed.pathname==='/api/export')return {version:2,notes:Object.values(s.notes),folders:s.folders,pending:s.queue.length};return raw(url);
+ }
+ async function state(){const s=await read();return {active:s.active,pending:s.queue.length,online:net&&navigator.onLine!==false,auth,lastSync:s.lastSync}}
+ window.addEventListener('online',()=>schedule(true));document.addEventListener('visibilitychange',()=>{if(!document.hidden)schedule()});setInterval(()=>{if(navigator.onLine!==false)schedule()},15000);
+ return {request,sync,state};
+})();

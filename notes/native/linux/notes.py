@@ -6,12 +6,16 @@ from urllib.parse import urlsplit
 import time
 gi.require_version('Gtk','3.0');gi.require_version('WebKit2','4.1')
 from gi.repository import Gtk,WebKit2,Gio,GLib
+APP_ID='net.sbena.vano.notes'
+GLib.set_prgname(APP_ID)
+GLib.set_application_name('Заметки')
+Gtk.Window.set_default_icon_name(APP_ID)
 URL='https://notes.vano.sbena.net/'
 class Notes(Gtk.Application):
-    def __init__(self):super().__init__(application_id='net.sbena.vano.notes')
+    def __init__(self):super().__init__(application_id=APP_ID)
     def do_activate(self):
         if self.get_active_window():self.get_active_window().present();return
-        window=Gtk.ApplicationWindow(application=self,title='Заметки · Место для мыслей');window.set_default_size(1280,840)
+        window=Gtk.ApplicationWindow(application=self,title='Заметки · Место для мыслей');window.set_default_size(1280,840);window.set_icon_name(APP_ID)
         icon=Path(__file__).with_name('icon.svg')
         if icon.exists():window.set_icon_from_file(str(icon))
         root=Path(GLib.get_user_data_dir())/'vano-notes';root.mkdir(parents=True,exist_ok=True,mode=0o700)

@@ -9,7 +9,7 @@ class NotesTests(unittest.TestCase):
    with patch.object(app,'NOTES',dict(app.NOTES,directory=str(root/'notes'))):
     app.register_notes(server);app.register_notes(server)
    self.assertEqual([p['id'] for p in server.config['projects']],['notes'])
-   self.assertEqual(['web'],server.config['projects'][0]['services'])
+   self.assertEqual(['web','bot'],server.config['projects'][0]['services'])
    self.assertEqual(app.load_config(server.config_path)['projects'][0]['subdir'],'notes')
  def test_setup_preserves_deployment(self):
   with tempfile.TemporaryDirectory() as temp:
@@ -24,4 +24,11 @@ class NotesTests(unittest.TestCase):
     app.setup_notes({'state_dir':temp},p,'test',io.StringIO())
    self.assertEqual((dest/'compose.yaml').read_text(),'preserve');self.assertEqual((dest/'.env').read_text(),'private')
    self.assertEqual(run.call_args.args[0][-1],str(dest/'src/setup.py'))
+ def test_first_install_from_update_uses_provisioning(self):
+  with tempfile.TemporaryDirectory() as temp:
+   project=dict(app.NOTES,directory=str(Path(temp)/'new'),_target_ref='a'*40)
+   with patch.object(app,'setup_notes') as setup,patch.object(app,'checkout') as checkout:
+    app.deploy({'state_dir':temp},project,'job',io.StringIO())
+   setup.assert_called_once();checkout.assert_not_called()
+
 if __name__=='__main__':unittest.main()
