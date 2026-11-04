@@ -3,7 +3,7 @@ import tarfile
 import zipfile
 
 root = Path(__file__).resolve().parent
-files = ['app.py', 'index.html', 'VERSION', 'manifest.webmanifest', 'service-worker.js', 'pwa.js', 'icon.svg', 'icon-192.png', 'icon-512.png', 'ui.js', 'ui.css', 'README.md', 'install.sh', 'config.example.json', '.gitignore', 'tests.py', 'tests_telegram_settings.py', 'tests_container_control.py', 'tests_bookvoice.py', 'tests_kopilka.py', 'tests_monitor.py', 'tests_remote.py', 'tests_ui.js', 'tests_dashboard_ui.cjs', 'check_docker.py', 'package.py']
+files = ['app.py', 'index.html', 'VERSION', 'manifest.webmanifest', 'service-worker.js', 'pwa.js', 'icon.svg', 'icon-192.png', 'icon-512.png', 'ui.js', 'ui.css', 'README.md', 'install.sh', 'config.example.json', '.gitignore', 'tests.py', 'tests_telegram_settings.py', 'tests_container_control.py', 'tests_bookvoice.py', 'tests_kopilka.py', 'tests_notes.py', 'tests_monitor.py', 'tests_remote.py', 'tests_ui.js', 'tests_dashboard_ui.cjs', 'check_docker.py', 'package.py']
 (root / 'dist').mkdir(exist_ok=True)
 with tarfile.open(root / 'dist/gitdeck.tar.gz', 'w:gz') as archive:
     for name in files:

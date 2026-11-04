@@ -24,7 +24,7 @@ import threading
 import time
 import urllib.parse
 
-VERSION = '1.12.0'
+VERSION = '1.13.0'
 LAYOUT = {
     'remote': ['server', 'ops', '.dockerignore'],
     'drawing': ['index.php', 'api.php', 'manifest.webmanifest', 'service-worker.js', 'lib', 'assets', 'ops', '.dockerignore'],
@@ -49,6 +49,43 @@ BOOKVOICE = {
     'subdir': 'bookvoice', 'directory': '/opt/bookvoice', 'compose': 'compose.yaml',
     'profiles': [], 'services': ['web'], 'main_service': 'web',
     'paths': ['src', 'web', 'requirements.txt'], 'wait_health': True, 'ssh_key': ''}
+
+
+NOTES = {
+    'id': 'notes', 'name': 'Заметки · место для мыслей', 'kind': 'docker',
+    'repo': 'https://github.com/qboshenkiy/my_sites.git', 'branch': 'main',
+    'subdir': 'notes', 'directory': '/opt/notes', 'compose': 'compose.yaml',
+    'profiles': [], 'services': ['web'], 'main_service': 'web',
+    'paths': ['src', 'web', 'requirements.txt'], 'wait_health': True, 'ssh_key': ''}
+
+
+def register_notes(server):
+    if any(p['id'] == 'notes' for p in server.config['projects']):
+        return
+    project = project_from_form(dict(NOTES), None, server.config)
+    save_config(server, [*server.config['projects'], project], config_revision(server.config))
+
+
+def setup_notes(config, p, job, log):
+    if any(p.get(k) != NOTES[k] for k in ('id', 'kind', 'repo', 'subdir', 'directory', 'compose')):
+        raise ValueError('Настройка доступна только для стандартного приложения «Заметки»')
+    source_project = dict(NOTES, paths=[*NOTES['paths'], 'Dockerfile', 'compose.yaml', '.dockerignore'])
+    source = Path(config['state_dir']) / 'jobs' / job / 'setup-source'
+    sha = checkout(source_project, config, source, log)
+    dest = Path(p['directory']);dest.mkdir(parents=True, exist_ok=True)
+    for name in source_project['paths']:
+        target = validate_destination(dest, name)
+        if target.exists():
+            continue
+        if (source / name).is_dir():
+            shutil.copytree(source / name, target)
+        else:
+            shutil.copy2(source / name, target)
+    status_update(config, job, 'installing', sha=sha)
+    run([sys.executable, str(dest / 'src/setup.py')], log, timeout=600)
+    with db_open(config) as db:
+        db.execute('INSERT OR REPLACE INTO versions VALUES (?, ?, ?)', (p['id'], sha, time.time()))
+    status_update(config, job, 'success', sha=sha)
 
 
 KOPILKA = {
@@ -1256,6 +1293,8 @@ def work(config, job):
                     status_update(config,job,'installing')
                     compose(p,[command,service],log)
                     status_update(config,job,'success')
+                elif row['action'] == 'setup_notes':
+                    setup_notes(config, p, job, log)
                 elif row['action'] == 'setup_kopilka':
                     setup_kopilka(config, p, job, log)
                 elif row['action'] == 'setup_guard':
@@ -1805,6 +1844,14 @@ class Panel(http.server.BaseHTTPRequestHandler):
                     return self.send(202,{'job':enqueue(self.server,p,'pulse_bot')})
                 except (StopIteration,ValueError,OSError,RuntimeError) as error:
                     return self.send(400,{'error':str(error) or 'Выберите Пульс'})
+        if self.path == '/api/notes/setup':
+            if self.server.demo:return self.send(403, {'error': 'В предпросмотре установка отключена'})
+            with self.mutex:
+                try:
+                    p = next(p for p in self.server.config['projects'] if p['id'] == 'notes')
+                    return self.send(202, {'job': enqueue(self.server, p, 'setup_notes')})
+                except (StopIteration, ValueError, OSError, RuntimeError) as error:
+                    return self.send(400, {'error': str(error) or 'Карточка Заметки не найдена'})
         if self.path == '/api/kopilka/setup':
             if self.server.demo:return self.send(403, {'error': 'В предпросмотре установка отключена'})
             with self.mutex:
@@ -1888,6 +1935,7 @@ def serve(config, config_path, demo=False):
             register_bookvoice(server)
             register_guard(server)
             register_kopilka(server)
+            register_notes(server)
         except (ValueError, OSError) as error:
             print('Не удалось добавить карточку «Голос книги»: ' + str(error), file=sys.stderr, flush=True)
     config = server.config
