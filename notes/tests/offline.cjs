@@ -4,7 +4,7 @@ const {indexedDB}=require(process.env.FAKE_INDEXEDDB_MODULE||'fake-indexeddb');
 const source=fs.readFileSync(path.join(__dirname,'../web/offline.js'),'utf8');
 let offline=false,loseResponse=false,copyCounter=0,serverNotes=new Map(),applied=new Map(),lockChain=Promise.resolve();
 const original='1'.repeat(24);serverNotes.set(original,{id:original,title:'Общая заметка',body:'Исходная',folder_id:null,pinned:0,revision:1,created:1,updated:1,deleted:null});
-const response=value=>({ok:true,status:200,json:async()=>structuredClone(value)});
+const response=value=>({ok:true,status:200,headers:{get:()=>null},json:async()=>structuredClone(value)});
 async function fetch(url,options={}){
  if(offline)throw new TypeError('Network offline');
  if(url==='/api/offline')return response({notes:[...serverNotes.values()],folders:[],csrf:'valid'});
@@ -24,9 +24,9 @@ function instance(){const events=new EventTarget(),doc=new EventTarget();doc.hid
 (async()=>{
  const first=instance();assert.equal((await first.request('/api/notes')).total,1);
  offline=true;
- let n=await first.request('/api/note/create',{});n=await first.request('/api/note/save',{...n,title:'Новая без интернета',body:'Сохранить после перезапуска'});
+ let n=await first.request('/api/note/create',{});n=await first.request('/api/note/save',{...n,title:'Новая без интернета',body:'Сохранить после перезапуска',photos:[{name:'Фото',data:'data:image/jpeg;base64,/9j/dGVzdP/Z'}]});
  assert.equal((await first.state()).pending,2);
- const restarted=instance();assert.equal((await restarted.request('/api/note/'+n.id)).body,'Сохранить после перезапуска');assert.equal((await restarted.request('/api/notes')).total,2);
+ const restarted=instance();assert.equal((await restarted.request('/api/note/'+n.id)).body,'Сохранить после перезапуска');assert.equal((await restarted.request('/api/notes')).total,2);assert.equal((await restarted.request('/api/note/'+n.id)).photos[0].name,'Фото');
  await assert.rejects(()=>restarted.sync());assert.equal((await restarted.state()).pending,2,'Network error must preserve queue');
  offline=false;await restarted.sync();assert.equal(serverNotes.get(n.id).body,'Сохранить после перезапуска');assert.equal((await restarted.state()).pending,0);
  offline=true;const old=await restarted.request('/api/note/'+original);await restarted.request('/api/note/save',{...old,body:'Моя офлайн-правка'});serverNotes.set(original,{...serverNotes.get(original),revision:2,body:'Другой компьютер'});

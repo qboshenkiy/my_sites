@@ -11,6 +11,7 @@ def database():
     try:
         db.create_function('fold',1,lambda text:str(text or '').casefold(),deterministic=True)
         db.executescript("CREATE TABLE IF NOT EXISTS notes(id TEXT PRIMARY KEY,title TEXT NOT NULL DEFAULT '',body TEXT NOT NULL DEFAULT '',folder_id INTEGER,pinned INTEGER NOT NULL DEFAULT 0,revision INTEGER NOT NULL DEFAULT 1,created REAL NOT NULL,updated REAL NOT NULL,deleted REAL);\nCREATE TABLE IF NOT EXISTS folders(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL);\nCREATE TABLE IF NOT EXISTS versions(id INTEGER PRIMARY KEY,note_id TEXT NOT NULL,title TEXT,body TEXT,revision INTEGER,created REAL);\nCREATE TABLE IF NOT EXISTS telegram(chat TEXT PRIMARY KEY);\nCREATE TABLE IF NOT EXISTS links(code TEXT PRIMARY KEY,expires REAL);\nCREATE TABLE IF NOT EXISTS bot_updates(id INTEGER PRIMARY KEY);\nCREATE TABLE IF NOT EXISTS bot_state(chat TEXT PRIMARY KEY,mode TEXT,argument TEXT);\nCREATE TABLE IF NOT EXISTS bot_info(key TEXT PRIMARY KEY,value TEXT);\nCREATE TABLE IF NOT EXISTS attempts(ip TEXT,created REAL);\nCREATE TABLE IF NOT EXISTS sync_mutations(id TEXT PRIMARY KEY,result TEXT NOT NULL,created REAL NOT NULL);\nCREATE INDEX IF NOT EXISTS notes_updated ON notes(deleted,pinned,updated);\nCREATE INDEX IF NOT EXISTS notes_folder ON notes(folder_id);\nCREATE INDEX IF NOT EXISTS versions_note ON versions(note_id,id);\n")
+        if 'photos' not in {r[1] for r in db.execute('PRAGMA table_info(notes)')}:db.execute("ALTER TABLE notes ADD COLUMN photos TEXT NOT NULL DEFAULT '[]'")
         with db:yield db
     finally:db.close()
 secret=DATA/'session-secret'
@@ -18,7 +19,7 @@ try:
     fd=os.open(secret,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
     with os.fdopen(fd,'w') as f:f.write(secrets.token_hex(32))
 except FileExistsError:pass
-app=Flask(__name__,static_folder=None);app.secret_key=secret.read_text();app.config.update(MAX_CONTENT_LENGTH=1048576,SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Strict',SESSION_COOKIE_SECURE=os.getenv('COOKIE_SECURE','1')=='1',PERMANENT_SESSION_LIFETIME=28800)
+app=Flask(__name__,static_folder=None);app.secret_key=secret.read_text();app.config.update(MAX_CONTENT_LENGTH=6291456,SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Strict',SESSION_COOKIE_SECURE=os.getenv('COOKIE_SECURE','1')=='1',PERMANENT_SESSION_LIFETIME=28800)
 
 def epoch():
     try:return hashlib.sha256((DATA/'password.json').read_bytes()).hexdigest()
@@ -39,7 +40,7 @@ def protect():
 @app.after_request
 def headers(r):
     r.headers['Cache-Control']='no-store';r.headers['X-Content-Type-Options']='nosniff';r.headers['Referrer-Policy']='no-referrer'
-    r.headers['Content-Security-Policy']="default-src 'self'; script-src 'self' https://telegram.org; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'self' https://web.telegram.org https://*.telegram.org; form-action 'self'"
+    r.headers['Content-Security-Policy']="default-src 'self'; script-src 'self' https://telegram.org; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; base-uri 'none'; frame-ancestors 'self' https://web.telegram.org https://*.telegram.org; form-action 'self'"
     return r
 @app.errorhandler(ValueError)
 def invalid(e):return jsonify(error=str(e)),400
@@ -84,7 +85,26 @@ def folder(db,value):
 
 def note(db,identifier):
     row=db.execute('SELECT * FROM notes WHERE id=?',(identifier,)).fetchone()
-    return dict(row) if row else None
+    return decode_note(row) if row else None
+
+def decode_note(row):
+    result=dict(row);result['photos']=json.loads(result.get('photos','[]'));return result
+
+def photos(value):
+    import base64,binascii
+    if not isinstance(value,list) or len(value)>4:raise ValueError('Можно добавить до 4 фотографий')
+    total=0;clean=[]
+    for item in value:
+        if not isinstance(item,dict):raise ValueError('Некорректная фотография')
+        data=item.get('data','');name=item.get('name','Фото')
+        if not isinstance(data,str) or not data.startswith('data:image/jpeg;base64,'):raise ValueError('Нужна фотография JPEG')
+        total+=len(data)
+        if len(data)>1400000 or total>4500000:raise ValueError('Фотографии слишком большие')
+        try:raw=base64.b64decode(data.split(',',1)[1],validate=True)
+        except (ValueError,binascii.Error):raise ValueError('Повреждённая фотография')
+        if not raw.startswith(b'\xff\xd8\xff') or not raw.endswith(b'\xff\xd9'):raise ValueError('Повреждённая фотография JPEG')
+        clean.append({'data':data,'name':str(name)[:120]})
+    return clean
 
 @app.get('/api/notes')
 def listing():
@@ -129,10 +149,12 @@ def save_note():
         db.execute('BEGIN IMMEDIATE');old=note(db,d.get('id',''))
         if not old:return jsonify(error='Заметка не найдена'),404
         if old['revision']!=revision or old['deleted'] is not None:return jsonify(error='Заметка изменена в другом окне. Ваш текст остаётся в редакторе.',current=old),409
+        images=photos(d.get('photos',old['photos']))
         fid=folder(db,d.get('folder_id'))
         db.execute('INSERT INTO versions(note_id,title,body,revision,created) VALUES(?,?,?,?,?)',(old['id'],old['title'],old['body'],revision,time.time()))
         db.execute('DELETE FROM versions WHERE note_id=? AND id NOT IN (SELECT id FROM versions WHERE note_id=? ORDER BY id DESC LIMIT 20)',(old['id'],old['id']))
         db.execute('UPDATE notes SET title=?,body=?,folder_id=?,pinned=?,revision=revision+1,updated=? WHERE id=?',(title,body,fid,int(bool(d.get('pinned'))),time.time(),old['id']))
+        db.execute('UPDATE notes SET photos=? WHERE id=?',(json.dumps(images),old['id']))
         result=note(db,old['id'])
     return jsonify(result)
 
@@ -200,9 +222,12 @@ def telegram_status():
 @app.get('/api/offline')
 def offline_snapshot():
     with database() as db:
-        notes=[dict(r) for r in db.execute('SELECT * FROM notes')]
         folders=[dict(r) for r in db.execute('SELECT * FROM folders')]
-    return jsonify(notes=notes,folders=folders,csrf=session['csrf'])
+        stamp=json.dumps([session['csrf'],[list(r) for r in db.execute('SELECT id,revision FROM notes ORDER BY id')],folders],sort_keys=True)
+        tag=hashlib.sha256(stamp.encode()).hexdigest()
+        if request.if_none_match.contains(tag):return '',304
+        notes=[decode_note(r) for r in db.execute('SELECT * FROM notes')]
+    result=jsonify(notes=notes,folders=folders,csrf=session['csrf']);result.set_etag(tag);return result
 
 @app.post('/api/sync')
 def sync_note():
@@ -222,7 +247,7 @@ def sync_note():
             previous=db.execute('SELECT result FROM sync_mutations WHERE id=?',(str(after),)).fetchone()
             if not previous:raise ValueError('Сначала синхронизируйте предыдущее изменение')
             previous=json.loads(previous[0]);identifier=previous['id'];base=previous['revision']
-        old=note(db,identifier);conflict=bool(old and old['revision']!=base)
+        old=note(db,identifier);images=photos(data.get('photos',old['photos'] if old else []));conflict=bool(old and old['revision']!=base)
         # A divergent edit becomes a separate note; the other device's text stays intact.
         if conflict:identifier=secrets.token_hex(12);title=title[:180]+' (конфликт)';deleted=False;old=None
         fid=data.get('folder_id')
@@ -237,13 +262,14 @@ def sync_note():
         else:
             revision=1
             db.execute('INSERT INTO notes(id,title,body,folder_id,pinned,revision,created,updated,deleted) VALUES(?,?,?,?,?,?,?,?,?)',(identifier,title,body,fid,int(bool(data.get('pinned'))),revision,now,now,now if deleted else None))
+        db.execute('UPDATE notes SET photos=? WHERE id=?',(json.dumps(images),identifier))
         result={'id':identifier,'revision':revision,'conflict':conflict}
         db.execute('INSERT INTO sync_mutations VALUES(?,?,?)',(mid,json.dumps(result),now))
     return jsonify(result)
 
 @app.get('/api/export')
 def export():
-    with database() as db:result={t:[dict(r) for r in db.execute('SELECT * FROM '+t)] for t in ('notes','folders')}
+    with database() as db:result={t:[decode_note(r) if t=='notes' else dict(r) for r in db.execute('SELECT * FROM '+t)] for t in ('notes','folders')}
     r=jsonify(version=1,**result);r.headers['Content-Disposition']='attachment; filename=notes-backup.json';return r
 
 @app.get('/api/note/<identifier>/export')

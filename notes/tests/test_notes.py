@@ -12,6 +12,28 @@ class NotesTests(unittest.TestCase):
  def post(self,url,data):return self.client.post(url,json={'csrf':getattr(self,'csrf',''),**data},headers={'Origin':'http://localhost'})
  def create(self,folder=None):return self.post('/api/note/create',{'folder_id':folder}).json
  def save(self,n,**patch):return self.post('/api/note/save',{**n,**patch})
+ def test_photos_sync_validation_and_old_clients(self):
+  import base64
+  photo={'name':'Снимок.jpg','data':'data:image/jpeg;base64,'+base64.b64encode(b'\xff\xd8\xfftest\xff\xd9').decode()}
+  n=self.save(self.create(),title='Фото с телефона',photos=[photo]).json
+  self.assertEqual(n['photos'],[photo])
+  response=self.client.get('/api/offline');self.assertEqual(self.client.get('/api/offline',headers={'If-None-Match':response.headers['ETag']}).status_code,304)
+  self.assertEqual(self.client.get('/api/offline').json['notes'][0]['photos'],[photo])
+  legacy={k:v for k,v in n.items() if k!='photos'}
+  n=self.save(legacy,body='Правка на ноутбуке').json
+  self.assertEqual(n['photos'],[photo])
+  op={'mutation_id':'f'*32,'base_revision':n['revision'],'entity':{**n,'body':'Офлайн с фото'}}
+  self.assertEqual(self.post('/api/sync',op).status_code,200)
+  self.assertEqual(self.client.get('/api/note/'+n['id']).json['photos'],[photo])
+  self.assertEqual(self.post('/api/sync',op).status_code,200)
+  self.assertEqual(self.save(self.client.get('/api/note/'+n['id']).json,photos=[{'data':'data:image/svg+xml;base64,AAAA'}]).status_code,400)
+  self.assertEqual(self.save(self.client.get('/api/note/'+n['id']).json,photos=[photo]*5).status_code,400)
+  self.assertEqual(app.app.test_client().get('/api/note/'+n['id']).status_code,401)
+  op['mutation_id']='e'*32
+  result=self.post('/api/sync',op).json
+  self.assertTrue(result['conflict'])
+  self.assertEqual(self.client.get('/api/note/'+result['id']).json['photos'],[photo])
+  self.assertEqual(self.client.get('/api/export').json['notes'][0]['photos'],[photo])
  def test_auth_csrf_and_private_exports(self):
   self.assertEqual(app.app.test_client().get('/api/notes').status_code,401)
   self.assertEqual(app.app.test_client().get('/api/export').status_code,401)

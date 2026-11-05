@@ -16,6 +16,10 @@ import android.os.Bundle;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
+import android.webkit.ValueCallback;
+import android.provider.MediaStore;
+import androidx.core.content.FileProvider;
+import java.io.File;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -28,6 +32,15 @@ import java.nio.charset.StandardCharsets;
 public class MainActivity extends ComponentActivity {
  private WebView web;
  private byte[] exportContent;
+ private ValueCallback<Uri[]> photoCallback;
+ private Uri cameraUri;
+ private final ActivityResultLauncher<Intent> choosePhoto=registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),result->{
+  ValueCallback<Uri[]> callback=photoCallback;photoCallback=null;
+  if(callback==null)return;
+  Uri[] uris=null;
+  if(result.getResultCode()==RESULT_OK){if(result.getData()!=null&&result.getData().getData()!=null)uris=new Uri[]{result.getData().getData()};else if(cameraUri!=null)uris=new Uri[]{cameraUri};}
+  cameraUri=null;callback.onReceiveValue(uris);
+ });
  private static final String URL="https://notes.vano.sbena.net/";
  private final ActivityResultLauncher<Intent> saveFile=registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),result->{
   byte[] content=exportContent;exportContent=null;
@@ -53,16 +66,30 @@ public class MainActivity extends ComponentActivity {
   web=new WebView(this);viewport.addView(web,new FrameLayout.LayoutParams(-1,-1));
   ViewCompat.setOnApplyWindowInsetsListener(viewport,(view,insets)->{int types=WindowInsetsCompat.Type.systemBars()|WindowInsetsCompat.Type.displayCutout()|WindowInsetsCompat.Type.ime();Insets safe=insets.getInsets(types);view.setPadding(safe.left,safe.top,safe.right,safe.bottom);return new WindowInsetsCompat.Builder(insets).setInsets(types,Insets.NONE).build();});
   setContentView(viewport);ViewCompat.requestApplyInsets(viewport);
-  WebSettings settings=web.getSettings();settings.setJavaScriptEnabled(true);settings.setDomStorageEnabled(true);settings.setAllowFileAccess(false);settings.setAllowContentAccess(false);settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);settings.setUserAgentString(settings.getUserAgentString()+" VanoNotes/1.0");
+  WebSettings settings=web.getSettings();settings.setJavaScriptEnabled(true);settings.setDomStorageEnabled(true);settings.setAllowFileAccess(false);settings.setAllowContentAccess(true);settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);settings.setUserAgentString(settings.getUserAgentString()+" VanoNotes/1.1");
   CookieManager.getInstance().setAcceptThirdPartyCookies(web,false);web.addJavascriptInterface(new ExportBridge(),"NotesAndroid");
   web.setWebViewClient(new WebViewClient(){@Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest request){Uri u=request.getUrl();if("https".equals(u.getScheme())&&"notes.vano.sbena.net".equals(u.getHost())&&u.getUserInfo()==null&&(u.getPort()==-1||u.getPort()==443))return false;
    if("https".equals(u.getScheme()))try{startActivity(new Intent(Intent.ACTION_VIEW,u));}catch(ActivityNotFoundException ignored){}return true;
   }});
-  web.setWebChromeClient(new WebChromeClient(){@Override public boolean onJsConfirm(WebView view,String url,String text,android.webkit.JsResult result){new AlertDialog.Builder(MainActivity.this).setMessage(text).setPositiveButton("Да",(d,w)->result.confirm()).setNegativeButton("Отмена",(d,w)->result.cancel()).setOnCancelListener(d->result.cancel()).show();return true;}});
+  web.setWebChromeClient(new WebChromeClient(){
+   @Override public boolean onShowFileChooser(WebView view,ValueCallback<Uri[]> callback,FileChooserParams params){
+    if(!ownPage())return false;if(photoCallback!=null)photoCallback.onReceiveValue(null);photoCallback=callback;cameraUri=null;
+    try{
+     Intent intent;
+     if(params.isCaptureEnabled()){
+      File folder=new File(getCacheDir(),"photos");if(!folder.exists()&&!folder.mkdirs())throw new java.io.IOException();
+      File file=File.createTempFile("photo-",".jpg",folder);cameraUri=FileProvider.getUriForFile(MainActivity.this,getPackageName()+".photos",file);
+      intent=new Intent(MediaStore.ACTION_IMAGE_CAPTURE).putExtra(MediaStore.EXTRA_OUTPUT,cameraUri).addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION|Intent.FLAG_GRANT_READ_URI_PERMISSION);
+     }else intent=new Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*");
+     choosePhoto.launch(intent);
+    }catch(ActivityNotFoundException|java.io.IOException error){photoCallback=null;cameraUri=null;callback.onReceiveValue(null);Toast.makeText(MainActivity.this,"Не удалось открыть фото. Выбери снимок из галереи.",Toast.LENGTH_LONG).show();}
+    return true;
+   }
+   @Override public boolean onJsConfirm(WebView view,String url,String text,android.webkit.JsResult result){new AlertDialog.Builder(MainActivity.this).setMessage(text).setPositiveButton("Да",(d,w)->result.confirm()).setNegativeButton("Отмена",(d,w)->result.cancel()).setOnCancelListener(d->result.cancel()).show();return true;}});
   getOnBackPressedDispatcher().addCallback(this,new OnBackPressedCallback(true){@Override public void handleOnBackPressed(){if(!ownPage()){finish();return;}web.evaluateJavascript("(()=>{const dialog=document.querySelector('dialog[open]');if(dialog){dialog.close();return true}const app=document.getElementById('app');if(app&&!app.hidden&&app.classList.contains('editing')){document.getElementById('back').click();return true}return false})()",handled->{if(!"true".equals(handled)){if(web.canGoBack())web.goBack();else finish();}});}});
   if(state==null)web.loadUrl(URL);else web.restoreState(state);
  }
  @Override protected void onPause(){if(web!=null&&ownPage()){web.evaluateJavascript("window.dispatchEvent(new Event('notes-save-now'))",null);CookieManager.getInstance().flush();}super.onPause();}
  @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);web.saveState(state);}
- @Override protected void onDestroy(){web.removeJavascriptInterface("NotesAndroid");web.destroy();super.onDestroy();}
+ @Override protected void onDestroy(){if(photoCallback!=null){photoCallback.onReceiveValue(null);photoCallback=null;}web.removeJavascriptInterface("NotesAndroid");web.destroy();super.onDestroy();}
 }

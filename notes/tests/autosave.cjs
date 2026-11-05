@@ -1,7 +1,7 @@
 'use strict';
 const vm=require('node:vm'),fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 const elements=new Map(),saves=[];
-function element(selector){if(!elements.has(selector))elements.set(selector,{value:'',textContent:'',innerHTML:'',hidden:false,dataset:{},classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},showModal(){},close(){},focus(){}});return elements.get(selector)}
+function element(selector){if(!elements.has(selector))elements.set(selector,{replaceChildren(){},value:'',textContent:'',innerHTML:'',hidden:false,dataset:{},classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},showModal(){},close(){},focus(){}});return elements.get(selector)}
 const state={notes:[],folders:[],counts:{all:0,pinned:0,trash:0},total:0,csrf:'test-csrf'};
 const context={console,Intl,URLSearchParams,URL,Blob,Date,Error,Promise,Number,String,Math,confirm:()=>true,setTimeout:()=>1,clearTimeout(){},navigator:{},location:{reload(){}},
  document:{body:{dataset:{}},querySelector:element,querySelectorAll:()=>[],addEventListener(){},createElement(){return {click(){}}}},

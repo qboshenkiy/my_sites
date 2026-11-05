@@ -1,7 +1,7 @@
 'use strict';
 // Durable note snapshots and FIFO mutations. Only the application shell is cached by SW.
 window.NotesOffline=(()=>{
- const DB='vano-notes-offline-v1',KEY='state';let database,serial=Promise.resolve(),syncing=null,net=true,auth=false,lastAttempt=0,syncTimer;
+ const DB='vano-notes-offline-v1',KEY='state';let database,serial=Promise.resolve(),syncing=null,net=true,auth=false,lastAttempt=0,syncTimer,snapshotTag;
  const channel='BroadcastChannel'in window?new BroadcastChannel('vano-notes-changes'):null;
  const initial=()=>({active:false,notes:{},folders:[],queue:[],csrf:'',lastSync:0});
  const uid=()=>Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');
@@ -15,17 +15,17 @@ window.NotesOffline=(()=>{
  const error=(message,status=400)=>Object.assign(Error(message),{status});
  function merge(s,snapshot){const pending=new Set(s.queue.map(q=>q.entity.id));const seen=new Set();for(const remote of snapshot.notes){seen.add(remote.id);if(pending.has(remote.id))continue;const old=s.notes[remote.id];s.notes[remote.id]={...remote,revision:old?old.revision+(old._remote_revision===remote.revision?0:1):remote.revision,_remote_revision:remote.revision,_head:null}}
   for(const id of Object.keys(s.notes))if(!seen.has(id)&&!pending.has(id))delete s.notes[id];s.folders=snapshot.folders;s.csrf=snapshot.csrf;s.active=true;s.lastSync=Date.now();}
- async function pull(){const snapshot=await raw('/api/offline');await lock(async()=>{const s=await read();merge(s,snapshot);await write(s)});auth=false;net=true;}
+ async function pull(){const response=await fetch('/api/offline',{cache:'no-store',headers:snapshotTag?{'If-None-Match':snapshotTag}:{}});if(response.status===304){auth=false;net=true;return}const snapshot=await response.json();if(!response.ok)throw error(snapshot.error||'Ошибка синхронизации',response.status);snapshotTag=response.headers.get('ETag');await lock(async()=>{const s=await read();merge(s,snapshot);await write(s)});auth=false;net=true;}
  async function bootstrap(){const s=await read();if(s.active){navigator.storage?.persist?.().catch(()=>{});schedule();return}try{await pull()}catch(e){if(!e.status)throw error('Первый вход нужен с интернетом. После него заметки будут доступны офлайн.',401);throw e}}
- function queueNote(s,note){const mutation={mutation_id:uid(),entity:{id:note.id,title:note.title,body:note.body,folder_id:note.folder_id,pinned:!!note.pinned,deleted:note.deleted},base_revision:note._remote_revision||0,after:note._head||null};note._head=mutation.mutation_id;s.queue.push(mutation);}
- function schedule(force=false){if(syncing||(!force&&Date.now()-lastAttempt<15000))return;clearTimeout(syncTimer);syncTimer=setTimeout(()=>sync().catch(()=>{}),force?900:0)}
+ function queueNote(s,note){const mutation={mutation_id:uid(),entity:{id:note.id,title:note.title,body:note.body,folder_id:note.folder_id,pinned:!!note.pinned,deleted:note.deleted,photos:note.photos||[]},base_revision:note._remote_revision||0,after:note._head||null};note._head=mutation.mutation_id;s.queue.push(mutation);}
+ function schedule(force=false){if(syncing||(!force&&Date.now()-lastAttempt<3000))return;clearTimeout(syncTimer);syncTimer=setTimeout(()=>sync().catch(()=>{}),force?900:0)}
  async function sync(){clearTimeout(syncTimer);if(syncing)return syncing;lastAttempt=Date.now();syncing=(async()=>{try{const active=await read();if(!active.active)return;await pull();while(true){const s=await read(),op=s.queue[0];if(!op)break;const result=await raw('/api/sync',{...op,csrf:s.csrf});let rekey;
     await lock(async()=>{const latest=await read(),index=latest.queue.findIndex(x=>x.mutation_id===op.mutation_id);if(index<0)return;const from=op.entity.id;let n=latest.notes[from];if(result.id!==from&&n){delete latest.notes[from];n={...n,id:result.id,title:n.title.endsWith(' (конфликт)')?n.title:n.title.slice(0,180)+' (конфликт)'};latest.notes[result.id]=n;for(const q of latest.queue)if(q.entity.id===from){q.entity.id=result.id;if(!q.entity.title.endsWith(' (конфликт)'))q.entity.title=q.entity.title.slice(0,180)+' (конфликт)';}rekey={from,to:result.id};}latest.queue.splice(index,1);if(n){n._remote_revision=result.revision;if(!latest.queue.some(q=>q.entity.id===n.id))n._head=null;}await write(latest)});changed(rekey?{rekey,conflict:true}:{});
    }await pull();changed({synced:true});
   }catch(e){if(e.status===401){auth=true;changed({auth:true})}else{net=false;changed({offline:true,error:e.message})}throw e}})();try{return await syncing}finally{syncing=null}}
  async function mutate(url,d){return lock(async()=>{const s=await read();if(!s.active)throw error('Сначала войдите в приложение',401);let n,rekey;
-   if(url==='/api/note/create'){const id=uid(),now=Date.now()/1000;n={id,title:'',body:'',folder_id:d.folder_id?Number(d.folder_id):null,pinned:0,revision:1,created:now,updated:now,deleted:null,_remote_revision:0,_head:null};s.notes[id]=n;}
-   else{n=s.notes[d.id];if(!n)throw error('Заметка не найдена',404);if(n.revision!==Number(d.revision)){if(url!=='/api/note/save')throw error('Заметка изменена в другом окне. Обновите список.',409);const from=n.id,id=uid();n={...n,id,revision:0,created:Date.now()/1000,deleted:null,_remote_revision:0,_head:null};s.notes[id]=n;rekey={from,to:id};}if(url==='/api/note/save'){if(n.deleted)throw error('Заметка в корзине',409);if(typeof d.title!=='string'||typeof d.body!=='string'||d.title.length>200||d.body.length>200000)throw error('Превышен размер заметки');Object.assign(n,{title:d.title,body:d.body,folder_id:d.folder_id?Number(d.folder_id):null,pinned:d.pinned?1:0});}else n.deleted=d.restore===true?null:Date.now()/1000;n.revision++;n.updated=Date.now()/1000;}
+   if(url==='/api/note/create'){const id=uid(),now=Date.now()/1000;n={id,title:'',body:'',folder_id:d.folder_id?Number(d.folder_id):null,pinned:0,photos:[],revision:1,created:now,updated:now,deleted:null,_remote_revision:0,_head:null};s.notes[id]=n;}
+   else{n=s.notes[d.id];if(!n)throw error('Заметка не найдена',404);if(n.revision!==Number(d.revision)){if(url!=='/api/note/save')throw error('Заметка изменена в другом окне. Обновите список.',409);const from=n.id,id=uid();n={...n,id,revision:0,created:Date.now()/1000,deleted:null,_remote_revision:0,_head:null};s.notes[id]=n;rekey={from,to:id};}if(url==='/api/note/save'){if(n.deleted)throw error('Заметка в корзине',409);if(typeof d.title!=='string'||typeof d.body!=='string'||d.title.length>200||d.body.length>200000)throw error('Превышен размер заметки');Object.assign(n,{title:d.title,body:d.body,folder_id:d.folder_id?Number(d.folder_id):null,pinned:d.pinned?1:0,photos:d.photos||n.photos||[]});}else n.deleted=d.restore===true?null:Date.now()/1000;n.revision++;n.updated=Date.now()/1000;}
    if(rekey)n.title=n.title.slice(0,180)+' (конфликт)';queueNote(s,n);await write(s);changed(rekey?{rekey,conflict:true}:{});schedule(true);return {...n};})}
  async function request(url,data){
   if(url==='/api/login'||url==='/api/telegram/login'){const response=await raw(url,data);await pull();schedule();return response}
@@ -39,6 +39,6 @@ window.NotesOffline=(()=>{
   if(parsed.pathname==='/api/export')return {version:2,notes:Object.values(s.notes),folders:s.folders,pending:s.queue.length};return raw(url);
  }
  async function state(){const s=await read();return {active:s.active,pending:s.queue.length,online:net&&navigator.onLine!==false,auth,lastSync:s.lastSync}}
- window.addEventListener('online',()=>schedule(true));document.addEventListener('visibilitychange',()=>{if(!document.hidden)schedule()});setInterval(()=>{if(navigator.onLine!==false)schedule()},15000);
+ window.addEventListener('online',()=>schedule(true));document.addEventListener('visibilitychange',()=>{if(!document.hidden)schedule()});setInterval(()=>{if(navigator.onLine!==false)schedule()},3000);
  return {request,sync,state};
 })();
