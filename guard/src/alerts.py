@@ -11,6 +11,7 @@ import urllib.error
 import urllib.request
 import monitor
 import ip_activity
+import bot_diagnostics
 
 DEFAULTS={'enabled':True,'http_limit':240,'bot_limit':60,'cooldown':600,'http_errors':True,'bot_errors':True,'telegram_enabled':False,'bot_token':'','bot_username':'','bot_id':'','group_id':'','group_title':'','epoch':''}
 
@@ -145,11 +146,13 @@ class Service:
         with self.lock,self.database() as db:
             cfg=self.config(db)
             if not cfg['enabled']:return
-            touched=collections.Counter();error_groups={}
+            touched=collections.Counter();error_groups={};responses=collections.defaultdict(collections.Counter)
             for event in events:
                 added=db.execute('INSERT OR IGNORE INTO alert_samples VALUES(?,?,?,?,?)',(event['key'],event['source'],event['peer'],event['time'],event['kind'])).rowcount
                 if not added:continue
-                if event['kind']=='in':touched[(event['source'],event['peer'])]+=1
+                if event['kind']=='in':
+                    touched[(event['source'],event['peer'])]+=1
+                    if 'status' in event:responses[(event['source'],event['peer'])][event['status']]+=1
                 elif event['kind']=='error':
                     key=event['error_key'];group=error_groups.setdefault(key,{'event':event,'count':0});group['count']+=1
             for (source,peer),new_count in touched.items():
@@ -159,6 +162,10 @@ class Service:
                     label=source[4:] if is_web else monitor.BOTS.get(source[4:],{}).get('name',source)
                     title='Высокая частота '+('HTTP-запросов' if is_web else 'сообщений боту')
                     body=f'{label}\n'+('IP: ' if is_web else 'Telegram ID: ')+peer+f'\nЗа последние 60 секунд: {total}. Порог: {threshold}.\nПроверьте активность в Guard.'
+                    if is_web:
+                        codes=responses[(source,peer)]
+                        body+='\nОтветы в новых записях: '+', '.join(str(code)+' — '+str(count) for code,count in sorted(codes.items()))+'.'
+                        body+='\n403/429 — запрос отклонён; 308 — перенаправлен. Число запросов не означает успешный взлом. Статус бана — во вкладке «Защита».'
                     self.record(db,cfg,'spam:'+source+':'+peer,'spam',title,body,new_count,now)
             for key,group in error_groups.items():
                 event=group['event'];enabled=cfg['http_errors'] if event['source'].startswith('web:') else cfg['bot_errors']
@@ -187,13 +194,34 @@ class Service:
             self.ingest(http_samples(raw,max(started,now-180)),now)
         except (OSError,ValueError,TimeoutError):errors['http']='Не удалось проверить журнал запросов'
         for bot in monitor.BOTS:
+            info=None
+            try:
+                info=monitor.docker_api.inspect(monitor.BOTS[bot]['container'])
+                self.observe_bot(bot,info,now)
+            except (OSError,ValueError,TimeoutError):
+                errors[bot]=monitor.BOTS[bot]['name']+': Guard не смог проверить состояние контейнера; остановка бота не подтверждена.'
             try:
                 cursor=self.state('cursor_'+bot)
                 feed=monitor.bot_action(bot,'activity',{'after':cursor})
                 self.ingest(bot_samples(bot,feed.get('events',[])),now)
                 with self.database() as db:self.put(db,'cursor_'+bot,feed['cursor'])
-            except (OSError,ValueError,TimeoutError):errors[bot]='Не удалось проверить активность. Проверьте запуск и обновление бота.'
+            except (OSError,ValueError,TimeoutError):
+                name=monitor.BOTS[bot]['name']
+                errors[bot]=name+(': контейнер '+info['status']+'.' if info and info.get('status')!='running' else ': не удалось прочитать активность Guard. Это не подтверждает остановку бота; проверьте обновление интеграции Guard.')
         with self.database() as db:self.put(db,'last_scan',now);self.put(db,'scan_errors',errors)
+    def observe_bot(self,bot,info,now):
+        status=info.get('status','unknown');name=monitor.BOTS[bot]['name']
+        if status not in ('running','exited','dead','restarting','paused','created'):return
+        key='bot_health_'+bot
+        with self.database() as db:
+            previous=self.state(key,None,db);cfg=self.config(db)
+            self.put(db,key,status)
+            if not cfg['enabled'] or not cfg['bot_errors'] or previous==status:return
+            if status!='running':
+                cause='Нехватка памяти (OOM).' if info.get('oom_killed') else 'Код завершения: '+str(info.get('exit_code','—'))+'. Точная причина требует проверки журнала.'
+                self.record(db,cfg,'bot_health:'+bot,'error','Контейнер бота «'+name+'» не работает',f'Бот: {name}\nКонтейнер: {monitor.BOTS[bot]["container"]}\nСостояние: {status}\n{cause}\nОткройте «Боты» в Guard для диагностики и запуска.',1,now)
+            elif previous and previous!='running':
+                self.record(db,cfg,'bot_recovered:'+bot,'recovery','Контейнер бота «'+name+'» снова запущен',f'Бот: {name}\nКонтейнер снова работает. Доставка сообщений отдельно не проверялась.',1,now)
     def listing(self):
         with self.database() as db:
             return {'alerts':[dict(r) for r in db.execute('SELECT id,kind,title,body,created,last_seen,count,read,delivery FROM alerts ORDER BY id DESC LIMIT 100')],'unread':db.execute('SELECT count(*) FROM alerts WHERE read=0').fetchone()[0],'config':self.public()}
@@ -247,7 +275,7 @@ def http_samples(raw,since):
     result=[]
     for event in monitor.http_events(raw,since):
         source='web:'+event['host'];key=hashlib.sha256(json.dumps(event,sort_keys=True).encode()).hexdigest()
-        result.append({'key':key,'source':source,'peer':event['ip'],'time':event['time'],'kind':'in'})
+        result.append({'key':key,'source':source,'peer':event['ip'],'time':event['time'],'kind':'in','status':event['status']})
         if 500<=event['status']<=599:
             result.append({'key':key+':error','source':source,'peer':event['ip'],'time':event['time'],'kind':'error','error_key':f"http:{event['host']}:{event['status']}:{event['path']}",'title':f"Ошибка HTTP {event['status']}",'body':f"Сайт: {event['host']}\nIP: {event['ip']}\n{event['method']} {event['path']}\nСервер вернул {event['status']}."})
     return result
@@ -259,5 +287,7 @@ def bot_samples(bot,events):
         if event.get('direction') not in ('in','blocked','error'):continue
         error=event['direction']=='error';person=str(event['person']);name=monitor.BOTS[bot]['name']
         identity='' if person=='0' else f"Участник: {str(event.get('name',''))[:80] or person}\nTelegram ID: {person}\n"
-        result.append({'key':f"bot:{bot}:{event['id']}",'source':'bot:'+bot,'peer':person,'time':event['created'],'kind':'error' if error else 'in','error_key':'bot_error:'+bot+':'+person,'title':'Ошибка бота «'+name+'»','body':f"Бот: {name}\n{identity}{str(event.get('text',''))[:400]}"})
+        text=str(event.get('text',''))[:400]
+        detail=('\n'+bot_diagnostics.summary(text)+'\nСбой одного действия не подтверждает остановку всего бота.') if error else ''
+        result.append({'key':f"bot:{bot}:{event['id']}",'source':'bot:'+bot,'peer':person,'time':event['created'],'kind':'error' if error else 'in','error_key':'bot_error:'+bot+':'+person,'title':'Сбой действия бота «'+name+'»','body':f"Бот: {name}\n{identity}{text}{detail}"})
     return result

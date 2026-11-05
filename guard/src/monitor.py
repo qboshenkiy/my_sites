@@ -7,6 +7,7 @@ import subprocess
 import time
 from urllib.parse import urlsplit
 import docker_api
+import bot_diagnostics
 
 BOTS={
  'marathon':{'name':'Марафон','container':'glava-marathon-bot-1','cli':['php','/var/www/html/lib/bot-guard.php']},
@@ -117,8 +118,18 @@ def bots():
     result=[]
     for key,item in BOTS.items():
         row={'id':key,'name':item['name']}
-        try:row.update(docker_api.inspect(item['container']))
-        except (OSError,ValueError):row['status']='unavailable'
+        try:
+            row.update(docker_api.inspect(item['container']))
+            row['container']=item['container']
+            if row.get('oom_killed'):
+                row['diagnosis']='Контейнер завершён из-за нехватки памяти.'
+            elif row['status']!='running':
+                row['diagnosis']='Контейнер не запущен. Код завершения: '+str(row.get('exit_code','—'))+'.'
+            else:row['diagnosis']='Процесс запущен. Это не проверка доставки сообщений Telegram.'
+            try:row['last_error']=bot_diagnostics.recent(docker_api.logs(item['container'],time.time()-86400,tail=80,timestamps=True))
+            except (OSError,ValueError,TimeoutError):row['log_error']='Журнал не удалось прочитать; состояние контейнера показано отдельно.'
+        except (OSError,ValueError,TimeoutError):
+            row.update(status='unavailable',diagnosis='Guard не смог проверить контейнер. Остановка бота не подтверждена.')
         result.append(row)
     return result
 

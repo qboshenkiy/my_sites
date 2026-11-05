@@ -5,14 +5,15 @@ ini_set('display_errors','0');
 require_once __DIR__.'/bot-guard.php';
 function fail(string $message,int $status=400): never {throw new RuntimeException($message,$status);}
 function query(string $sql,array $args=[]): PDOStatement {global $db;$s=$db->prepare($sql);$s->execute($args);return $s;}
-class PulseBotApiException extends RuntimeException {public function __construct(public string $telegramDescription){parent::__construct('Telegram не принял запрос. Проверьте права бота и настройки.');}}
+class PulseBotApiException extends RuntimeException {public function __construct(public string $telegramDescription,int $http=0,string $method=''){parent::__construct('Telegram request failed (HTTP '.$http.'; method '.preg_replace('/[^a-zA-Z]/','',$method).').');}}
 function pulseBotCall(string $method,array $args=[]): mixed {
     $token=getenv('TELEGRAM_BOT_TOKEN')?:'';
     if(!preg_match('/^\d+:[a-zA-Z0-9_-]+$/',$token))throw new RuntimeException('Задайте токен отдельного бота Пульса.');
     $context=stream_context_create(['http'=>['method'=>'POST','header'=>"Content-Type: application/json\r\nConnection: close\r\n",'content'=>json_encode($args),'timeout'=>35,'ignore_errors'=>true,'follow_location'=>0],'ssl'=>['verify_peer'=>true,'verify_peer_name'=>true]]);
     $raw=@file_get_contents('https://api.telegram.org/bot'.$token.'/'.$method,false,$context,0,2000000);$data=$raw!==false?json_decode($raw,true):null;
-    if(!$data)throw new RuntimeException('Нет подтверждения от Telegram. Проверьте подключение.');
-    if(empty($data['ok']))throw new PulseBotApiException((string)($data['description']??''));
+    $http=0;foreach($http_response_header??[] as $header){if(preg_match('/^HTTP\/\S+\s+(\d{3})/',$header,$match))$http=(int)$match[1];}
+    if(!$data)throw new RuntimeException('Telegram request failed (HTTP '.$http.'; method '.preg_replace('/[^a-zA-Z]/','',$method).').');
+    if(empty($data['ok']))throw new PulseBotApiException((string)($data['description']??''),(int)($data['error_code']??$http),$method);
     guardOutgoing($method,$args);
     return $data['result'];
 }

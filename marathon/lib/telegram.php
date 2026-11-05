@@ -101,9 +101,9 @@ function telegramCall(string $method,array $args): array {
     $token=getenv('TELEGRAM_BOT_TOKEN');if(!$token)throw new RuntimeException('Telegram token is not configured.');
     $curl=curl_init('https://api.telegram.org/bot'.$token.'/'.$method);
     curl_setopt_array($curl,[CURLOPT_POST=>true,CURLOPT_POSTFIELDS=>json_encode($args),CURLOPT_HTTPHEADER=>['Content-Type: application/json'],CURLOPT_RETURNTRANSFER=>true,CURLOPT_CONNECTTIMEOUT=>10,CURLOPT_TIMEOUT=>40]);
-    $raw=curl_exec($curl);$code=curl_getinfo($curl,CURLINFO_RESPONSE_CODE);curl_close($curl);
+    $raw=curl_exec($curl);$code=curl_getinfo($curl,CURLINFO_RESPONSE_CODE);$curlCode=curl_errno($curl);curl_close($curl);
     $result=is_string($raw)?json_decode($raw,true):null;
-    if($code!==200||!is_array($result)||!($result['ok']??false))throw new RuntimeException('Telegram request failed (HTTP '.$code.').');
+    if($code!==200||!is_array($result)||!($result['ok']??false))throw new RuntimeException('Telegram request failed (HTTP '.$code.'; cURL '.$curlCode.'; method '.preg_replace('/[^a-zA-Z]/','',$method).').');
     guardOutgoing($method,$args);
     return $result;
 }

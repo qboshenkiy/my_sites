@@ -49,6 +49,11 @@ function guardFailure(array $update,string $stage,?Throwable $error=null): void 
         $id=(string)($from['id']??'0');if(!preg_match('/^\d{1,20}$/',$id))$id='0';
         $text=match($stage){'response'=>'Не удалось отправить ответ Telegram.','connection'=>'Нет связи с Telegram или ошибка фоновой обработки бота.',default=>'Ошибка обработки сообщения.'};
         if($error&&preg_match('/HTTP ([0-9]{3})/',$error->getMessage(),$code))$text.=' HTTP '.$code[1].'.';
+        if($error&&preg_match('/cURL ([0-9]{1,3})/',$error->getMessage(),$curl))$text.=' cURL '.$curl[1].'.';
+        if($error&&preg_match('/method ([a-zA-Z]{1,40})/',$error->getMessage(),$method))$text.=' Метод: '.$method[1].'.';
+        if($error&&str_contains(strtolower($error->getMessage()),'database is locked'))$text.=' Database is locked.';
+        if($error instanceof PDOException)$text.=' Ошибка базы данных.';
+        elseif($error instanceof TypeError||$error instanceof Error)$text.=' Ошибка кода приложения.';
         guardEvent($id,'error',$text);
     }catch(Throwable $ignored){error_log('Guard error audit unavailable');}
 }

@@ -41,11 +41,14 @@ def demux(raw):
 def inspect(name):
     info=json.loads(request('GET','/containers/'+urllib.parse.quote(name,safe='')+'/json'))
     state=info.get('State',{})
-    return {'status':state.get('Status','unknown'),'restarts':info.get('RestartCount',0),'started':state.get('StartedAt','')}
+    return {'status':state.get('Status','unknown'),'restarts':info.get('RestartCount',0),'started':state.get('StartedAt',''),
+            'exit_code':state.get('ExitCode'),'oom_killed':bool(state.get('OOMKilled')),
+            'health':state.get('Health',{}).get('Status'),'finished':state.get('FinishedAt','')}
 
 
-def logs(name,since=0,tail=10000):
+def logs(name,since=0,tail=10000,timestamps=False):
     query=urllib.parse.urlencode({'stdout':1,'stderr':1,'since':int(since),'tail':tail})
+    if timestamps:query+='&timestamps=1'
     return demux(request('GET','/containers/'+urllib.parse.quote(name,safe='')+'/logs?'+query))
 
 
