@@ -70,6 +70,33 @@ class FirewallTests(unittest.TestCase):
         self.assertEqual(proxy_protection.install_imports(updated)[0],updated)
 
 
+    def test_http_gateway_runs_guard_before_redirect_and_migrates_old_config(self):
+        source='notes.example.com {\n reverse_proxy notes:8170\n}\n# Guard HTTP gateway BEGIN\n:80 {\n    redir https://{host}{uri} 308\n}\n# Guard HTTP gateway END\n'
+        updated,_=proxy_protection.install_imports(source)
+        self.assertIn('auto_https disable_redirects',updated)
+        gateway=updated.split('# Guard HTTP gateway BEGIN')[1]
+        self.assertIn('    route {\n'+proxy_protection.IMPORT+'\n        redir',gateway)
+        self.assertEqual(proxy_protection.install_imports(updated)[0],updated)
+        original='{\n email admin@example.com\n auto_https disable_certs\n}\n'+source
+        result,_=proxy_protection.install_imports(original)
+        self.assertIn('email admin@example.com',result)
+        self.assertIn('auto_https disable_certs disable_redirects',result)
+
+    def test_every_app_connector_preserves_guard_when_routes_are_recreated(self):
+        import importlib.util
+        root=Path(__file__).resolve().parents[2]
+        for name in ('notes','kopilka','bookvoice','milk_duty'):
+            spec=importlib.util.spec_from_file_location('connector_'+name,root/name/'src/connect_https.py')
+            module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+            source='main.example.com {\n'+proxy_protection.IMPORT+'\n reverse_proxy marathon:80\n}\n'
+            result=module.route(source,name+'.example.com')
+            block=result.split('# '+{'notes':'Notes','kopilka':'Kopilka','bookvoice':'BookVoice','milk_duty':'MilkDuty'}[name]+' HTTPS BEGIN')[1]
+            self.assertIn(proxy_protection.IMPORT,block,name)
+            self.assertIn('output stdout',block,name)
+            self.assertEqual(module.route(result,name+'.example.com'),result)
+            self.assertNotIn('/data/guard-sensitive.caddy',module.route('main.example.com {\n respond ok\n}\n',name+'.example.com'))
+
+
 class EvidenceTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.old=app.DATA;app.DATA=Path(self.tmp.name);self.addCleanup(setattr,app,'DATA',self.old)

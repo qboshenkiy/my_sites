@@ -16,7 +16,9 @@ def route(source, host):
         raise ValueError('Этот домен уже занят другим маршрутом.')
     if re.search(r'(?m)^\s*reverse_proxy\s+(?:http://)?web:80(?:\s|$)',source):
         raise ValueError('Основной сайт использует неоднозначный адрес web:80. Настройте его стабильный alias через актуальный GitDeck. Пока используйте SSH-туннель.')
-    block=marker+' BEGIN\n'+host+' {\n    encode gzip zstd\n    reverse_proxy kopilka-web:8160\n}\n'+marker+' END'
+    protection=('    import /data/guard-sensitive.caddy # Guard sensitive files\n    log {\n        output stdout\n        format json\n    }\n'
+                if re.search(r'(?m)^\s*import /data/guard-sensitive\.caddy(?:\s|$)',source) else '')
+    block=marker+' BEGIN\n'+host+' {\n'+protection+'    encode gzip zstd\n    reverse_proxy kopilka-web:8160\n}\n'+marker+' END'
     return re.sub(pattern,lambda _:block,source,flags=re.S) if marker+' BEGIN' in source else source.rstrip()+'\n\n'+block+'\n'
 
 

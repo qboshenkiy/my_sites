@@ -2,6 +2,7 @@
 import subprocess
 import time
 import json
+import re
 from pathlib import Path
 
 PROXY='glava-marathon-proxy-1'
@@ -23,7 +24,31 @@ respond @guard_sensitive "Not found" 404
 '''
 
 
+def disable_automatic_redirects(source):
+    # Caddy inserts automatic redirects before a catch-all HTTP route.
+    # Keep certificate automation; our explicit gateway performs the redirect.
+    lines=source.splitlines()
+    first=next((i for i,line in enumerate(lines) if line.strip() and not line.lstrip().startswith('#')),None)
+    if first is not None and lines[first].strip()=='{':
+        depth=0
+        for index in range(first,len(lines)):
+            depth+=lines[index].count('{')-lines[index].count('}')
+            match=re.match(r'^(\s*auto_https\s+)([^#]*)(.*)$',lines[index])
+            if match:
+                options=match[2].split()
+                if 'off' not in options and 'disable_redirects' not in options:
+                    lines[index]=match[1]+' '.join([*options,'disable_redirects'])+(' '+match[3] if match[3] else '')
+                return '\n'.join(lines)+'\n'
+            if index>first and depth==0:break
+        lines.insert(first+1,'    auto_https disable_redirects')
+        return '\n'.join(lines)+'\n'
+    return '{\n    auto_https disable_redirects\n}\n\n'+source
+
+
 def install_imports(source):
+    source=disable_automatic_redirects(source)
+    # Upgrade old gateways whose redir directive ran before the Guard route.
+    source=re.sub(r'# Guard HTTP gateway BEGIN.*?# Guard HTTP gateway END\s*','',source,flags=re.S)
     result=[];block=[];depth=0;count=0
     for line in source.splitlines():
         if depth==0 and not block and not (line.strip().endswith('{') and not line.lstrip().startswith('#')):
@@ -37,7 +62,7 @@ def install_imports(source):
             result.extend(block);block=[]
     if '# Guard HTTP gateway BEGIN' not in source:
         count+=1
-        result += ['# Guard HTTP gateway BEGIN',':80 {',IMPORT,'    log {','        output stdout','        format json','    }','    redir https://{host}{uri} 308','}','# Guard HTTP gateway END']
+        result += ['# Guard HTTP gateway BEGIN',':80 {','    log {','        output stdout','        format json','    }','    route {',IMPORT,'        redir https://{host}{uri} 308','    }','}','# Guard HTTP gateway END']
     if depth or block:raise ValueError('Не удалось безопасно разобрать Caddyfile')
     if not count:raise ValueError('В прокси не найдены сайты')
     return '\n'.join(result).rstrip()+'\n',count

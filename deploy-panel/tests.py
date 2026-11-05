@@ -521,6 +521,15 @@ class SharedHttpsTests(unittest.TestCase):
             return json.dumps({'networks': {'default': {'name': 'glava-marathon_default'}}}).encode()
         return b''
 
+    def test_replacing_https_route_preserves_active_guard(self):
+        self.caddy.write_text('{$DOMAIN} {\n    import /data/guard-sensitive.caddy # Guard sensitive files\n    reverse_proxy web:80\n}\n')
+        with patch.object(app, 'compose', side_effect=self.fake_compose):
+            app.prepare_chrono_https(self.config, self.game, self.env, io.StringIO())
+            app.prepare_chrono_https(self.config, self.game, self.env, io.StringIO())
+        block=self.caddy.read_text().split('# GitDeck chrono-logos BEGIN')[1].split('# GitDeck chrono-logos END')[0]
+        self.assertEqual(block.count('import /data/guard-sensitive.caddy'),1)
+        self.assertIn('output stdout',block)
+
     def test_existing_proxy_route_network_and_port_are_idempotent(self):
         with patch.object(app, 'compose', side_effect=self.fake_compose):
             proxy, undo = app.prepare_chrono_https(self.config, self.game, self.env, io.StringIO())
