@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ArrowDownToLine, ArrowLeft, ArrowRight, BookOpen, ChartNoAxesColumnIncreasing, Check, ChevronRight, Compass, Flame, Flag, GraduationCap, LockKeyhole, MessagesSquare, Mountain, Search, Settings2, Sparkles, Star, Target, Trophy, Volume2, Zap } from 'lucide-react'
 import { allWords, levels, type Exercise, type Word } from './course'
-import { addWords, daily, day, fresh, load, mergeProgress, persist, review, schedule, streak, total, type Progress } from './progress'
+import { addWords, daily, day, fresh, load, mergeProgress, persist, review, schedule, streak, total, type PersonalWord, type Progress } from './progress'
 import { connectTelegram, isNative, speak, type InstallEvent } from './platform'
 import { ExerciseScreen, type ExerciseResult } from './Exercise'
+import { PersonalWords } from './PersonalWords'
 import { LessonWarmup } from './LessonGuide'
 import { lessonGuides } from './lessonGuides'
 import { Conversation } from './Conversation'
@@ -20,6 +21,8 @@ const navigation = [
   {id:'settings',title:'Настройки',icon:Settings2},
 ] as const
 type Page = typeof navigation[number]['id'] | 'install'
+type PracticeWord = Word & { id?: string }
+const practiceKey = (word:PracticeWord) => word.id ? `personal:${word.id}` : word.ky
 type Lesson = typeof levels[number]['lessons'][number]
 const slug = (path: string):Page => navigation.find(item=>item.id===path)?.id ?? (path==='install'?'install':'map')
 function App() {
@@ -33,7 +36,7 @@ function App() {
   const [running,setRunning]=useState(false)
   const [result,setResult]=useState<{title:string;xp:number;mistakes:number;review?:boolean}>()
   const [install,setInstall]=useState<InstallEvent>()
-  const [practice,setPractice]=useState<{words:Word[];index:number;mistakes:number}>()
+  const [practice,setPractice]=useState<{words:PracticeWord[];index:number;mistakes:number;personal?:boolean}>()
   const [search,setSearch]=useState('')
   const [topic,setTopic]=useState('')
   const [filter,setFilter]=useState('all')
@@ -75,6 +78,7 @@ function App() {
   const nextLesson=level.lessons.find(item=>!p.completed[item.id])
   const currentDay=daily(p)
   const currentStreak=streak(p.activity)
+  const personalWords=Object.values(p.personalWords).filter(word=>!word.deleted)
   const learned=allWords.filter(word=>p.cards[word.ky])
   const due=learned.filter(word=>p.cards[word.ky].due<=Date.now()).sort((a,b)=>p.cards[a.ky].due-p.cards[b.ky].due)
   const weak=due.find(word=>p.cards[word.ky].box===0)
@@ -117,7 +121,8 @@ function App() {
     const current=pRef.current
     const word=practice.words[practice.index]
     const errors=record(current,review(word),r)
-    const cards={...current.cards,[word.ky]:schedule(current.cards[word.ky],r.correct)}
+    const key=practiceKey(word)
+    const cards={...current.cards,[key]:schedule(current.cards[key],r.correct)}
     const mistakes=practice.mistakes+Number(!r.correct)
     if (practice.index+1<practice.words.length) {
       await save({...current,errors,cards},true);setPractice({...practice,index:practice.index+1,mistakes});return
@@ -126,7 +131,30 @@ function App() {
     const id='review:'+day()
     const xp=current.activity.some(a=>a.id===id)?0:10
     await save({...current,errors,cards,activity:xp?[...current.activity,{id,day:day(),xp,at}]:current.activity},true)
-    setPractice(undefined);setResult({title:'Повторение слов',xp,mistakes,review:true})
+    setPractice(undefined);setResult({title:practice.personal?'Мои карточки':'Повторение слов',xp,mistakes,review:true})
+  }
+  async function addPersonalWords(pairs:Pick<PersonalWord,'ru'|'ky'>[]) {
+    const current=pRef.current
+    const personalWords={...current.personalWords}
+    const at=Date.now()
+    for (const pair of pairs) {
+      const id=crypto.randomUUID()
+      personalWords[id]={...pair,id,at}
+    }
+    await save({...current,personalWords},true)
+  }
+  async function changePersonalWord(id:string, patch:Partial<Pick<PersonalWord,'ru'|'ky'|'deleted'>>) {
+    const current=pRef.current
+    const word=current.personalWords[id]
+    if (!word || word.deleted) return
+    const at=Date.now()
+    const cards={...current.cards,[`personal:${id}`]:{box:0,due:at,at}}
+    await save({...current,cards,personalWords:{...current.personalWords,[id]:patch.deleted?{id,ru:'',ky:'',at,deleted:true}:{...word,...patch,at}}},true)
+  }
+  function trainPersonalWords() {
+    const words=personalWords.map(word=>({...word,example:'Сверьте ответ с переводом в вашей карточке.'}))
+    words.sort((a,b)=>(p.cards[practiceKey(a)]?.due??0)-(p.cards[practiceKey(b)]?.due??0))
+    setPractice({words,index:0,mistakes:0,personal:true})
   }
   async function installApp() {
     if (!install) return
@@ -179,7 +207,7 @@ function App() {
     {!ready ? <main className="main"><p role="status">Загружаем прогресс…</p></main> :
     <div className={`layout ${page==='map'&&!lesson&&!result?'with-aside':''}`}><main className="main">
       {running&&lesson&&p.draft?.id===lesson.id ? <ExerciseScreen key={lesson.id+p.draft.index} exercise={lesson.exercises[p.draft.index]} index={p.draft.index} length={lesson.exercises.length} title={lesson.title} guide={lessonGuides[lesson.id]} forgiving={p.forgiving} exit={()=>go('map')} next={step}/> :
-      practice ? <ExerciseScreen key={'review'+practice.index} exercise={review(practice.words[practice.index])} index={practice.index} length={practice.words.length} title="Повторение слов" forgiving={p.forgiving} exit={()=>go('words')} next={practiceStep}/> :
+      practice ? <ExerciseScreen key={'review'+practice.index} exercise={review(practice.words[practice.index])} index={practice.index} length={practice.words.length} title={practice.personal?'Мои карточки':'Повторение слов'} forgiving={p.forgiving} exit={()=>go('words')} next={practiceStep}/> :
       result ? <section className="surface finish page-entrance"><div className="finish-icon"><Trophy size={42}/></div><span className="eyebrow">АЗАМАТСЫЗ!</span><h1>{result.review?'Повторение завершено':'Урок завершён'}</h1><p>{result.title}</p><div className="result-numbers"><span><Zap size={21}/> +{result.xp} XP</span><span>{result.mistakes} ошибок / пропусков</span></div><button className="primary" onClick={()=>go(result.review?'words':'map')}>Продолжить <ArrowRight size={19}/></button></section> :
       lesson ? <section className="surface lesson-intro page-entrance">
         <button className="secondary" onClick={()=>go('map')}><ArrowLeft size={17}/> К урокам</button>
@@ -191,6 +219,8 @@ function App() {
       </section> :
       page==='map' ? map :
       page==='words' ? <div className="page-entrance"><div className="page-heading"><span className="eyebrow">ЛИЧНЫЙ СЛОВАРЬ</span><h1>Мои слова</h1><p>{learned.length} изучено · {due.length} пора повторить · {learned.filter(w=>p.cards[w.ky].box>=3).length} закреплено</p></div>
+        <PersonalWords words={personalWords} add={addPersonalWords} edit={changePersonalWord} remove={id=>changePersonalWord(id,{deleted:true})} train={trainPersonalWords}/>
+        <h2 className="course-words-title">Слова из уроков</h2>
         <div className="surface word-tools"><label className="search"><Search size={18}/><input placeholder="Слово или перевод" aria-label="Найти слово" value={search} onChange={e=>setSearch(e.target.value)}/></label><select aria-label="Тема" value={topic} onChange={e=>setTopic(e.target.value)}><option value="">Все темы</option>{levels.flatMap(l=>l.lessons.filter(item=>item.words.length).map(item=><option key={item.id} value={item.id}>{item.title}</option>))}</select><select aria-label="Статус" value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">Все слова</option><option value="due">Пора повторить</option><option value="known">Закреплённые</option></select><button className="primary" disabled={!due.length} onClick={()=>setPractice({words:due.slice(0,8),index:0,mistakes:0})}>Быстрое повторение <ArrowRight size={17}/></button></div>
         {wordError&&<p role="status" className="notice">{wordError}</p>}
         {!visible.length&&<div className="surface empty"><BookOpen size={30}/><h2>{learned.length?'Слов не найдено':'Здесь будут ваши слова'}</h2><p>{learned.length?'Попробуйте изменить поиск или фильтры.':'Завершите урок, чтобы добавить его слова в словарь.'}</p>{!learned.length&&<button className="secondary" onClick={()=>go('map')}>К урокам <ArrowRight size={17}/></button>}</div>}

@@ -222,3 +222,19 @@ button.picked {background:var(--wash);border-color:#79a862;color:var(--ink)}
   .lesson-start .primary {width:100%}
   .question .actions .primary {flex:1 1 auto}
 }
+
+.personal-words {padding:clamp(14px,3vw,23px);margin-bottom:20px}
+.personal-heading {display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.personal-heading h2 {margin:5px 0;font-size:1.5rem}
+.personal-heading p {color:var(--muted)}
+.personal-form {display:grid;gap:8px;margin-top:14px}
+.personal-form label {font-weight:750;display:grid;gap:4px}
+.personal-form textarea {border:1px solid var(--line);border-radius:9px;padding:8px 10px;background:var(--bg);color:var(--ink);width:100%;min-height:85px;resize:vertical}
+.personal-form>.secondary {justify-self:start}
+.personal-list {margin-top:16px}
+.personal-list summary {cursor:pointer;font-weight:750;color:var(--green-2)}
+.personal-list ul {display:grid;gap:6px;margin-top:9px}
+.personal-list li {display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px;background:var(--wash);border-radius:9px;overflow-wrap:anywhere}
+.personal-list li>.personal-form {width:100%;margin:0}
+.personal-controls {display:flex;flex-wrap:wrap;justify-content:end;gap:6px;flex-shrink:0;max-width:65%}
+.course-words-title {font-size:1.23rem;margin-bottom:9px}
