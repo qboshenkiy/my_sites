@@ -193,3 +193,32 @@ button.picked {background:var(--wash);border-color:#79a862;color:var(--ink)}
 @media (max-width:700px) {.right-rail .rail-achieve{grid-column:1/-1}}
 @media (max-width:360px) {.lesson-status{font-size:0}.mascot{opacity:.52}.options{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce) {*{animation:none!important;transition:none!important}}
+
+/* Keep the lesson stages distinct and the grammar examples easy to scan. */
+.guide-card {margin-top:20px;padding:clamp(14px,3vw,24px);background:var(--wash);border:1px solid var(--line);border-radius:15px}
+.guide-card .eyebrow,.guide-hint summary {display:flex;align-items:center;gap:8px}
+.guide-content {display:grid;gap:12px}
+.guide-examples {display:grid;gap:6px}
+.guide-examples div {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;background:var(--paper);border-radius:9px;padding:8px 11px}
+.guide-examples dt {font-weight:800;overflow-wrap:anywhere}
+.guide-examples dd {color:var(--muted);overflow-wrap:anywhere}
+.warmup {padding:17px 0}
+.warmup h2 {font-size:clamp(1.06rem,2.6vw,1.3rem)}
+.warmup .options {margin-top:9px}
+.warmup .feedback {margin-bottom:0}
+.lesson-vocabulary {margin-bottom:14px}
+.lesson-vocabulary summary,.guide-hint summary {cursor:pointer;font-weight:750;color:var(--green-2)}
+.lesson-vocabulary .intro-words {margin:10px 0 0}
+.lesson-start {border-top:1px solid var(--line);padding-top:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.lesson-start p {margin-top:4px;color:var(--muted);font-size:.88rem}
+.guide-hint {border:1px solid var(--line);border-radius:11px;padding:9px 12px;margin-bottom:14px;background:var(--wash)}
+.guide-hint summary {list-style:none}
+.guide-hint summary::-webkit-details-marker {display:none}
+.guide-hint summary svg:last-child {margin-left:auto}
+.guide-hint[open] summary svg:last-child {transform:rotate(180deg)}
+.guide-hint .guide-content {margin-top:10px}
+@media (max-width:520px) {
+  .guide-examples div {grid-template-columns:minmax(0,1fr);gap:2px}
+  .lesson-start .primary {width:100%}
+  .question .actions .primary {flex:1 1 auto}
+}

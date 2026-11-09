@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, Check, Mic, Volume2, X } from 'lucide-react'
 import { kindLabel, type Exercise } from './course'
 import { accepts } from './progress'
+import { GuideHint } from './LessonGuide'
+import type { LessonGuide } from './lessonGuides'
 import { recognize, speak } from './platform'
 
 export function TextAnswer({value, change, label='Ваш ответ', kyrgyz=true, disabled=false}: {
@@ -23,16 +25,20 @@ export function TextAnswer({value, change, label='Ваш ответ', kyrgyz=tru
   </>
 }
 
-export function ExerciseScreen({exercise:q, index, length, title, forgiving, exit, next}:{
-  exercise:Exercise; index:number; length:number; title:string; forgiving:boolean; exit:()=>void;
-  next:(result:{correct:boolean;given:string;expected:string;skipped?:boolean})=>Promise<void>
+export type ExerciseResult = {correct:boolean;given:string;expected:string;skipped?:boolean;firstMistake?:string}
+
+export function ExerciseScreen({exercise:q, index, length, title, guide, forgiving, exit, next}:{
+  exercise:Exercise; index:number; length:number; title:string; guide?:LessonGuide; forgiving:boolean; exit:()=>void;
+  next:(result:ExerciseResult)=>Promise<void>
 }) {
   const [answer,setAnswer]=useState('')
   const [pending,setPending]=useState(false)
+  const [firstMistake,setFirstMistake]=useState<string>()
+  const [retry,setRetry]=useState(false)
   async function advance(result:Parameters<typeof next>[0]) {
     if (pending) return
     setPending(true)
-    try { await next(result) } finally { setPending(false) }
+    try { await next({...result,firstMistake}) } finally { setPending(false) }
   }
   const [tokens,setTokens]=useState<number[]>([])
   const [pairs,setPairs]=useState<Record<number,string>>({})
@@ -41,7 +47,10 @@ export function ExerciseScreen({exercise:q, index, length, title, forgiving, exi
   const [audioError,setAudioError]=useState(false)
   const [mic,setMic]=useState<'idle'|'recording'|'unavailable'>('idle')
   const stop=useRef<(()=>void)|undefined>(undefined)
-  useEffect(()=>()=>stop.current?.(),[])
+  useEffect(()=>{
+    window.scrollTo(0,0)
+    return ()=>stop.current?.()
+  },[])
   const options=q.options ?? []
   const locked=feedback!==undefined
   const given=q.kind==='order' ? tokens.map(i=>options[i]).join(' ') : q.kind==='match' ? q.pairs?.map((_,i)=>pairs[i]).join(' / ') ?? '' : answer
@@ -53,9 +62,16 @@ export function ExerciseScreen({exercise:q, index, length, title, forgiving, exi
     if (locked) return void advance({correct:feedback,given,expected})
     if (!ready) return
     stop.current?.()
-    setFeedback(q.kind==='match'
+    const correct=q.kind==='match'
       ? !!q.pairs?.every((word,i)=>pairs[i]===word.ru)
-      : accepts(given,q.answers,forgiving && q.kind!=='ky-ru' && q.kind!=='speak'))
+      : accepts(given,q.answers,forgiving && q.kind!=='ky-ru' && q.kind!=='speak')
+    if (!correct && guide) {
+      setFirstMistake(firstMistake ?? given)
+      setRetry(true)
+    } else {
+      setRetry(false)
+      setFeedback(correct)
+    }
   }
   function microphone() {
     stop.current?.()
@@ -68,6 +84,7 @@ export function ExerciseScreen({exercise:q, index, length, title, forgiving, exi
       <span className="eyebrow">ЗАДАНИЕ {String(index+1).padStart(2,'0')}</span>
       <h1>{missingAudio ? 'Прочитайте фразу' : kindLabel[q.kind]}</h1>
       <p className="prompt" lang={['ky-ru','speak','gap','dialog'].includes(q.kind)?'ky':undefined}>{missingAudio ? q.audio : q.prompt}</p>
+      {guide && <GuideHint guide={guide} expanded={retry}/>}
       {q.kind==='listen' && <><button className="secondary" disabled={locked} type="button" onClick={()=>{setAudioError(false);speak(q.audio!,()=>setAudioError(true))}}><Volume2 size={19}/> Прослушать</button>{audioError&&<p className="muted" role="status">Аудио недоступно. Выберите фразу по тексту.</p>}</>}
       {q.kind==='speak' && <div className="actions"><button className="secondary" type="button" disabled={locked || mic==='recording'} onClick={microphone}><Mic size={18}/> {mic==='recording'?'Слушаю…':'Включить микрофон'}</button>
         <button className="secondary" type="button" onClick={()=>speak(q.prompt,()=>setAudioError(true))}><Volume2 size={18}/> Послушать</button>
@@ -87,9 +104,11 @@ export function ExerciseScreen({exercise:q, index, length, title, forgiving, exi
       {q.kind==='order' && <><div className="token-tray" aria-label="Ваше предложение">{tokens.map((i,j)=><button key={i} type="button" disabled={locked} onClick={()=>setTokens(tokens.filter((_,k)=>k!==j))}>{options[i]}</button>)}</div><div className="tokens">{options.map((token,i)=><button key={i} type="button" disabled={locked || tokens.includes(i)} onClick={()=>setTokens([...tokens,i])}>{token}</button>)}</div></>}
       {options.length>0 && q.kind!=='order' && <div className="options">{options.map((option,i)=><button type="button" key={option} disabled={locked} aria-pressed={answer===option} className={answer===option?'picked':''} onClick={()=>setAnswer(option)}><span>{i+1}</span>{option}</button>)}</div>}
       {options.length===0 && q.kind!=='match' && <TextAnswer value={answer} change={setAnswer} kyrgyz={q.kind!=='ky-ru'} disabled={locked} label={q.kind==='speak'?'Распознанный текст или ручной ввод':'Ваш ответ'}/>}
+      {retry && <div className="feedback wrong" role="status"><strong>Ещё одна попытка</strong><p>Сверьтесь с правилом выше и измените ответ.</p></div>}
       {locked && <div className={feedback?'feedback correct':'feedback wrong'} role="status"><strong>{feedback?<Check size={18}/>:<X size={18}/>} {feedback?'Туура! Верно.':'Правильный вариант'}</strong>{!feedback && <p>{expected}</p>}<small>{q.why}</small></div>}
       <div className="actions">
         <button className="primary" disabled={pending||(!locked&&!ready)} type="submit">{locked?'Дальше':'Проверить'} <ArrowRight size={19}/></button>
+        {retry && <button type="button" className="secondary" onClick={()=>{setRetry(false);setFeedback(false)}}>Показать ответ</button>}
         {q.kind==='speak' && !locked && <button type="button" className="secondary" disabled={pending} onClick={()=>void advance({correct:false,given:'',expected,skipped:true})}>Пропустить микрофон</button>}
       </div>
     </form>

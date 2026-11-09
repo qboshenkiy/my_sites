@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { ArrowDownToLine, ArrowLeft, ArrowRight, BookOpen, ChartNoAxesColumnIncreasing, Check, ChevronRight, CircleHelp, Compass, Flame, Flag, GraduationCap, LockKeyhole, MessagesSquare, Mountain, Search, Settings2, Sparkles, Star, Target, Trophy, Volume2, Zap } from 'lucide-react'
+import { ArrowDownToLine, ArrowLeft, ArrowRight, BookOpen, ChartNoAxesColumnIncreasing, Check, ChevronRight, Compass, Flame, Flag, GraduationCap, LockKeyhole, MessagesSquare, Mountain, Search, Settings2, Sparkles, Star, Target, Trophy, Volume2, Zap } from 'lucide-react'
 import { allWords, levels, type Exercise, type Word } from './course'
 import { addWords, daily, day, fresh, load, mergeProgress, persist, review, schedule, streak, total, type Progress } from './progress'
 import { connectTelegram, isNative, speak, type InstallEvent } from './platform'
-import { ExerciseScreen } from './Exercise'
+import { ExerciseScreen, type ExerciseResult } from './Exercise'
+import { LessonWarmup } from './LessonGuide'
+import { lessonGuides } from './lessonGuides'
 import { Conversation } from './Conversation'
 import { Mascot } from './Mascot'
 import { cloud, synchronize } from './cloud'
@@ -19,7 +21,6 @@ const navigation = [
 ] as const
 type Page = typeof navigation[number]['id'] | 'install'
 type Lesson = typeof levels[number]['lessons'][number]
-type Result = {correct:boolean;given:string;expected:string;skipped?:boolean}
 const slug = (path: string):Page => navigation.find(item=>item.id===path)?.id ?? (path==='install'?'install':'map')
 function App() {
   const [p,setP]=useState<Progress>(fresh)
@@ -90,15 +91,15 @@ function App() {
     setRunning(true)
     window.scrollTo(0,0)
   }
-  function record(current:Progress, q:Exercise, r:Result) {
-    if (r.correct || r.skipped) return current.errors
-    return [{id:crypto.randomUUID(),prompt:q.prompt,given:r.given,expected:r.expected,at:Date.now()},...current.errors].slice(0,100)
+  function record(current:Progress, q:Exercise, r:ExerciseResult) {
+    if ((r.correct || r.skipped) && r.firstMistake === undefined) return current.errors
+    return [{id:crypto.randomUUID(),prompt:q.prompt,given:r.firstMistake ?? r.given,expected:r.expected,at:Date.now()},...current.errors].slice(0,100)
   }
-  async function step(r:Result) {
+  async function step(r:ExerciseResult) {
     const current=pRef.current
     const draft=current.draft
     if (!lesson || !draft || draft.id!==lesson.id) return
-    const mistakes=draft.mistakes+Number(!r.correct)
+    const mistakes=draft.mistakes+Number(!r.correct || r.firstMistake !== undefined)
     const errors=record(current,lesson.exercises[draft.index],r)
     if (draft.index+1<lesson.exercises.length) {
       await save({...current,errors,draft:{...draft,index:draft.index+1,mistakes}},true)
@@ -111,7 +112,7 @@ function App() {
     await save({...current,completed,activity,cards:addWords(current,lesson.words),errors,draft:undefined},true)
     setLesson(undefined);setRunning(false);setResult({title:lesson.title,xp,mistakes});window.scrollTo(0,0)
   }
-  async function practiceStep(r:Result) {
+  async function practiceStep(r:ExerciseResult) {
     if (!practice) return
     const current=pRef.current
     const word=practice.words[practice.index]
@@ -177,10 +178,17 @@ function App() {
     {storageError&&<p role="alert" className="notice">{storageError}</p>}
     {!ready ? <main className="main"><p role="status">Загружаем прогресс…</p></main> :
     <div className={`layout ${page==='map'&&!lesson&&!result?'with-aside':''}`}><main className="main">
-      {running&&lesson&&p.draft?.id===lesson.id ? <ExerciseScreen key={lesson.id+p.draft.index} exercise={lesson.exercises[p.draft.index]} index={p.draft.index} length={lesson.exercises.length} title={lesson.title} forgiving={p.forgiving} exit={()=>go('map')} next={step}/> :
+      {running&&lesson&&p.draft?.id===lesson.id ? <ExerciseScreen key={lesson.id+p.draft.index} exercise={lesson.exercises[p.draft.index]} index={p.draft.index} length={lesson.exercises.length} title={lesson.title} guide={lessonGuides[lesson.id]} forgiving={p.forgiving} exit={()=>go('map')} next={step}/> :
       practice ? <ExerciseScreen key={'review'+practice.index} exercise={review(practice.words[practice.index])} index={practice.index} length={practice.words.length} title="Повторение слов" forgiving={p.forgiving} exit={()=>go('words')} next={practiceStep}/> :
       result ? <section className="surface finish page-entrance"><div className="finish-icon"><Trophy size={42}/></div><span className="eyebrow">АЗАМАТСЫЗ!</span><h1>{result.review?'Повторение завершено':'Урок завершён'}</h1><p>{result.title}</p><div className="result-numbers"><span><Zap size={21}/> +{result.xp} XP</span><span>{result.mistakes} ошибок / пропусков</span></div><button className="primary" onClick={()=>go(result.review?'words':'map')}>Продолжить <ArrowRight size={19}/></button></section> :
-      lesson ? <section className="surface lesson-intro page-entrance"><button className="secondary" onClick={()=>go('map')}><ArrowLeft size={17}/> К урокам</button><span className="eyebrow">{level.id} · {level.title}</span><h1>{lesson.title}</h1><p className="lead">{lesson.goal}</p><div className="feedback"><strong><CircleHelp size={19}/> Правило</strong><p>{lesson.note}</p></div>{lesson.words.length>0&&<><h2>Новые слова</h2><div className="intro-words">{lesson.words.map(word=><div key={word.ky}><b lang="ky">{word.ky}</b><small>{word.ru}</small></div>)}</div></>}<button className="primary" onClick={()=>begin(lesson)}>{p.draft?.id===lesson.id?'Продолжить задания':'Перейти к заданиям'} <ArrowRight size={19}/></button></section> :
+      lesson ? <section className="surface lesson-intro page-entrance">
+        <button className="secondary" onClick={()=>go('map')}><ArrowLeft size={17}/> К урокам</button>
+        <span className="eyebrow">{level.id} · {level.title}</span>
+        <h1>{lesson.title}</h1><p className="lead">{lesson.goal}</p>
+        <LessonWarmup key={lesson.id} guide={lessonGuides[lesson.id]}/>
+        {lesson.words.length>0&&<details className="lesson-vocabulary"><summary>Слова урока · {lesson.words.length}</summary><div className="intro-words">{lesson.words.map(word=><div key={word.ky}><b lang="ky">{word.ky}</b><small>{word.ru}</small></div>)}</div></details>}
+        <div className="lesson-start"><div><span className="eyebrow">ШАГ 3 · ПРАКТИКА</span><p>Правило можно открыть в любом задании.</p></div><button className="primary" onClick={()=>begin(lesson)}>{p.draft?.id===lesson.id?'Продолжить задания':'Перейти к заданиям'} <ArrowRight size={19}/></button></div>
+      </section> :
       page==='map' ? map :
       page==='words' ? <div className="page-entrance"><div className="page-heading"><span className="eyebrow">ЛИЧНЫЙ СЛОВАРЬ</span><h1>Мои слова</h1><p>{learned.length} изучено · {due.length} пора повторить · {learned.filter(w=>p.cards[w.ky].box>=3).length} закреплено</p></div>
         <div className="surface word-tools"><label className="search"><Search size={18}/><input placeholder="Слово или перевод" aria-label="Найти слово" value={search} onChange={e=>setSearch(e.target.value)}/></label><select aria-label="Тема" value={topic} onChange={e=>setTopic(e.target.value)}><option value="">Все темы</option>{levels.flatMap(l=>l.lessons.filter(item=>item.words.length).map(item=><option key={item.id} value={item.id}>{item.title}</option>))}</select><select aria-label="Статус" value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">Все слова</option><option value="due">Пора повторить</option><option value="known">Закреплённые</option></select><button className="primary" disabled={!due.length} onClick={()=>setPractice({words:due.slice(0,8),index:0,mistakes:0})}>Быстрое повторение <ArrowRight size={17}/></button></div>
