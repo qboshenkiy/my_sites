@@ -124,7 +124,7 @@ class Service:
                         member=self.transport(cfg['bot_token'],'getChatMember',{'chat_id':chat['id'],'user_id':sender['id']})
                         if member.get('status') in ('creator','administrator') and str(chat['id']).startswith('-'):
                             # Send permission must work before changing the destination.
-                            self.transport(cfg['bot_token'],'sendMessage',{'chat_id':chat['id'],'text':'✅ Guard подключён. Сюда будут приходить предупреждения о высокой частоте запросов, ошибках 500–599 и сбоях ботов. Настройки: https://guard.vano.sbena.net','link_preview_options':{'is_disabled':True}})
+                            self.transport(cfg['bot_token'],'sendMessage',{'chat_id':chat['id'],'text':'✅ Guard подключён. Сюда будут приходить предупреждения о высокой частоте запросов, ошибках 500–599 и сбоях ботов. Настройки: http://localhost:8150 (через SSH-туннель)','link_preview_options':{'is_disabled':True}})
                             with self.database() as db:
                                 cfg.update(group_id=str(chat['id']),group_title=str(chat.get('title','Группа'))[:160])
                                 db.execute('UPDATE notification_config SET value=? WHERE id=1',(json.dumps(cfg),));db.execute('DELETE FROM notification_pair')
@@ -180,13 +180,13 @@ class Service:
             with self.database() as db:self.put(db,'http_started',started)
         try:
             try:
-                raw=monitor.docker_api.logs(monitor.PROXY,max(started,now-180),tail=2000)
+                raw=monitor.proxy_logs(max(started,now-180),tail=2000)
             except ValueError:
-                raw=monitor.docker_api.logs(monitor.PROXY,max(started,now-180),tail=200)
+                raw=monitor.proxy_logs(max(started,now-180),tail=200)
                 errors['http_sample']='Большой поток запросов: проверена сокращённая выборка журнала.'
             if not self.state('traffic_backfill_done',False):
                 try:
-                    previous=monitor.docker_api.logs(monitor.PROXY,now-86400,tail=10000)
+                    previous=monitor.proxy_logs(now-86400,tail=10000)
                 except ValueError:previous=raw
                 ip_activity.record_raw(self.database,previous,now-86400)
                 with self.database() as db:self.put(db,'traffic_backfill_done',True)
@@ -196,7 +196,7 @@ class Service:
         for bot in monitor.BOTS:
             info=None
             try:
-                info=monitor.docker_api.inspect(monitor.BOTS[bot]['container'])
+                info=monitor.inspect_bot(bot)
                 self.observe_bot(bot,info,now)
             except (OSError,ValueError,TimeoutError):
                 errors[bot]=monitor.BOTS[bot]['name']+': Guard не смог проверить состояние контейнера; остановка бота не подтверждена.'
@@ -242,7 +242,7 @@ class Service:
             text='✅ Guard: проверка уведомлений. Группа подключена, отправка работает.' if test else '🛡 Guard · предупреждения\n\n'+'\n\n'.join(f"#{r['id']} · {r['title']}\n{r['body']}\nСобытий: {r['count']}" for r in rows)
             if len(text)>3800:text=text[:3750]+'\n… Подробности в Guard.'
             try:
-                self.transport(cfg['bot_token'],'sendMessage',{'chat_id':cfg['group_id'],'text':text+'\n\nhttps://guard.vano.sbena.net','link_preview_options':{'is_disabled':True}})
+                self.transport(cfg['bot_token'],'sendMessage',{'chat_id':cfg['group_id'],'text':text+'\n\nhttp://localhost:8150 (через SSH-туннель)','link_preview_options':{'is_disabled':True}})
             except TelegramError as error:
                 with self.database() as db:self.put(db,'delivery_error',str(error));self.put(db,'retry_at',now+max(60,error.retry_after))
                 raise

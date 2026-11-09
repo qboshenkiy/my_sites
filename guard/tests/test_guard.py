@@ -20,6 +20,7 @@ ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'guard/src'))
 import app
 import docker_api
+import docker_bridge
 import monitor
 spec=importlib.util.spec_from_file_location('guard_setup',ROOT/'guard/src/setup.py');setup=importlib.util.module_from_spec(spec);spec.loader.exec_module(setup)
 spec=importlib.util.spec_from_file_location('milk_guard',ROOT/'milk_duty/src/bot_guard.py');milk=importlib.util.module_from_spec(spec);spec.loader.exec_module(milk)
@@ -44,10 +45,34 @@ class MonitorTests(unittest.TestCase):
         with self.assertRaises(ValueError):monitor.bot_control('marathon;reboot','restart')
         with self.assertRaises(ValueError):monitor.bot_control('milk','stop')
         with self.assertRaises(ValueError):monitor.bot_action('pulse','exec',{})
-    def test_https_routes_idempotent_and_all_hosts_logged(self):
-        source='{$DOMAIN} {\n reverse_proxy web:80\n}\n\nhttps://pulse.vano.sbena.net {\n log {\n output stdout\n }\n reverse_proxy pulse:80\n}\n'
-        once=setup.route(source,'');twice=setup.route(once,'')
-        self.assertEqual(once,twice);self.assertEqual(once.count('# Guard HTTPS BEGIN'),1);self.assertEqual(once.count('log {'),3)
+    def test_host_bridge_rejects_raw_docker_and_cross_container_operations(self):
+        forbidden = [
+            {'operation':'request','path':'/containers/create'},
+            {'operation':'inspect_bot','bot':'chrono-logos-db-1'},
+            {'operation':'bot_action','bot':'pulse','action':'exec','data':{'command':'id'}},
+            {'operation':'bot_action','bot':'milk','action':'identity','data':{}},
+            {'operation':'bot_control','bot':'milk','action':'stop'},
+        ]
+        with patch.object(docker_api,'request') as docker:
+            for operation in forbidden:
+                with self.subTest(operation=operation), self.assertRaises(ValueError):
+                    docker_bridge.dispatch(operation)
+            docker.assert_not_called()
+        with patch.object(monitor,'bot_action',return_value={'ok':True}) as action:
+            result=docker_bridge.dispatch({'operation':'bot_action','bot':'pulse','action':'send',
+                                          'data':{'person':'123','text':'Привет','command':'id'}})
+        self.assertEqual(result,{'ok':True})
+        action.assert_called_once_with('pulse','send',{'person':'123','text':'Привет'})
+
+    def test_removing_public_guard_route_preserves_other_hosts(self):
+        source = '{$DOMAIN} {\n reverse_proxy web:80\n}\n'
+        source += 'https://pulse.vano.sbena.net {\n log {\n output stdout\n }\n reverse_proxy pulse:80\n}\n'
+        source += '# Guard HTTPS BEGIN\nguard.vano.sbena.net {\n reverse_proxy guard-web:8150\n}\n# Guard HTTPS END\n'
+        result = setup.route(source)
+        self.assertEqual(result, setup.route(result))
+        self.assertNotIn('guard.vano.sbena.net', result)
+        self.assertIn('reverse_proxy pulse:80', result)
+        self.assertEqual(result.count('log {'), 2)
     def test_php_audit_sources_identical(self):
         self.assertEqual((ROOT/'marathon/lib/bot-guard.php').read_bytes(),(ROOT/'assets/bot-guard.php').read_bytes())
 
@@ -102,6 +127,7 @@ class HttpTests(unittest.TestCase):
     def test_auth_host_csrf_and_logout(self):
         self.assertEqual(self.req('/api/bots')[0],401)
         self.assertEqual(self.req('/health',host='evil.test')[0],403)
+        self.assertEqual(self.req('/health',host='guard.vano.sbena.net')[0],403)
         self.assertEqual(self.req('/api/login',{'password':'guard-test-password-2026'},origin='http://evil.test')[0],403)
         status,auth=self.req('/api/login',{'password':'guard-test-password-2026'});self.assertEqual(status,200)
         with patch.object(monitor,'bot_control',return_value={'ok':True}) as control:

@@ -7,6 +7,7 @@ import subprocess
 import time
 from urllib.parse import urlsplit
 import docker_api
+import docker_bridge
 import bot_diagnostics
 
 BOTS={
@@ -40,6 +41,8 @@ def ssh_events(raw):
 
 
 def ssh(since):
+    if docker_bridge.enabled():
+        return docker_bridge.request('ssh',since=since)
     start=dt.datetime.fromtimestamp(since,dt.timezone.utc).isoformat()
     try:
         result=subprocess.run(['journalctl','-u','ssh.service','--since',start,'-n','10000','-o','json','--no-pager'],capture_output=True,timeout=12)
@@ -107,7 +110,21 @@ def seed_people(bot):
         docker_api.execute(item['container'],['python','-c',script])
 
 
+def proxy_logs(since,tail=10000):
+    if docker_bridge.enabled():
+        return docker_bridge.request('proxy_logs',since=since,tail=tail)
+    return docker_api.logs(PROXY,since,tail=tail)
+
+
+def inspect_bot(bot):
+    if docker_bridge.enabled():
+        return docker_bridge.request('inspect_bot',bot=bot)
+    return docker_api.inspect(BOTS[bot]['container'])
+
+
 def bot_action(bot,action,data=None):
+    if docker_bridge.enabled():
+        return docker_bridge.request('bot_action',bot=bot,action=action,data=data or {})
     if not isinstance(bot,str) or not isinstance(action,str) or bot not in BOTS or action not in ('people','history','block','unblock','send','activity','identity'):raise ValueError('Выберите бота и действие')
     item=BOTS[bot]
     if action=='people':seed_people(bot)
@@ -115,6 +132,8 @@ def bot_action(bot,action,data=None):
 
 
 def bots():
+    if docker_bridge.enabled():
+        return docker_bridge.request('bots')
     result=[]
     for key,item in BOTS.items():
         row={'id':key,'name':item['name']}
@@ -135,6 +154,8 @@ def bots():
 
 
 def bot_control(bot,action):
+    if docker_bridge.enabled():
+        return docker_bridge.request('bot_control',bot=bot,action=action)
     if not isinstance(bot,str) or not isinstance(action,str) or bot not in BOTS or action not in ('start','stop','restart'):raise ValueError('Выберите бота и действие')
     # Milk's bot shares its web process. Avoid stopping its website from the bot page.
     if bot=='milk':raise ValueError('Бот «Молоко» работает внутри сайта. Управляйте контейнером через GitDeck.')
@@ -143,6 +164,8 @@ def bot_control(bot,action):
 
 
 def installed_bot_ids():
+    if docker_bridge.enabled():
+        return set(docker_bridge.request('installed_bot_ids'))
     result=set()
     for bot,item in BOTS.items():
         try:

@@ -3,17 +3,14 @@ services:
     build: .
     restart: unless-stopped
     environment:
-      GUARD_DOMAIN: guard.vano.sbena.net
+      GUARD_DOCKER_BRIDGE: /run/guard-docker/api.sock
       DATA_DIR: /data
     ports:
       - "127.0.0.1:8150:8150"
     volumes:
       - guard-data:/data
       - /run/guard-firewall:/run/guard-firewall:ro
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /run/log/journal:/run/log/journal:ro
-      - /var/log/journal:/var/log/journal:ro
-      - /etc/machine-id:/etc/machine-id:ro
+      - /run/guard-docker:/run/guard-docker:ro
     read_only: true
     tmpfs: [/tmp]
     cap_drop: [ALL]

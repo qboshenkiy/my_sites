@@ -23,7 +23,7 @@ import alerts as notifications
 
 ROOT=Path(__file__).resolve().parents[1]
 DATA=Path(os.getenv('DATA_DIR','/data'))
-HOST=os.getenv('GUARD_DOMAIN','guard.vano.sbena.net')
+HOST='localhost:8150'
 
 
 @contextlib.contextmanager
@@ -69,10 +69,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self,*args):pass
     def host_valid(self):
         host=self.headers.get('Host','')
-        return host==HOST or host in ('127.0.0.1:8150','localhost:8150')
+        return host in ('127.0.0.1:8150',HOST)
     def ip(self):
-        # Caddy overwrites X-Forwarded-For; direct port is bound to host loopback only.
-        return monitor.valid_ip(self.headers.get('X-Forwarded-For','').split(',')[0].strip()) or self.client_address[0]
+        return self.client_address[0]
     def send(self,status,value,cookie=None,content_type='application/json; charset=utf-8'):
         body=value if isinstance(value,bytes) else json.dumps(value,ensure_ascii=False).encode()
         self.send_response(status);self.send_header('Content-Type',content_type)
@@ -132,7 +131,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     since=time.time()-period;result={'updated_at':time.time(),'period':period,'errors':{}}
                     try:result['ssh']=monitor.ssh(since)
                     except (OSError,ValueError,TimeoutError) as error:result['ssh']=[];result['errors']['ssh']=str(error)
-                    try:result['http']=monitor.traffic(monitor.docker_api.logs(monitor.PROXY,since),since)
+                    try:result['http']=monitor.traffic(monitor.proxy_logs(since),since)
                     except (OSError,ValueError,TimeoutError) as error:result['http']={};result['errors']['http']=str(error)
                     return result
                 return self.send(200,CACHE.get(('security',period),collect))
@@ -147,7 +146,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except (OSError,TimeoutError,sqlite3.Error):return self.send(503,{'error':'Не удалось загрузить данные. Проверьте состояние сервиса или обновление бота.'})
     def do_POST(self):
         if not self.host_valid():return self.send(403,{'error':'Недопустимый адрес'})
-        scheme='https' if self.headers.get('X-Forwarded-Proto')=='https' else 'http'
+        scheme='http'
         if self.headers.get('Origin')!=scheme+'://'+self.headers.get('Host',''):return self.send(403,{'error':'Недопустимый источник запроса'})
         try:
             length=int(self.headers.get('Content-Length','0'))
