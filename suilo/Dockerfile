@@ -1,0 +1,20 @@
+FROM node:24-bookworm-slim AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY index.html tsconfig.json vite.config.ts ./
+COPY src src
+COPY public public
+ARG VITE_SUPABASE_URL
+ARG VITE_SUPABASE_ANON_KEY
+RUN npm run build
+
+FROM python:3.14-slim AS bot
+WORKDIR /app
+COPY ops/bot.py ./
+USER 65534:65534
+CMD ["python", "-u", "/app/bot.py"]
+
+FROM nginxinc/nginx-unprivileged:1.28-alpine AS web
+COPY ops/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html

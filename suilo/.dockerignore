@@ -1,0 +1,13 @@
+*
+!src/
+!src/**
+!public/
+!public/**
+!ops/
+!ops/bot.py
+!ops/nginx.conf
+!index.html
+!package.json
+!package-lock.json
+!tsconfig.json
+!vite.config.ts

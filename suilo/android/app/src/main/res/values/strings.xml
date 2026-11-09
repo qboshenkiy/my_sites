@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Сүйлө</string>
+    <string name="title_activity_main">Сүйлө</string>
+    <string name="package_name">net.sbena.vano.suilo</string>
+    <string name="custom_url_scheme">net.sbena.vano.suilo</string>
+</resources>

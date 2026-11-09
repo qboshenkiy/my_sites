@@ -1,0 +1,33 @@
+name: suilo
+services:
+  web:
+    build:
+      context: .
+      target: web
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, wget, -qO, /dev/null, http://127.0.0.1:8080/healthz]
+      interval: 10s
+      timeout: 4s
+      retries: 4
+    logging: &logs
+      driver: json-file
+      options: {max-size: "5m", max-file: "2"}
+  bot:
+    build: {context: ., target: bot}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      APP_URL: ${APP_URL:-https://suilo.vano.sbena.net/}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-duolingo_by_vano_bot}
+    logging: *logs
