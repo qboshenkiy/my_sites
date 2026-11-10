@@ -7,6 +7,20 @@ from pathlib import Path
 
 PROXY='glava-marathon-proxy-1'
 IMPORT='    import /data/guard-sensitive.caddy # Guard sensitive files'
+HTTP_GATEWAY=rf'''# Guard HTTP gateway BEGIN
+:80 {{
+    log {{
+        output stdout
+        format json
+    }}
+    @literal_ip vars_regexp {{host}} `^(?:[0-9]+(?:\.[0-9]+){{3}}\.?|\[?[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]+\]?)$`
+    route {{
+        respond @literal_ip "Not found" 404
+{IMPORT}
+        redir https://{{host}}{{uri}} 308
+    }}
+}}
+# Guard HTTP gateway END'''
 SNIPPET=r'''# Managed by Guard: shared rate limit and sensitive file protection
 route {
     forward_auth unix//data/guard-request.sock {
@@ -62,7 +76,7 @@ def install_imports(source):
             result.extend(block);block=[]
     if '# Guard HTTP gateway BEGIN' not in source:
         count+=1
-        result += ['# Guard HTTP gateway BEGIN',':80 {','    log {','        output stdout','        format json','    }','    route {',IMPORT,'        redir https://{host}{uri} 308','    }','}','# Guard HTTP gateway END']
+        result.append(HTTP_GATEWAY)
     if depth or block:raise ValueError('Не удалось безопасно разобрать Caddyfile')
     if not count:raise ValueError('В прокси не найдены сайты')
     return '\n'.join(result).rstrip()+'\n',count

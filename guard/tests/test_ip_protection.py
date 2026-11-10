@@ -75,7 +75,7 @@ class FirewallTests(unittest.TestCase):
         updated,_=proxy_protection.install_imports(source)
         self.assertIn('auto_https disable_redirects',updated)
         gateway=updated.split('# Guard HTTP gateway BEGIN')[1]
-        self.assertIn('    route {\n'+proxy_protection.IMPORT+'\n        redir',gateway)
+        self.assertIn('    route {\n        respond @literal_ip "Not found" 404\n'+proxy_protection.IMPORT+'\n        redir',gateway)
         self.assertEqual(proxy_protection.install_imports(updated)[0],updated)
         original='{\n email admin@example.com\n auto_https disable_certs\n}\n'+source
         result,_=proxy_protection.install_imports(original)
