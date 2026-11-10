@@ -174,7 +174,7 @@ def document(title, content):
     return ('<!doctype html><html lang="ru"><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
             '<meta name="robots" content="noindex"><title>' + esc(title) +
-            '</title><link rel="stylesheet" href="/style.css"><main class="shell admin">' + content + '</main></html>')
+            '</title><link rel="icon" href="/signal.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css"><main class="shell admin">' + content + '</main></html>')
 
 
 class Handler(BaseHTTPRequestHandler):
