@@ -21,8 +21,8 @@ const fs=require('node:fs');const path=require('node:path');
    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'report page overflow '+width);
    await page.screenshot({path:path.join(folder,`game-report-${width}.png`),fullPage:true});
   }
-  await page.locator('.report-menu-button').click();assert.equal(await page.locator('[data-action="participants"]').isVisible(),true);
-  await page.locator('.report-menu-button').click();assert.equal(await page.locator('[data-action="participants"]').isVisible(),false);
+  await page.locator('.mobile-menu-button').click();assert.equal(await page.locator('[data-action="participants"]').isVisible(),true);
+  await page.locator('.mobile-menu-button').click();assert.equal(await page.locator('[data-action="participants"]').isVisible(),false);
   await page.click('[data-action="report-save"]');await page.waitForFunction(()=>document.querySelector('#report-save-state')?.textContent==='Ведомость сохранена');
   await page.click('[data-action="report-open-results"]');await page.waitForSelector('.assessment-list');
   assert.match(await page.textContent('.assessment-list'),/Из игры/);assert.match(await page.textContent('.assessment-list'),/75%/);

@@ -1,24 +1,6 @@
 const communityStaff = () => ['admin','moderator'].includes(boot?.user?.role);
 let assessmentData = [], directoryUsers = [], assessmentDraft = null;
 
-const originalShell = shell;
-shell = function(content, selected='quizzes') {
-  originalShell(content,selected);
-  const sidebar=document.querySelector('.sidebar');
-  const navIcons={catalog:'library',results:'chart',assessments:'table',participants:'users',standings:'chart'};
-  const nav=(action,title,active=false)=>`<button class="nav ${active?'active':''}" data-action="${action}"><span>${icon(navIcons[action])}</span><span>${title.replace(/^[^А-ЯA-Z]+/u,'')}</span></button>`;
-  sidebar.querySelector('[data-action="dashboard"]').insertAdjacentHTML('afterend',nav('catalog','◎ Общий каталог',page==='catalog'));
-  sidebar.querySelector('.sidebar-tip').insertAdjacentHTML('beforebegin',nav('results','✓ Мои результаты',page==='results')+(boot.user?nav('standings','Общий рейтинг',page==='standings'):'')+(communityStaff()?nav('assessments','▤ Ведомости тестов',['assessments','assessment-editor'].includes(page))+nav('participants','♙ Участники',page==='participants'):''));
-  const account=sidebar.querySelector('.account');
-  account.innerHTML=boot.user?`<span class="avatar">${esc(boot.user.name.slice(0,1))}</span><div>${esc(boot.user.name)}<small>${esc({admin:'Администратор',moderator:'Модератор',participant:'Участник'}[boot.user.role])}</small></div><button class="icon-button" title="Выйти" data-action="logout">${AppUI.icon('logout')}</button>`:'<button class="primary" data-action="account">Войти в аккаунт</button>';
-  if(!boot.user) sidebar.querySelectorAll('[data-action="dashboard"],[data-action="sessions"],[data-action="results"]').forEach(b=>b.hidden=true);
-  const heading=document.querySelector('.topbar>span');
-  heading.textContent=({catalog:'Общий каталог',results:'Мои результаты',assessments:'Ведомости тестов','assessment-editor':'Ведомость теста',participants:'Участники',standings:'Общий рейтинг'})[page]||heading.textContent;
-  sidebar.querySelector('.workspace small').textContent=boot.user?'Опросники, игры и результаты':'Каталог и вход в игру';
-  const context=sidebar.querySelector('.sidebar-tip');context.className='sidebar-tip nav-context';
-  context.innerHTML=boot.user?`<strong>${communityStaff()?'Пространство команды':'Личный кабинет'}</strong><p>${communityStaff()?'Создавайте опросники, запускайте игры и проверяйте результаты.':'Ваши результаты сохраняются в профиле. В игру можно войти по коду ведущего.'}</p>`:'<strong>Вы пока не вошли</strong><p>Общий каталог и вход по коду доступны сразу. Войдите, чтобы сохранять результаты.</p>';
-
-};
 const originalDashboard=dashboard;
 const originalJoinPage=joinPage;
 joinPage=function(){
@@ -31,13 +13,12 @@ dashboard=async function(tab='quizzes') {
 };
 const originalCard=card;
 card=function(q,i) {
-  let html=originalCard(q,i);
-  html=html.replace('<div class="card-meta">',`<div class="visibility-badge">${q.visibility==='public'?'◎ Опубликован в каталоге':'♧ Личный · виден только вам'}</div><div class="card-meta">`);
-  return html.replace('</div></div></article>',`<button class="icon-button" data-action="visibility" data-id="${esc(q.id)}" title="${q.visibility==='public'?'Сделать личным':'Опубликовать'}">${q.visibility==='public'?'♧':'◎'}</button></div></div></article>`);
+  const published = q.visibility === 'public';
+  return originalCard(q,i).replace('<div class="card-meta">',`<button type="button" class="visibility-badge" data-action="visibility" data-id="${esc(q.id)}" title="${published?'Сделать личным':'Опубликовать в каталоге'}">${icon(published?'library':'shield',15)} ${published?'Опубликован в каталоге':'Личный · виден только вам'}</button><div class="card-meta">`);
 };
 async function catalogPage(){
   stopPoll();page='catalog';const data=await api('catalog');
-  shell(`<div class="page-heading"><div class="eyebrow">ИГРАТЬ И СОЗДАВАТЬ ВМЕСТЕ</div><h1>Общий каталог<span>.</span></h1><p>Опросы, которыми поделились авторы. Ваши личные опросы остаются только у вас.</p><button class="primary" data-action="${boot.user?'new':'account'}">＋ Создать свой опрос</button> <button class="outline" data-action="join-page">Войти по коду</button></div><div class="quiz-grid">${data.quizzes.map((q,i)=>`<article class="quiz-card"><div class="card-cover ${['purple','green','orange','blue'][i%4]}"><span class="cover-label">${esc({classic:'ВИКТОРИНА',board:'КАТЕГОРИИ И БАЛЛЫ',bluff:'БРЕДОВУХА'}[q.mode]||'ОПРОС')}</span><div class="cover-shapes"><span>✦</span></div><span class="question-tag">Вопросов: ${q.count}</span></div><div class="card-body"><h3>${esc(q.title)}</h3><p>${esc(q.description)}</p><small>Автор: ${esc(q.author||'Команда Пульса')}</small><div class="card-actions"><button class="primary" data-action="public-launch" data-id="${q.id}">▷ Играть</button><button class="outline" data-action="clone-quiz" data-id="${q.id}">Скопировать себе</button></div></div></article>`).join('')||'<div class="panel"><h2>Здесь появятся опубликованные опросы</h2><p>Создайте опрос и нажмите ◎ на его карточке, чтобы поделиться им.</p></div>'}</div>`,'catalog');
+  shell(`<div class="page-heading"><div class="eyebrow">ИГРАТЬ И СОЗДАВАТЬ ВМЕСТЕ</div><h1>Общий каталог<span>.</span></h1><p>Опросы, которыми поделились авторы. Ваши личные опросы остаются только у вас.</p><button class="primary" data-action="${boot.user?'new':'account'}">＋ Создать свой опрос</button> <button class="outline" data-action="join-page">Войти по коду</button></div><div class="quiz-grid">${data.quizzes.map((q,i)=>`<article class="quiz-card"><div class="card-cover ${['purple','green','orange','blue'][i%4]}"><span class="cover-label">${esc({classic:'ВИКТОРИНА',board:'КАТЕГОРИИ И БАЛЛЫ',bluff:'БРЕДОВУХА'}[q.mode]||'ОПРОС')}</span><div class="cover-shapes"><span>${icon('book')}</span></div><span class="question-tag">Вопросов: ${q.count}</span></div><div class="card-body"><h3>${esc(q.title)}</h3><p>${esc(q.description)}</p><small>Автор: ${esc(q.author||'Команда Пульса')}</small><div class="card-actions"><button class="primary" data-action="public-launch" data-id="${q.id}">▷ Играть</button><button class="outline" data-action="clone-quiz" data-id="${q.id}">Скопировать себе</button></div></div></article>`).join('')||'<div class="panel"><h2>Здесь появятся опубликованные опросы</h2><p>Создайте опрос и нажмите ◎ на его карточке, чтобы поделиться им.</p></div>'}</div>`,'catalog');
 }
 function communityAuth(register=false){
   stopPoll();page='account';

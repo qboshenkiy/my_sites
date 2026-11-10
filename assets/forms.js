@@ -2,16 +2,6 @@ let pulseForms=[],currentForm=null,formWaitTimer=null,formManagerTimer=null;
 const formRight=q=>Array.isArray(q.correct)?q.correct.map(Number):[Number(q.correct)];
 const formMulti=q=>q.type==='quiz'&&(q.multiple===true||formRight(q).length>1);
 const formsStopPoll=stopPoll;stopPoll=function(){formsStopPoll();clearTimeout(formWaitTimer);clearTimeout(formManagerTimer);};
-const formsShell=shell;
-function pulseCompactMenu(){
- // All screens use the same accessible mobile drawer from app.js.
-}
-reportMobileNavigation=pulseCompactMenu;
-shell=function(content,selected='quizzes'){
- formsShell(content,selected);const sidebar=document.querySelector('.sidebar');
- if(boot.user)sidebar.querySelector('[data-action="sessions"]').insertAdjacentHTML('afterend',`<button class="nav ${['forms','form-manager'].includes(page)?'active':''}" data-action="forms"><span>${AppUI.icon('table')}</span>Тесты по ссылке</button>`);
- if(['forms','form-manager','assessment-editor','room-report','sessions'].includes(page))pulseCompactMenu();
-};
 const formsInit=communityInit;
 communityInit=async function(){const token=new URL(location.href).searchParams.get('test');if(token)return openPublicForm(token);return formsInit();};
 const formsDashboard=dashboard;
