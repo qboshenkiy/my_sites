@@ -1,12 +1,11 @@
 const services = [...document.querySelectorAll('#service-grid [data-service]')].map(link => ({
   id: link.dataset.service,
   name: link.closest('.card').querySelector('h3').textContent,
-  price: Number(link.dataset.price)
+  price: link.dataset.priceLabel
 }));
 services.push({ id: 'custom', name: 'Несколько услуг / другая задача' });
 
-const formatPrice = new Intl.NumberFormat('ru-KG');
-const priceLabel = service => service.price ? `от ${formatPrice.format(service.price)} сом` : 'По запросу';
+const priceLabel = service => service.price || 'По запросу';
 const select = document.querySelector('#service');
 const description = document.querySelector('#description');
 const estimate = document.querySelector('#estimate');

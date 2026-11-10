@@ -15,6 +15,10 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request, urlopen
 
+import admin_ui
+import chats
+import content
+
 DATA = Path(os.environ.get('JOB_DATA', '/data'))
 DIST = Path(__file__).resolve().parents[1] / 'dist'
 ORIGIN = os.environ.get('JOB_ORIGIN', 'https://job.vano.sbena.net')
@@ -70,6 +74,8 @@ def initialize():
             CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, expires INTEGER);
             CREATE TABLE IF NOT EXISTS limits (bucket TEXT PRIMARY KEY, count INTEGER, until INTEGER);
         """)
+        chats.initialize(conn)
+        content.initialize(conn)
         if not setting(conn, 'password'):
             bootstrap = DATA / 'bootstrap'
             if bootstrap.exists():
@@ -77,12 +83,14 @@ def initialize():
                 bootstrap.unlink()
 
 
-def rate_limit(bucket, limit, seconds):
+def rate_limit(bucket, limit, seconds, connection=None):
+    if connection is None:
+        with db() as conn:
+            return rate_limit(bucket, limit, seconds, conn)
     now = int(time.time())
-    with db() as conn:
-        conn.execute('DELETE FROM limits WHERE until <= ?', (now,))
-        conn.execute('INSERT INTO limits VALUES (?,1,?) ON CONFLICT(bucket) DO UPDATE SET count=count+1', (bucket, now+seconds))
-        return conn.execute('SELECT count FROM limits WHERE bucket=?', (bucket,)).fetchone()[0] <= limit
+    connection.execute('DELETE FROM limits WHERE until <= ?', (now,))
+    connection.execute('INSERT INTO limits VALUES (?,1,?) ON CONFLICT(bucket) DO UPDATE SET count=count+1', (bucket, now+seconds))
+    return connection.execute('SELECT count FROM limits WHERE bucket=?', (bucket,)).fetchone()[0] <= limit
 
 
 def telegram(token, method, **payload):
@@ -117,20 +125,28 @@ def process_update(conn, token, update):
         if len(command) == 2 and len(claim) == 2 and int(claim[1]) > time.time() and hmac.compare_digest(command[1], claim[0]):
             put(conn, 'owner', chat_id)
             put(conn, 'claim', '')
-            return chat_id, 'Готово. Сюда будут приходить новые заявки.'
+            return chat_id, 'Готово. Откройте /leads для заявок или /chats для диалогов.'
         return chat_id, 'Код не подошёл. Получите новый в админке.'
+    bot_id = token.split(':', 1)[0]
+    if chat_id == setting(conn, 'owner'):
+        return chat_id, chats.owner_command(conn, bot_id, body)
     if command[0] == '/start':
         return chat_id, 'Привет! Напишите одним сообщением, что хотите сделать. Укажите, как с вами связаться, если удобнее ответить вне Telegram.'
     if body.startswith('/'):
         return chat_id, 'Опишите задачу обычным сообщением.'
-    if not rate_limit('bot:' + chat_id, 8, 600):
+    if not rate_limit('bot:' + chat_id, 20, 600, conn):
         return None
     person = msg.get('from', {})
     username = person.get('username')
     name = ' '.join(person.get(key, '') for key in ('first_name', 'last_name')).strip()[:100]
     contact = '@' + username if username else 'tg://user?id=' + chat_id
-    lead_id = add_lead(conn, 'Telegram', name, contact, body[:2000], token.split(':')[0] + ':' + str(update['update_id']))
-    return (chat_id, f'Заявка №{lead_id} принята. Спасибо!') if lead_id else None
+    update_key = bot_id + ':' + str(update['update_id'])
+    _, first_message = chats.receive(conn, bot_id, chat_id, name or 'Клиент', contact, body[:2000], update_key)
+    if first_message:
+        lead_id = add_lead(conn, 'Telegram', name, contact, body[:2000], update_key)
+        if lead_id:
+            return chat_id, f'Заявка №{lead_id} принята. Ответ придёт в этот чат.'
+    return None
 
 
 def bot_loop():
@@ -140,10 +156,20 @@ def bot_loop():
                 token = setting(conn, 'token')
                 owner = setting(conn, 'owner')
                 offset = int(setting(conn, 'offset') or 0)
-                queue = conn.execute('SELECT * FROM leads WHERE delivered=0 ORDER BY id LIMIT 10').fetchall() if owner else []
+                queue = conn.execute('SELECT * FROM leads WHERE delivered=0 ORDER BY id LIMIT 10').fetchall() if owner and setting(conn, 'push_leads') == '1' else []
+                outgoing = chats.pending(conn, token.split(':', 1)[0]) if token else []
             if not token:
                 time.sleep(3)
                 continue
+            for message in outgoing:
+                try:
+                    telegram(token, 'sendMessage', chat_id=message['peer'], text=message['body'])
+                except ValueError:
+                    with db() as conn:
+                        conn.execute('UPDATE messages SET retry_at=? WHERE id=?', (int(time.time()) + 60, message['id']))
+                else:
+                    with db() as conn:
+                        conn.execute('UPDATE messages SET sent=1 WHERE id=?', (message['id'],))
             for lead in queue:
                 try:
                     telegram(token, 'sendMessage', chat_id=owner,
@@ -155,10 +181,9 @@ def bot_loop():
                     conn.execute('UPDATE leads SET delivered=1 WHERE id=?', (lead['id'],))
             for update in telegram(token, 'getUpdates', offset=offset, timeout=5, allowed_updates=['message']):
                 with db() as conn:
+                    conn.execute('BEGIN IMMEDIATE')
                     if setting(conn, 'token') != token:
                         break
-                reply = None
-                with db() as conn:
                     reply = process_update(conn, token, update)
                     put(conn, 'offset', update['update_id']+1)
                 if reply:
@@ -211,41 +236,54 @@ class Handler(BaseHTTPRequestHandler):
     def redirect(self, target, **headers):
         self.respond(303, headers={'Location': target, **headers})
 
-    def admin(self, session, message='', status=200):
+    def admin(self, session, message='', status=200, tab=None):
         if not session:
             return self.respond(status, document('Вход', '<h1>Вход</h1>' + (f'<p role="alert">{esc(message)}</p>' if message else '') +
                 '<form method="post" action="/admin/login"><label>Пароль<input name="password" type="password" autocomplete="current-password" required></label><button class="button primary">Войти</button></form>'))
-        with db() as conn:
-            values = {k: setting(conn, k) for k in ('whatsapp', 'personal', 'bot', 'owner', 'claim', 'token')}
-            leads = conn.execute('SELECT * FROM leads ORDER BY id DESC LIMIT 100').fetchall()
+        query = parse_qs(urlsplit(self.path).query)
+        tab = tab or query.get('tab', ['leads'])[0]
+        if tab not in admin_ui.TABS:
+            tab = 'leads'
+        if query.get('saved') == ['1'] and not message:
+            message = 'Изменения сохранены.'
         hidden = f'<input type="hidden" name="csrf" value="{esc(session)}">'
+        with db() as conn:
+            if tab == 'site':
+                panel = admin_ui.site(conn, hidden)
+            elif tab in ('service', 'example'):
+                panel = admin_ui.catalog(conn, tab, hidden)
+            elif tab == 'chats':
+                chat = query.get('chat', [''])[0]
+                panel = admin_ui.conversations(conn, setting(conn, 'token').split(':', 1)[0], hidden, chat)
+            elif tab == 'settings':
+                panel = self.settings_panel(conn, hidden)
+            else:
+                panel = admin_ui.leads(conn, hidden, query)
+        self.respond(status, document('Админка · Разработка на заказ',
+                                      admin_ui.shell(tab, hidden, message) + panel))
+
+    def settings_panel(self, conn, hidden):
+        values = {key: setting(conn, key) for key in ('whatsapp', 'personal', 'bot', 'owner', 'claim', 'token')}
         claim = values['claim'].split(':', 1)
-        binding = 'Telegram подключён.' if values['owner'] else 'Telegram для уведомлений пока не подключён.'
+        binding = 'Telegram подключён. Команды /leads и /chats открывают заявки и диалоги.' if values['owner'] else 'Привяжите Telegram, чтобы открыть заявки и диалоги в боте.'
         if len(claim) == 2 and int(claim[1]) > time.time():
             binding += f' Откройте бота @{values["bot"]} и отправьте /bind {claim[0]}. Код действует 15 минут.'
-        items = []
-        for lead in leads:
-            date = time.strftime('%d.%m.%Y %H:%M', time.gmtime(lead['created'] + 21600))
-            state = 'Отправлена в Telegram' if lead['delivered'] else 'Ожидает отправки в Telegram'
-            items.append(f'<article class="card"><h3>№{lead["id"]} · {esc(lead["source"])}</h3>'
-                         f'<small>{date} · {state}</small><p>{esc(lead["name"])} · {esc(lead["contact"])}</p>'
-                         f'<p class="lead-body">{esc(lead["body"])}</p></article>')
         token_status = 'Токен сохранён. Заполните поле только для замены.' if values['token'] else 'Вставьте токен отдельного бота из BotFather.'
-        content = f"""<div class="admin-top"><a href="/">← На сайт</a><form method="post" action="/admin/logout">{hidden}<button class="button outline small">Выйти</button></form></div>
-            <h1>Заявки и контакты</h1><p role="status">{esc(message)}</p>
+        push_checked = ' checked' if setting(conn, 'push_leads') == '1' else ''
+        return f"""
             <div class="admin-grid"><section class="card"><h2>Контакты</h2>
             <form method="post" action="/admin/settings">{hidden}
             <label>WhatsApp<input name="whatsapp" value="{esc(values['whatsapp'])}" placeholder="+996…" type="tel"></label>
             <label>Личный Telegram<input name="personal" value="{esc(values['personal'])}" placeholder="@username или +996…"></label>
             <label>Токен Telegram-бота<input name="token" type="password" autocomplete="new-password"></label><small>{token_status}</small>
+            <label class="admin-check"><input type="checkbox" name="push_leads" value="1"{push_checked}> Присылать новые заявки автоматически</label>
             <button class="button primary">Сохранить</button></form>
             <p>{esc(binding)}</p><form method="post" action="/admin/bind">{hidden}<button class="button outline small">Получить код подключения</button></form></section>
             <section class="card"><h2>Пароль</h2><form method="post" action="/admin/password">{hidden}
             <label>Текущий пароль<input name="current" type="password" autocomplete="current-password" required></label>
             <label>Новый пароль<input name="password" type="password" autocomplete="new-password" minlength="14" maxlength="128" required></label>
             <button class="button outline">Сменить пароль</button></form></section></div>
-            <h2>Последние заявки</h2><div class="admin-grid">{''.join(items) or '<p>Заявок пока нет.</p>'}</div>"""
-        self.respond(status, document('Админка · Разработка на заказ', content))
+        """
 
     def do_HEAD(self):
         self.do_GET()
@@ -256,6 +294,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.json(200, {'ok': True})
         if path == '/admin':
             return self.admin(self.session())
+        if path in ('/', '/index.html'):
+            with db() as conn:
+                page = content.render((DIST / 'index.html').read_text(), conn, ORIGIN)
+            return self.respond(200, page)
         if path == '/api/contacts':
             with db() as conn:
                 wa, personal, bot = (setting(conn, k) for k in ('whatsapp', 'personal', 'bot'))
@@ -276,7 +318,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.json(403, {'error': 'Откройте форму на сайте.'})
         try:
             length = int(self.headers.get('Content-Length', '0'))
-            if not 0 < length <= 16000:
+            if not 0 < length <= 48000:
                 raise ValueError()
             raw = self.rfile.read(length).decode()
             if path == '/api/leads':
@@ -284,7 +326,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(data, dict):
                     raise ValueError()
                 return self.submit(data)
-            data = {k: v[0] for k, v in parse_qs(raw, keep_blank_values=True, max_num_fields=12).items()}
+            data = {k: v[0] for k, v in parse_qs(raw, keep_blank_values=True, max_num_fields=32).items()}
         except (ValueError, UnicodeError):
             return self.json(400, {'error': 'Некорректные данные.'})
         if path == '/admin/login':
@@ -300,7 +342,38 @@ class Handler(BaseHTTPRequestHandler):
         session = self.session()
         if not session or not hmac.compare_digest(session, data.get('csrf', '')):
             return self.respond(403, 'Войдите в админку заново.')
+        tab = 'settings'
         try:
+            if path == '/admin/site':
+                tab = 'site'
+                with db() as conn:
+                    content.save_site(conn, data)
+                return self.redirect('/admin?tab=site&saved=1')
+            if path == '/admin/card':
+                kind = data.get('kind', '')
+                tab = kind if kind in ('service', 'example') else 'service'
+                with db() as conn:
+                    conn.execute('BEGIN IMMEDIATE')
+                    content.save_record(conn, kind, data)
+                return self.redirect('/admin?tab=' + tab + '&saved=1')
+            if path == '/admin/lead':
+                tab = 'leads'
+                stage, lead_id = data.get('stage'), data.get('id')
+                with db() as conn:
+                    if stage not in admin_ui.STATUSES or not conn.execute('SELECT 1 FROM leads WHERE id=?', (lead_id,)).fetchone():
+                        raise ValueError('Заявка или статус не найдены.')
+                    conn.execute('INSERT INTO lead_status VALUES (?,?) ON CONFLICT(lead_id) DO UPDATE SET status=excluded.status',
+                                 (lead_id, stage))
+                return self.redirect('/admin?tab=leads&saved=1')
+            if path == '/admin/reply':
+                tab = 'chats'
+                chat_id = data.get('chat', '')
+                if not re.fullmatch(r'[0-9]{1,18}', chat_id):
+                    raise ValueError('Диалог не найден.')
+                with db() as conn:
+                    conn.execute('BEGIN IMMEDIATE')
+                    chats.reply(conn, setting(conn, 'token').split(':', 1)[0], chat_id, data.get('body', ''))
+                return self.redirect('/admin?tab=chats&chat=' + chat_id)
             if path == '/admin/settings':
                 return self.save_settings(session, data)
             if path == '/admin/bind':
@@ -308,7 +381,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not setting(conn, 'token'):
                         raise ValueError('Сначала сохраните токен бота.')
                     put(conn, 'claim', secrets.token_urlsafe(12) + ':' + str(int(time.time())+900))
-                return self.admin(session, 'Код готов.')
+                return self.admin(session, 'Код готов.', tab='settings')
             if path == '/admin/password':
                 password = data.get('password', '')
                 if not self.check_password(data.get('current', '')) or not 14 <= len(password) <= 128:
@@ -322,7 +395,7 @@ class Handler(BaseHTTPRequestHandler):
                     conn.execute('DELETE FROM sessions WHERE id=?', (session,))
                 return self.redirect('/admin', **{'Set-Cookie': f'job_session=; Path=/admin; HttpOnly; SameSite=Strict; Max-Age=0{SECURE}'})
         except ValueError as error:
-            return self.admin(session, str(error), 400)
+            return self.admin(session, str(error), 400, tab=tab)
         self.respond(404, 'Страница не найдена.')
 
     def client_ip(self):
@@ -367,12 +440,13 @@ class Handler(BaseHTTPRequestHandler):
             if telegram(token, 'getWebhookInfo').get('url'):
                 raise ValueError('У этого бота настроен webhook. Используйте отдельного бота для заявок.')
         with db() as conn:
+            put(conn, 'push_leads', '1' if data.get('push_leads') == '1' else '0')
             put(conn, 'whatsapp', wa)
             put(conn, 'personal', personal)
             if bot and token != setting(conn, 'token'):
                 for key, value in {'token': token, 'bot': bot['username'], 'owner': '', 'offset': 0, 'claim': ''}.items():
                     put(conn, key, value)
-        return self.admin(session, 'Настройки сохранены.')
+        return self.redirect('/admin?tab=settings&saved=1')
 
 
 if __name__ == '__main__':
