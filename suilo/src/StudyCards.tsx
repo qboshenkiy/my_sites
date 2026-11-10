@@ -8,7 +8,7 @@ export function StudyCards({words, exit, check}: {words:Word[]; exit:()=>void; c
   const word=words[index]
   const last=index===words.length-1
 
-  useEffect(()=>window.scrollTo(0,0),[])
+  useEffect(()=>{window.scrollTo(0,0)},[])
 
   function move(next:number) {
     setIndex(next)
