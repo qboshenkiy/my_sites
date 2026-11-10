@@ -61,5 +61,22 @@ with tempfile.TemporaryDirectory() as tmp:
   admin.call('unpublish_results',{'id':current['id'],'revision':current['revision'],'publication_version':current['publication']['version']})
   assert clients[0].call('standings')['max_points']==100
   admin.call('delete_assessment',{'id':current['id'],'revision':current['revision']})
+  # A form opened before the first submission can be published by refreshing its results.
+  staff_quiz=admin.call('save',{'title':'Открытый тест','questions':[{'text':'Ответ?','type':'quiz','seconds':20,'options':['Да','Нет'],'correct':0,'points':100}]})['id']
+  staff_form=admin.call('form_create',{'quiz_id':staff_quiz})
+  manager=admin.call('form_results&form='+staff_form['id'])['form']
+  admin.call('form_refresh_results',{'form':staff_form['id'],'revision':manager['revision']},409)
+  admin.call('form_configure',{'form':staff_form['id'],'revision':manager['revision'],'active':True,'published':True})
+  refresh={'form':staff_form['id'],'revision':manager['revision']+1}
+  assert not admin.call('form_refresh_results',refresh)['updated']
+  clients[0].call('form_submit',{'token':staff_form['token'],'answers':[0]})
+  assert admin.call('form_refresh_results',refresh)['updated']
+  table=clients[0].call('standings')
+  test=next(t for t in table['tests'] if t['title']=='Открытый тест')
+  assert next(p for p in table['participants'] if p['id']==users[0]['id'])['scores'][test['id']]==100
+  clients[1].call('form_submit',{'token':staff_form['token'],'answers':[1]})
+  assert admin.call('form_refresh_results',refresh)['updated']
+  assert next(p for p in clients[0].call('standings')['participants'] if p['id']==users[1]['id'])['scores'][test['id']]==0
+  clients[0].call('form_refresh_results',{'form':form['id'],'revision':manager['revision']},403)
   print('PASS: explicit publication, frozen scores, equal-weight average percentages, ranking/ties/missing scores, republishing, unpinning and authorization')
  finally:server.terminate();server.wait(timeout=10)

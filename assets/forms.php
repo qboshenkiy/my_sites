@@ -86,7 +86,7 @@ function formAdjustedAttempt(array $form,array $attempt): array {
 }
 function formsHandle(string $action,array $input): void {
     global $db,$me;
-    if(!in_array($action,['forms','form_create','form_get','form_submit','form_configure','form_delete','form_results','form_attempt','form_link_attempt','form_telegram_create','form_telegram_command'],true))return;
+    if(!in_array($action,['forms','form_create','form_get','form_submit','form_configure','form_refresh_results','form_delete','form_results','form_attempt','form_link_attempt','form_telegram_create','form_telegram_command'],true))return;
     formsSchema();
     if(in_array($action,['form_get','form_submit'],true)){
         $token=$input['token']??$_GET['token']??'';
@@ -143,6 +143,18 @@ function formsHandle(string $action,array $input): void {
     if(in_array($action,['form_telegram_create','form_telegram_command'],true)){require_once __DIR__.'/forms-bot.php';formsBotSchema();formsBotHandle($action,$input,$form);return;}
     if($action==='form_delete'){require_once __DIR__.'/forms-bot.php';formsBotSchema();}
     $db->exec('BEGIN IMMEDIATE');$form=formOwned($id);
+    if ($action === 'form_refresh_results') {
+        communityStaff();
+        if ((int)($input['revision'] ?? -1) !== (int)$form['revision']) {
+            fail('Настройки уже изменились. Обновите тест.', 409);
+        }
+        if (!$form['published']) fail('Сначала откройте результаты теста.', 409);
+        $assessmentId = formSyncAssessment($form);
+        $hasScores = $assessmentId && query('SELECT 1 FROM assessment_scores WHERE assessment_id=? LIMIT 1', [$assessmentId])->fetchColumn();
+        if ($hasScores) standingsPublish(query('SELECT * FROM assessments WHERE id=?', [$assessmentId])->fetch());
+        $db->exec('COMMIT');
+        out(['updated' => (bool)$hasScores]);
+    }
     if($action==='form_delete'){
         if((int)($input['revision']??-1)!==(int)$form['revision'])fail('Настройки уже изменились. Обновите тест.',409);
         if(query("SELECT 1 FROM form_tg_deliveries WHERE form_id=? AND state IN ('queued','sending')",[$id])->fetchColumn())fail('Бот сейчас отправляет сообщения. Дождитесь завершения отправки и повторите удаление.',409);
