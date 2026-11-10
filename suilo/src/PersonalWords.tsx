@@ -1,16 +1,17 @@
 import { useState } from 'react'
-import { ArrowRight, Pencil, Plus, Trash2 } from 'lucide-react'
+import { ArrowRight, BookOpen, Pencil, Plus, Trash2 } from 'lucide-react'
 import { normalize, parsePersonalWords, type PersonalWord } from './progress'
 
 type Pair = Pick<PersonalWord,'ru'|'ky'>
 const pairKey = ({ru,ky}:Pair) => JSON.stringify([normalize(ru),ky.split(' / ').map(v=>normalize(v)).sort()])
 const maxWords = 500
 
-export function PersonalWords({words, add, edit, remove, train}: {
+export function PersonalWords({words, add, edit, remove, study, train}: {
   words:PersonalWord[]
   add:(pairs:Pair[])=>Promise<void>
   edit:(id:string,pair:Pair)=>Promise<void>
   remove:(id:string)=>Promise<void>
+  study:()=>void
   train:()=>void
 }) {
   const [input,setInput]=useState('')
@@ -60,7 +61,10 @@ export function PersonalWords({words, add, edit, remove, train}: {
 
   return <section className="surface personal-words">
     <header className="personal-heading"><div><span className="eyebrow">СЛОВА ДЛЯ СВОЕЙ ПРАКТИКИ</span><h2>Мои карточки</h2><p>Русское слово появится на экране. Введите его перевод на кыргызском.</p></div>
-      {words.length>0&&<button className="primary" disabled={busy} onClick={train}>Тренировать свои слова <ArrowRight size={17}/></button>}
+      {words.length>0&&<div className="actions personal-study-actions">
+        <button className="primary" disabled={busy} onClick={study}><BookOpen size={17}/> Разучивать слова</button>
+        <button className="secondary" disabled={busy} onClick={train}>Тренировать свои слова <ArrowRight size={17}/></button>
+      </div>}
     </header>
     <form className="personal-form" onSubmit={submit}>
       <label htmlFor="word-pairs">Вставьте пары «русский — кыргызский»</label>

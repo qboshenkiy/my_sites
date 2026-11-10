@@ -6,6 +6,7 @@ import { addWords, daily, day, fresh, load, mergeProgress, persist, review, sche
 import { connectTelegram, isNative, speak, type InstallEvent } from './platform'
 import { ExerciseScreen, type ExerciseResult } from './Exercise'
 import { PersonalWords } from './PersonalWords'
+import { StudyCards } from './StudyCards'
 import { LessonWarmup } from './LessonGuide'
 import { lessonGuides } from './lessonGuides'
 import { Conversation } from './Conversation'
@@ -37,6 +38,7 @@ function App() {
   const [result,setResult]=useState<{title:string;xp:number;mistakes:number;review?:boolean}>()
   const [install,setInstall]=useState<InstallEvent>()
   const [practice,setPractice]=useState<{words:PracticeWord[];index:number;mistakes:number;personal?:boolean}>()
+  const [study,setStudy]=useState<PracticeWord[]>()
   const [search,setSearch]=useState('')
   const [topic,setTopic]=useState('')
   const [filter,setFilter]=useState('all')
@@ -51,7 +53,7 @@ function App() {
     const handleInstall=(e:Event)=>{e.preventDefault();setInstall(e as InstallEvent)}
     const installed=()=>setInstall(undefined)
     const connectivity=()=>setOnline(navigator.onLine)
-    const onPop=()=>{setPage(slug(new URLSearchParams(location.search).get('page')??''));setLesson(undefined);setRunning(false);setPractice(undefined);setResult(undefined)}
+    const onPop=()=>{setPage(slug(new URLSearchParams(location.search).get('page')??''));setLesson(undefined);setRunning(false);setPractice(undefined);setStudy(undefined);setResult(undefined)}
     window.addEventListener('beforeinstallprompt',handleInstall)
     window.addEventListener('appinstalled',installed)
     window.addEventListener('online',connectivity);window.addEventListener('offline',connectivity);window.addEventListener('popstate',onPop)
@@ -67,7 +69,7 @@ function App() {
     return queue.current.then(()=>{if (afterWrite && pRef.current===next) setP(next)})
   }
   const go=(next:Page)=>{
-    setPage(next);setLesson(undefined);setRunning(false);setResult(undefined);setPractice(undefined)
+    setPage(next);setLesson(undefined);setRunning(false);setResult(undefined);setPractice(undefined);setStudy(undefined)
     const url=new URL(location.href)
     if (next==='map') url.searchParams.delete('page'); else url.searchParams.set('page',next)
     if (url.href!==location.href) history.pushState(null,'',url)
@@ -151,9 +153,13 @@ function App() {
     const cards={...current.cards,[`personal:${id}`]:{box:0,due:at,at}}
     await save({...current,cards,personalWords:{...current.personalWords,[id]:patch.deleted?{id,ru:'',ky:'',at,deleted:true}:{...word,...patch,at}}},true)
   }
-  function trainPersonalWords() {
+  function personalDeck():PracticeWord[] {
     const words=personalWords.map(word=>({...word,example:'Сверьте ответ с переводом в вашей карточке.'}))
     words.sort((a,b)=>(p.cards[practiceKey(a)]?.due??0)-(p.cards[practiceKey(b)]?.due??0))
+    return words
+  }
+  function trainPersonalWords(words=personalDeck()) {
+    setStudy(undefined)
     setPractice({words,index:0,mistakes:0,personal:true})
   }
   async function installApp() {
@@ -207,6 +213,7 @@ function App() {
     {!ready ? <main className="main"><p role="status">Загружаем прогресс…</p></main> :
     <div className={`layout ${page==='map'&&!lesson&&!result?'with-aside':''}`}><main className="main">
       {running&&lesson&&p.draft?.id===lesson.id ? <ExerciseScreen key={lesson.id+p.draft.index} exercise={lesson.exercises[p.draft.index]} index={p.draft.index} length={lesson.exercises.length} title={lesson.title} guide={lessonGuides[lesson.id]} forgiving={p.forgiving} exit={()=>go('map')} next={step}/> :
+      study ? <StudyCards words={study} exit={()=>go('words')} check={()=>trainPersonalWords(study)}/> :
       practice ? <ExerciseScreen key={'review'+practice.index} exercise={review(practice.words[practice.index])} index={practice.index} length={practice.words.length} title={practice.personal?'Мои карточки':'Повторение слов'} forgiving={p.forgiving} exit={()=>go('words')} next={practiceStep}/> :
       result ? <section className="surface finish page-entrance"><div className="finish-icon"><Trophy size={42}/></div><span className="eyebrow">АЗАМАТСЫЗ!</span><h1>{result.review?'Повторение завершено':'Урок завершён'}</h1><p>{result.title}</p><div className="result-numbers"><span><Zap size={21}/> +{result.xp} XP</span><span>{result.mistakes} ошибок / пропусков</span></div><button className="primary" onClick={()=>go(result.review?'words':'map')}>Продолжить <ArrowRight size={19}/></button></section> :
       lesson ? <section className="surface lesson-intro page-entrance">
@@ -219,7 +226,7 @@ function App() {
       </section> :
       page==='map' ? map :
       page==='words' ? <div className="page-entrance"><div className="page-heading"><span className="eyebrow">ЛИЧНЫЙ СЛОВАРЬ</span><h1>Мои слова</h1><p>{learned.length} изучено · {due.length} пора повторить · {learned.filter(w=>p.cards[w.ky].box>=3).length} закреплено</p></div>
-        <PersonalWords words={personalWords} add={addPersonalWords} edit={changePersonalWord} remove={id=>changePersonalWord(id,{deleted:true})} train={trainPersonalWords}/>
+        <PersonalWords words={personalWords} add={addPersonalWords} edit={changePersonalWord} remove={id=>changePersonalWord(id,{deleted:true})} study={()=>setStudy(personalDeck())} train={()=>trainPersonalWords()}/>
         <h2 className="course-words-title">Слова из уроков</h2>
         <div className="surface word-tools"><label className="search"><Search size={18}/><input placeholder="Слово или перевод" aria-label="Найти слово" value={search} onChange={e=>setSearch(e.target.value)}/></label><select aria-label="Тема" value={topic} onChange={e=>setTopic(e.target.value)}><option value="">Все темы</option>{levels.flatMap(l=>l.lessons.filter(item=>item.words.length).map(item=><option key={item.id} value={item.id}>{item.title}</option>))}</select><select aria-label="Статус" value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">Все слова</option><option value="due">Пора повторить</option><option value="known">Закреплённые</option></select><button className="primary" disabled={!due.length} onClick={()=>setPractice({words:due.slice(0,8),index:0,mistakes:0})}>Быстрое повторение <ArrowRight size={17}/></button></div>
         {wordError&&<p role="status" className="notice">{wordError}</p>}
