@@ -1,6 +1,3 @@
-// Set a public Telegram, WhatsApp or email link to enable direct contact.
-const contactUrl = '';
-
 const services = [...document.querySelectorAll('#service-grid [data-service]')].map(link => ({
   id: link.dataset.service,
   name: link.closest('.card').querySelector('h3').textContent,
@@ -13,8 +10,6 @@ const priceLabel = service => service.price ? `от ${formatPrice.format(service
 const select = document.querySelector('#service');
 const description = document.querySelector('#description');
 const estimate = document.querySelector('#estimate');
-const result = document.querySelector('#brief-result');
-const briefText = document.querySelector('#brief-text');
 const briefStatus = document.querySelector('#brief-status');
 
 for (const service of services) {
@@ -24,13 +19,13 @@ for (const service of services) {
 function updateEstimate() {
   const service = services.find(item => item.id === select.value);
   estimate.textContent = service ? `Ориентир: ${priceLabel(service)}` : 'Выберите услугу, чтобы увидеть стартовую цену';
-  result.hidden = true;
+  briefStatus.textContent = '';
 }
 
 select.addEventListener('change', updateEstimate);
 description.addEventListener('input', () => {
   description.setCustomValidity('');
-  result.hidden = true;
+  briefStatus.textContent = '';
 });
 document.querySelector('#service-grid').addEventListener('click', event => {
   const link = event.target.closest('[data-service]');
@@ -39,65 +34,54 @@ document.querySelector('#service-grid').addEventListener('click', event => {
   updateEstimate();
 });
 
-document.querySelector('#brief-form').addEventListener('submit', event => {
+const form = document.querySelector('#brief-form');
+form.addEventListener('submit', async event => {
   event.preventDefault();
   const task = description.value.trim();
-  if (!task) {
-    description.setCustomValidity('Опишите задачу.');
+  if (task.length < 5) {
+    description.setCustomValidity('Опишите задачу хотя бы в нескольких словах.');
     description.reportValidity();
     return;
   }
+  const data = new FormData(form);
   const service = services.find(item => item.id === select.value);
-  briefText.value = [`Проект: ${service.name}`, `Ориентир: ${priceLabel(service)}`, '', 'Задача:', task].join('\n');
-  result.hidden = false;
-  briefStatus.textContent = '';
-  briefText.focus();
-});
-
-document.querySelector('#copy-brief').addEventListener('click', async () => {
+  const button = form.querySelector('[type=submit]');
+  button.disabled = true;
+  briefStatus.textContent = 'Отправляю…';
   try {
-    await navigator.clipboard.writeText(briefText.value);
-    briefStatus.textContent = 'Бриф скопирован.';
+    const response = await fetch('/api/leads', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: data.get('name'), contact: data.get('contact'), body: service.name + ': ' + task})
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      briefStatus.textContent = result.error || 'Не удалось отправить заявку.';
+      return;
+    }
+    form.reset();
+    updateEstimate();
+    briefStatus.textContent = 'Заявка №' + result.id + ' принята. Спасибо!';
   } catch {
-    briefText.focus();
-    briefText.select();
-    briefStatus.textContent = 'Текст выделен. Скопируйте его вручную или скачайте файл.';
+    briefStatus.textContent = 'Связь прервалась. Попробуйте ещё раз.';
+  } finally {
+    button.disabled = false;
   }
 });
 
-document.querySelector('#download-brief').addEventListener('click', () => {
-  const url = URL.createObjectURL(new Blob([briefText.value], { type: 'text/plain;charset=utf-8' }));
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = 'signal-brief.txt';
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-  briefStatus.textContent = 'Файл брифа подготовлен.';
-});
-
-if (contactUrl) {
-  const contact = document.querySelector('#send-brief');
-  contact.href = contactUrl;
-  contact.hidden = false;
-}
+fetch('/api/contacts').then(response => response.json()).then(contacts => {
+  const links = document.querySelector('#contact-actions');
+  for (const link of links.querySelectorAll('[data-contact]')) {
+    const url = contacts[link.dataset.contact];
+    if (typeof url === 'string' && /^https:\/\/(wa\.me|t\.me)\//.test(url)) {
+      link.href = url;
+      link.hidden = false;
+      links.hidden = false;
+    }
+  }
+}).catch(() => {});
 
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
-const demoButton = document.querySelector('#run-demo');
-const demoStatus = document.querySelector('#demo-status');
-const demoSteps = [...document.querySelectorAll('#demo-steps li')];
-demoButton.addEventListener('click', async () => {
-  demoButton.disabled = true;
-  demoSteps.forEach(step => step.classList.remove('done'));
-  demoStatus.textContent = 'Сценарий запущен';
-  for (const step of demoSteps) {
-    if (!reducedMotion.matches) await new Promise(resolve => setTimeout(resolve, 450));
-    step.classList.add('done');
-  }
-  demoStatus.textContent = 'Готово. Заявка зарегистрирована в демо-CRM.';
-  demoButton.disabled = false;
-  demoButton.firstChild.textContent = 'Повторить сценарий ';
-});
-
 const mesh = document.querySelector('#mesh');
 const orb = document.querySelector('#orb');
 const svgNamespace = 'http://www.w3.org/2000/svg';

@@ -1,13 +1,40 @@
+x-app: &app
+  image: python:3.12-alpine
+  restart: unless-stopped
+  working_dir: /job
+  user: "10001:10001"
+  environment:
+    PYTHONDONTWRITEBYTECODE: "1"
+  volumes:
+    - ./:/job:ro
+    - ./storage:/data
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+
 services:
   web:
-    image: nginx:stable-alpine
-    restart: unless-stopped
+    <<: *app
+    command: [python, app/server.py]
     ports:
-      - "127.0.0.1:8791:80"
-    volumes:
-      - ./dist:/usr/share/nginx/html:ro
+      - "127.0.0.1:8791:8080"
+    networks:
+      default:
+      proxy:
+        aliases: [job-landing-web]
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2).read()"]
       interval: 5s
       timeout: 3s
-      retries: 5
+      retries: 6
+  bot:
+    <<: *app
+    command: [python, app/server.py, bot]
+    depends_on:
+      web:
+        condition: service_healthy
+
+networks:
+  proxy:
+    external: true
+    name: glava-marathon_default
