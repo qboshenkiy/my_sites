@@ -27,6 +27,8 @@ function startQuizEditor(quiz, {recovered = null, imported = false} = {}) {
   stopPoll();
   page = 'editor';
   draft = quiz;
+  pulseEditorClosed = new Set(quiz.questions.map((_,i)=>i).slice(1));
+  pulseEditorIssuesShown = false;
   const prefix = editorDraftPrefix();
   const suffix = draft.id ? 'quiz:' + draft.id : 'new:' + Date.now() + ':' + Math.random().toString(36).slice(2);
   editorDraftKey = recovered?.key || (prefix && prefix + suffix);

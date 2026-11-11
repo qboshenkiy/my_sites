@@ -85,6 +85,7 @@ const {chromium}=require('playwright');const assert=require('node:assert/strict'
    const index=position+2;await admin.click(`[data-action=add-block][data-block=${kind}]`);
    for(let option=0;option<4;option++)await admin.fill(`[name=option-${index}-${option}]`,['Верный ответ','Другой вариант','Третий вариант','Четвёртый вариант'][option]);
   }
+  await admin.locator('[data-editor-action=expand]').click();
   for(let i=0;i<5;i++)await admin.fill(`[name=reference-${i}]`,'Источник блока '+(i+1));
   for(const width of [320,390,1440]){await admin.setViewportSize({width,height:1000});assert.ok(await admin.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'block editor overflow '+width);}
   await admin.click('#editor-form [type=submit]');await admin.waitForSelector('.heading-actions [data-action=new]');
