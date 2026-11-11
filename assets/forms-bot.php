@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/question-blocks.php';
 if(realpath($_SERVER['SCRIPT_FILENAME']??'')===__FILE__){http_response_code(404);exit;}
 
 function formsBotSchema(): void {
@@ -79,7 +80,7 @@ function formsBotGroupKeyboard(array $delivery,array $form,array $question): arr
     $revision=(int)$delivery['revision'];$qi=(int)$delivery['position'];$rows=[];
     foreach($question['options'] as $i=>$option){$label=($i+1).'. '.(mb_strlen($option)>56?mb_substr($option,0,55).'…':$option);$rows[]=[['text'=>$label,'callback_data'=>'fa:'.$delivery['id'].':'.$revision.':'.$qi.':'.$i]];}
     $rows[]=[['text'=>'Отправить мой ответ','callback_data'=>'fs:'.$delivery['id'].':'.$revision.':'.$qi]];
-    $rows[]=[['text'=>'Следующий вопрос →','callback_data'=>'pg:'.$delivery['id'].':'.$revision.':next'],['text'=>'Завершить','callback_data'=>'pg:'.$delivery['id'].':'.$revision.':finish']];
+    if($delivery['kind']==='group')$rows[]=[['text'=>'Следующий вопрос →','callback_data'=>'pg:'.$delivery['id'].':'.$revision.':next'],['text'=>'Завершить','callback_data'=>'pg:'.$delivery['id'].':'.$revision.':finish']];
     return $rows;
 }
 function formsBotGroupText(array $delivery,array $form): string {
@@ -87,6 +88,12 @@ function formsBotGroupText(array $delivery,array $form): string {
     $answered=(int)query('SELECT count(*) FROM form_tg_votes WHERE delivery_id=? AND question_index=?',[$delivery['id'],$qi])->fetchColumn();
     $text=$form['title']."\nВопрос ".($qi+1).' из '.count($quiz['questions'])."\n\n".$q['text'];
     if(!empty($q['image']))$text.="\n\nИзображение: ".rtrim(getenv('APP_URL')?:'','/').'/api.php?action=image&id='.$q['image'];
+    $text.=pulseQuestionInstruction($q);
+    if($delivery['kind']==='private'){
+        $selected=query('SELECT choices FROM form_tg_selections WHERE delivery_id=? AND telegram_id=? AND question_index=?',[$delivery['id'],$delivery['chat_id'],$qi])->fetchColumn();
+        $choices=$selected?json_decode($selected,true):[];
+        return $text."\n\nВаши шаги (".count($choices).' / '.count($q['options']).")\n".pulseQuestionAnswerText($q,$choices);
+    }
     $text.="\n\nОтветили: ".$answered."\nВыберите вариант(ы), затем нажмите «Отправить мой ответ». Ваш выбор скрыт от группы.";
     return $text;
 }
@@ -161,8 +168,8 @@ function formsBotUpdate(array $update,string $botId): bool {
             $db->exec('COMMIT');
         }elseif($isGroupAnswer||$isGroupSubmit){
             $deliveryId=$isGroupAnswer?$groupAnswer[1]:$groupSubmit[1];
-            $delivery=query("SELECT * FROM form_tg_deliveries WHERE id=? AND chat_id=? AND kind='group'",[$deliveryId,$chat])->fetch();
-            if(!$delivery||($message['chat']['type']??'')==='private')throw new DomainException('Ответ относится к другой группе.');
+            $delivery=query("SELECT * FROM form_tg_deliveries WHERE id=? AND chat_id=?",[$deliveryId,$chat])->fetch();
+            if(!$delivery||($delivery['kind']==='private'&&($chat!==$telegram||($message['chat']['type']??'')!=='private'))||($delivery['kind']==='group'&&($message['chat']['type']??'')==='private'))throw new DomainException('Ответ относится к другому чату.');
             if($delivery['state']!=='active'||(int)$delivery['current_message_id']!==(int)($message['message_id']??0))throw new DomainException('Этот вопрос уже закрыт.');
             $qi=(int)$delivery['position'];$expectedRevision=(int)($isGroupAnswer?$groupAnswer[2]:$groupSubmit[2]);$callbackQuestion=(int)($isGroupAnswer?$groupAnswer[3]:$groupSubmit[3]);
             if($expectedRevision!==(int)$delivery['revision']||$callbackQuestion!==$qi)throw new DomainException('Опрос уже переключился на следующий вопрос.');
@@ -174,24 +181,30 @@ function formsBotUpdate(array $update,string $botId): bool {
             if(!$known&&(int)query('SELECT count(DISTINCT telegram_id) FROM form_tg_votes WHERE delivery_id=?',[$deliveryId])->fetchColumn()>=500)throw new DomainException('Достигнут лимит в 500 участников.');
             $userId=$known?$known['user_id']:(formsBotIdentity($telegramKey)['id']??null);
             $db->exec('BEGIN IMMEDIATE');
+            $freshDelivery=query('SELECT * FROM form_tg_deliveries WHERE id=?',[$deliveryId])->fetch();
+            if($freshDelivery['state']!=='active'||(int)$freshDelivery['revision']!==$expectedRevision||(int)$freshDelivery['position']!==$qi)throw new DomainException('Этот вопрос уже закрыт.');
             if($isGroupAnswer){
                 $option=(int)$groupAnswer[4];if($option<0||!array_key_exists($option,$question['options']))throw new DomainException('Вариант ответа не найден.');
                 $staged=query('SELECT choices FROM form_tg_selections WHERE delivery_id=? AND telegram_id=? AND question_index=?',[$deliveryId,$telegramKey,$qi])->fetchColumn();
                 $selected=$staged===false?[]:json_decode((string)$staged,true);if(!is_array($selected))$selected=[];
-                if(in_array($option,$selected,true))$selected=array_values(array_diff($selected,[$option]));else $selected[]=$option;
-                sort($selected);query('INSERT OR REPLACE INTO form_tg_selections VALUES (?,?,?,?,?,?)',[$deliveryId,$telegramKey,$qi,json_encode($selected),mb_substr($name,0,80),$userId]);
-                $callbackText=in_array($option,$selected,true)?'Вариант выбран. Остальные участники его не видят.':'Вариант снят.';
+                $selected=pulseQuestionSelect($question,$selected,$option);
+                query('INSERT OR REPLACE INTO form_tg_selections VALUES (?,?,?,?,?,?)',[$deliveryId,$telegramKey,$qi,json_encode($selected),mb_substr($name,0,80),$userId]);
+                $callbackText=pulseStructuredQuestion($question)?'Шагов — '.count($selected).' из '.count($question['options']).(count($selected)===count($question['options'])?'. Подтвердите ответ.':'. Следующий — '.(($question['block']==='matching'?$question['prompts'][count($selected)]:'событие '.(count($selected)+1)))):(in_array($option,$selected,true)?'Вариант выбран. Остальные участники его не видят.':'Вариант снят.');
             }else{
                 $staged=query('SELECT * FROM form_tg_selections WHERE delivery_id=? AND telegram_id=? AND question_index=?',[$deliveryId,$telegramKey,$qi])->fetch();
                 $selected=$staged?json_decode($staged['choices'],true):[];
                 if(!$selected)throw new DomainException('Сначала выберите хотя бы один вариант.');
-                sort($selected);query('INSERT INTO form_tg_votes VALUES (?,?,?,?,?,?)',[$deliveryId,$telegramKey,$qi,json_encode($selected),$staged['name']??mb_substr($name,0,80),$staged['user_id']??$userId]);
+                if(pulseStructuredQuestion($question)&&count($selected)!==count($question['options']))throw new DomainException('Завершите все шаги, затем подтвердите ответ.');
+                $selected=pulseQuestionChoices($question,$selected);query('INSERT INTO form_tg_votes VALUES (?,?,?,?,?,?)',[$deliveryId,$telegramKey,$qi,json_encode($selected),$staged['name']??mb_substr($name,0,80),$staged['user_id']??$userId]);
                 query('DELETE FROM form_tg_selections WHERE delivery_id=? AND telegram_id=? AND question_index=?',[$deliveryId,$telegramKey,$qi]);
                 $callbackText='Ответ принят. Ваш вариант скрыт от группы.';
-                $db->exec('COMMIT');$fresh=query('SELECT * FROM form_tg_deliveries WHERE id=?',[$deliveryId])->fetch();formsBotEditGroupQuestion($fresh,$form);
+                if($delivery['kind']==='private')formsBotQueue($delivery,'next');
+                $db->exec('COMMIT');
+                if($delivery['kind']==='group'){$fresh=query('SELECT * FROM form_tg_deliveries WHERE id=?',[$deliveryId])->fetch();formsBotEditGroupQuestion($fresh,$form);}
                 $db->exec('BEGIN IMMEDIATE');
             }
             $db->exec('COMMIT');
+            if($isGroupAnswer&&$delivery['kind']==='private')formsBotEditGroupQuestion($delivery,$form);
         }elseif($isRetry){
             $db->exec('BEGIN IMMEDIATE');$d=query("SELECT * FROM form_tg_deliveries WHERE id=? AND kind='private' AND chat_id=?",[$retry[1],$telegram])->fetch();
             if(!$d||$chat!==$telegram||($message['chat']['type']??'')!=='private')throw new DomainException('Отправка не найдена.');
@@ -261,9 +274,8 @@ function formsBotSendResult(array $form,string $chat,array $attempt): void {
         $answers=json_decode($a['answers'],true);$correct=0;$graded=0;
         foreach(json_decode($form['quiz'],true)['questions'] as $i=>$q){
             if($q['type']!=='quiz')continue;
-            $graded++;$selected=$answers[$i]??null;$selected=$selected===null?[]:(is_array($selected)?$selected:[$selected]);sort($selected);
-            $expected=is_array($q['correct'])?$q['correct']:[$q['correct']];sort($expected);
-            if($selected===$expected)$correct++;
+            $graded++;$selected=$answers[$i]??null;$selected=$selected===null?[]:(is_array($selected)?$selected:[$selected]);
+            if(pulseQuestionCorrect($q,$selected))$correct++;
         }
         if($graded)$text.="\nВерных ответов — ".$correct.' из '.$graded;
         if(!empty($a['manually_adjusted']))$text.="\nОценка скорректирована администратором.";
@@ -284,13 +296,12 @@ function formsBotSendReview(array $form,string $chat,?array $attempt=null): void
         if($q['type']==='quiz'){
             $correct=$q['correct']??null;
             $correct=is_array($correct)?array_map('intval',$correct):[$correct===null?-1:(int)$correct];
-            $row.="\nПравильно: ".implode(', ',array_map(fn($n)=>$q['options'][$n]??'', $correct));
+            $row.="\nПравильно: ".pulseQuestionAnswerText($q,$correct);
             if($attempt){
-                $expected=$correct;sort($expected);$chosen=array_map('intval',$selected);sort($chosen);
-                $row.=$chosen===$expected?"\n✅ Верно":"\n❌ Неверно";
+                $row.=pulseQuestionCorrect($q,$selected)?"\n✅ Верно":"\n❌ Неверно";
             }
         }else $row.="\nОпрос — без правильного ответа.";
-        if($attempt)$row.="\nВаш ответ: ".($selected?implode(', ',array_map(fn($n)=>$q['options'][(int)$n]??'', $selected)):'Нет ответа');
+        if($attempt)$row.="\nВаш ответ: ".($selected?pulseQuestionAnswerText($q,$selected):'Нет ответа');
         if(!empty($q['reference']))$row.="\nМестописание / пояснение — ".$q['reference'];
         if(mb_strlen($text.$row)>3500){$chunks[]=$text;$text='';}
         $text.=$row;
@@ -333,10 +344,10 @@ function formsBotTick(): void {
             }
             if(!$form['active'])throw new DomainException('Приём ответов теста закрыт на сайте.');
             $q=$quiz['questions'][$next];
-            if($d['kind']==='group'){
+            if($d['kind']==='group'||pulseStructuredQuestion($q)){
                 $nextDelivery=$d;$nextDelivery['position']=$next;$text=formsBotGroupText($nextDelivery,$form);
                 $markup=['inline_keyboard'=>formsBotGroupKeyboard($nextDelivery,$form,$q)];
-                if($d['current_message_id']&&!$d['current_poll_id']){
+                if($d['kind']==='group'&&$d['current_message_id']&&!$d['current_poll_id']){
                     $sent=formsBotCall('editMessageText',['chat_id'=>$d['chat_id'],'message_id'=>(int)$d['current_message_id'],'text'=>$text,'reply_markup'=>$markup]);
                     $messageId=(int)$d['current_message_id'];
                 }else{

@@ -74,6 +74,50 @@ const {chromium}=require('playwright');const assert=require('node:assert/strict'
   await admin.locator('[data-command="reveal"]').click();await admin.waitForFunction(()=>!busy&&document.querySelector('[data-command="reveal"]')?.disabled===false);
   await admin.locator('[data-command="reveal"]').click();await admin.waitForFunction(()=>state?.status==='results');
   await screen.close();for(const [cx] of clients)await cx.close();
+  await admin.evaluate(()=>editor());await admin.fill('#editor-form [name=title]','Пять блоков · интерфейс');
+  await admin.selectOption('[name=block-0]','matching');
+  for(const [i,pair] of [['Ной','Ковчег'],['Моисей','Исход'],['Соломон','Храм']].entries()){
+   await admin.fill(`[name=prompt-0-${i}]`,pair[0]);await admin.fill(`[name=block-option-0-${i}]`,pair[1]);
+  }
+  await admin.click('[data-action=add-block][data-block=ordering]');
+  for(const [i,event] of ['Выход из Египта','Переход через море','Вход в землю'].entries())await admin.fill(`[name=block-option-1-${i}]`,event);
+  for(const [position,kind] of ['missing_word','scenario','speaker'].entries()){
+   const index=position+2;await admin.click(`[data-action=add-block][data-block=${kind}]`);
+   for(let option=0;option<4;option++)await admin.fill(`[name=option-${index}-${option}]`,['Верный ответ','Другой вариант','Третий вариант','Четвёртый вариант'][option]);
+  }
+  for(let i=0;i<5;i++)await admin.fill(`[name=reference-${i}]`,'Источник блока '+(i+1));
+  for(const width of [320,390,1440]){await admin.setViewportSize({width,height:1000});assert.ok(await admin.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'block editor overflow '+width);}
+  await admin.click('#editor-form [type=submit]');await admin.waitForSelector('.heading-actions [data-action=new]');
+  const blocks=await admin.evaluate(()=>library.find(q=>q.title==='Пять блоков · интерфейс'));
+  assert.deepEqual(blocks.questions.map(q=>q.block),['matching','ordering','missing_word','scenario','speaker']);
+  await admin.evaluate(id=>editor(id),blocks.id);await admin.waitForSelector('[name=prompt-0-0]');
+  assert.equal(await admin.inputValue('[name=block-option-0-0]'),'Ковчег');assert.equal(await admin.inputValue('[name=block-option-1-0]'),'Выход из Египта');
+  await admin.fill('[name=reference-0]','Черновик местописания');await admin.reload();await admin.waitForSelector('[data-draft-restore]');await admin.locator('[data-draft-restore]').first().click();
+  await admin.waitForSelector('[name=prompt-0-0]');assert.equal(await admin.inputValue('[name=block-option-0-0]'),'Ковчег');assert.equal(await admin.inputValue('[name=reference-0]'),'Черновик местописания');
+  await admin.click('#editor-form [type=submit]');await admin.waitForSelector('.heading-actions [data-action=new]');
+  const savedBlocks=await admin.evaluate(()=>library.find(q=>q.title==='Пять блоков · интерфейс'));
+  const publicBlocks=await admin.evaluate(async id=>api('form_create',{quiz_id:id}),blocks.id);
+  const blockContext=await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true});const blockGuest=await blockContext.newPage();blockGuest.on('pageerror',e=>errors.push(e.message));
+  await blockGuest.goto(process.env.FORMS_TEST_URL+'/?test='+publicBlocks.token);await blockGuest.fill('[name=participant_name]','Участник блоков');
+  assert.equal(await blockGuest.locator('.self-test-reference').count(),0);
+  const blockAnswers=savedBlocks.questions.map((q,i)=>Array.isArray(q.correct)?(i===1?[...q.correct].reverse():q.correct):q.correct);
+  for(let question=0;question<2;question++)for(const [position,value] of blockAnswers[question].entries())await blockGuest.selectOption(`[name=block-${question}-${position}]`,String(value));
+  await blockGuest.reload();await blockGuest.waitForSelector('[name=block-0-0]');assert.equal(await blockGuest.inputValue('[name=block-0-0]'),String(blockAnswers[0][0]));
+  for(let question=2;question<5;question++)await blockGuest.check(`[name=self-q-${question}][value="${blockAnswers[question]}"]`);
+  assert.match(await blockGuest.textContent('#self-test-progress'),/5 из 5/);
+  await blockGuest.click('#public-self-test [type=submit]');await blockGuest.locator('dialog #confirm-dialog').click();await blockGuest.waitForSelector('.self-test-score');assert.match(await blockGuest.textContent('.self-test-score'),/80%/);
+  assert.ok(await blockGuest.locator('.block-review .incorrect').count()>0);assert.match(await blockGuest.textContent('main'),/Черновик местописания/);
+  for(const width of [320,390,1440]){await blockGuest.setViewportSize({width,height:1000});assert.ok(await blockGuest.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'block review overflow '+width);if(width!==320)await blockGuest.screenshot({path:path.join(folder,'blocks-result-'+width+'.png'),fullPage:true});}
+  const blockRoom=await admin.evaluate(async id=>{const room=await api('create_room',{id});await hostRoom(room.id);return room;},blocks.id);
+  const liveBlock=await blockContext.newPage();liveBlock.on('pageerror',e=>errors.push(e.message));await liveBlock.goto(process.env.FORMS_TEST_URL+'/?code='+blockRoom.code);await liveBlock.fill('#join-form [name=name]','Проверка блоков');await liveBlock.click('#join-form [type=submit]');await liveBlock.waitForSelector('.player-list');
+  await admin.waitForFunction(()=>state?.players.length===1);await admin.locator('[data-command=next]').click();await liveBlock.waitForSelector('[data-block-question=live]');
+  assert.equal(await liveBlock.locator('[data-action=submit-block-answer]').isDisabled(),true);
+  for(const [position,value] of savedBlocks.questions[0].correct.entries())await liveBlock.selectOption(`[name=block-live-${position}]`,String(value));
+  await liveBlock.locator('[data-action=submit-block-answer]').click();await liveBlock.waitForFunction(()=>state?.status==='results');assert.equal(await liveBlock.evaluate(()=>state.answer.correct),true);
+  await admin.waitForFunction(()=>state?.status==='results');await admin.locator('[data-command=next]').click();await liveBlock.waitForFunction(()=>state?.index===1&&state?.status==='question');
+  for(const [position,value] of [...savedBlocks.questions[1].correct].reverse().entries())await liveBlock.selectOption(`[name=block-live-${position}]`,String(value));
+  await liveBlock.locator('[data-action=submit-block-answer]').click();await liveBlock.waitForFunction(()=>state?.status==='results');assert.equal(await liveBlock.evaluate(()=>state.answer.correct),false);
+  await blockContext.close();console.log('PASS: five block editors, saved pairs/order, restored draft, mobile form/review and live ordered answers');
   assert.deepEqual(errors,[]);await context.close();console.log('PASS: form creation, mobile autosave/submit, immediate guest results/references, delayed mode toggle, guest linking, manual correction/add participant, 320/390/1440px and preserved result');
   console.log('PASS: long pointer hold across polling, anonymous projector, automatic reveal for all answers, stale double command protection and retry after network failure');
  }finally{await browser.close();}

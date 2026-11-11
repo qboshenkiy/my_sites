@@ -1,6 +1,6 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const source=fs.readFileSync('assets/forms.js','utf8');const start=source.indexOf('function formReviewQuestion('),end=source.indexOf('async function openPublicForm(',start);
-const context={esc:v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),formRight:q=>Array.isArray(q.correct)?q.correct.map(Number):[Number(q.correct)]};vm.createContext(context);vm.runInContext(source.slice(start,end),context);
+const context={document:{addEventListener(){}},esc:v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),formRight:q=>Array.isArray(q.correct)?q.correct.map(Number):[Number(q.correct)]};vm.createContext(context);vm.runInContext(fs.readFileSync('assets/question-blocks.js','utf8'),context);vm.runInContext(source.slice(start,end),context);
 const q={type:'quiz',text:'Сколько книг в задании?',options:['Одна','Две','Три'],correct:1};
 const wrong=context.formReviewQuestion(q,0,0);assert(wrong.includes('incorrect')&&wrong.includes('Ваш ответ — неверно')&&wrong.includes('Правильный ответ'));
 const correct=context.formReviewQuestion(q,1,1);assert(correct.includes('✓ Верно')&&!correct.includes('incorrect'));

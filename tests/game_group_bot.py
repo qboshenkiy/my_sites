@@ -1,9 +1,9 @@
 """Mixed website/Telegram live game path using an isolated SQLite database and fake Telegram transport."""
-import json, os, sqlite3, subprocess, tempfile
+import json, os, sqlite3, subprocess, tempfile, shutil
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
-PHP=shutil.which('php') if False else 'C:/laragon/bin/php/php-8.3.33-Win32-vs16-x64/php.exe'
+PHP=shutil.which('php') or 'C:/laragon/bin/php/php-8.3.33-Win32-vs16-x64/php.exe'
 CODE=r'''function query(string $s,array $a=[]):PDOStatement{global $db;$q=$db->prepare($s);$q->execute($a);return $q;}
 function fail(string $m,int $s=400):never{throw new RuntimeException($m,$s);}
 class PulseBotApiException extends RuntimeException{public function __construct(public string $telegramDescription){parent::__construct($telegramDescription);}}
@@ -57,5 +57,16 @@ with tempfile.TemporaryDirectory(prefix='pulse-group-game-') as tmp:
     # One message is reused for the live question; repeat updates are ignored.
     updated=run(folder,{'tick':True});assert any(m=='editMessageText' for m,_ in updated)
     assert run(folder,{'update':callback(7,101,f'qs:{room}:{revision}:0',message_id)})==[]
+    structured_room='1123456789abcdef'
+    block={'text':'По порядку','block':'ordering','type':'quiz','options':['Второе','Третье','Первое'],'correct':[2,0,1],'points':500,'seconds':90,'reference':'Источник после ответа'}
+    db.execute('INSERT INTO rooms VALUES (?,?,?,?,?,?,?,?,1)',(structured_room,'123457',json.dumps(dict(quiz,questions=[block])),'question',0,1,9999999999,1))
+    db.execute('INSERT INTO pulse_room_groups(room_id,chat_id,message_id,created_at) VALUES (?,?,?,?)',(structured_room,'-100777',502,1));db.commit()
+    for telegram,sequence in [(301,[0,2,1]),(302,[2,0,1])]:
+        for position,option in enumerate(sequence):run(folder,{'update':callback(telegram*10+position,telegram,f'qv:{structured_room}:0:0:{option}',502,-100777)})
+        run(folder,{'update':callback(telegram*10+5,telegram,f'qs:{structured_room}:0:0',502,-100777)})
+    rows=db.execute('SELECT telegram_id,score FROM players WHERE room_id=? ORDER BY telegram_id',(structured_room,)).fetchall()
+    assert rows==[('301',0),('302',500)], rows
+    assert [json.loads(r[0]) for r in db.execute('SELECT choice FROM answers WHERE room_id=? ORDER BY points',(structured_room,))]==[[0,2,1],[2,0,1]]
+    print('PASS: live Telegram structured selections preserve order and award points only for the exact sequence')
     db.close()
 print('PASS: group admin binding, private draft selection/cancel, shared game scoring, Telegram player visibility, room timer semantics, one editable message and update de-duplication')

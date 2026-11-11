@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/question-blocks.php';
 if(realpath($_SERVER['SCRIPT_FILENAME']??'')===__FILE__){http_response_code(404);exit;}
 
 function pulseGameBotSchema(): void {
@@ -43,10 +44,11 @@ function pulseGameBotText(array $delivery,array $room,array $quiz): string {
     $answers=(int)query('SELECT count(*) FROM answers WHERE room_id=? AND question_index=?',[$room['id'],$index])->fetchColumn();
     if($room['status']==='results'){
         $text="РЕЗУЛЬТАТЫ · ".($index+1)." / {$total}\n\n".$q['text'];
-        if(($q['type']??'quiz')==='quiz'){$correct=$q['correct']??null;$correct=is_array($correct)?$correct:[$correct];$text.="\n\nПравильный ответ: ".implode(', ',array_map(fn($n)=>$q['options'][(int)$n]??'', $correct));}
+        if(($q['type']??'quiz')==='quiz'){$correct=$q['correct']??null;$correct=is_array($correct)?$correct:[$correct];$text.="\n\nПравильный ответ: ".pulseQuestionAnswerText($q,$correct);}
+        if(!empty($q['reference']))$text.="\n\nМестописание / пояснение — ".$q['reference'];
         return $text."\n\nОтветили: {$answers} / {$players}. Следующий вопрос появится здесь.";
     }
-    return "ПУЛЬС · ВОПРОС ".($index+1)." / {$total}\n\n".$q['text']."\n\nОтветьте кнопками ниже. Выбор можно отменить или изменить до отправки.\nОтветили: {$answers} / {$players}";
+    return "ПУЛЬС · ВОПРОС ".($index+1)." / {$total}\n\n".$q['text'].pulseQuestionInstruction($q)."\n\nОтветьте кнопками ниже. Выбор можно отменить или изменить до отправки.\nОтветили: {$answers} / {$players}";
 }
 function pulseGameBotTick(): void {
     foreach(query('SELECT * FROM pulse_room_groups WHERE chat_id IS NOT NULL ORDER BY created_at LIMIT 100')->fetchAll() as $d){
@@ -108,15 +110,16 @@ function pulseGameBotUpdate(array $update,string $botId): bool {
             }else{$playerId=$player['id'];}
             if($isVote){$option=(int)$vote[4];if(!isset($q['options'][$option]))throw new DomainException('Вариант не найден.');
                 $old=query('SELECT choices FROM pulse_room_group_selections WHERE room_id=? AND telegram_id=? AND question_index=?',[$roomId,$telegram,$index])->fetchColumn();$selected=$old===false?[]:json_decode((string)$old,true);if(!is_array($selected))$selected=[];
-                if(in_array($option,$selected,true))$selected=array_values(array_diff($selected,[$option]));else $selected[]=$option;sort($selected);
-                query('INSERT OR REPLACE INTO pulse_room_group_selections VALUES (?,?,?,?,?)',[$roomId,$telegram,$index,json_encode($selected),$name]);$callbackText=$selected?'Выбор обновлён. Нажмите «Отправить ответ», когда будете готовы.':'Выбор отменён.';
+                $selected=pulseQuestionSelect($q,$selected,$option);
+                query('INSERT OR REPLACE INTO pulse_room_group_selections VALUES (?,?,?,?,?)',[$roomId,$telegram,$index,json_encode($selected),$name]);$callbackText=pulseStructuredQuestion($q)?'Шагов — '.count($selected).' из '.count($q['options']).'. Нажимайте в нужном порядке, затем отправьте ответ.':($selected?'Выбор обновлён. Нажмите «Отправить ответ», когда будете готовы.':'Выбор отменён.');
             }elseif($isClear){query('DELETE FROM pulse_room_group_selections WHERE room_id=? AND telegram_id=? AND question_index=?',[$roomId,$telegram,$index]);$callbackText='Выбор очищен.';
             }else{
                 $selected=query('SELECT choices FROM pulse_room_group_selections WHERE room_id=? AND telegram_id=? AND question_index=?',[$roomId,$telegram,$index])->fetchColumn();$choices=$selected===false?[]:json_decode((string)$selected,true);if(!$choices)throw new DomainException('Сначала выберите ответ.');
                 $multi=!empty($q['multiple'])||is_array($q['correct']??null);
                 if(!$multi&&count($choices)!==1)throw new DomainException('Выберите один вариант ответа.');
-                $expected=$q['correct']??null;$expected=is_array($expected)?array_map('intval',$expected):[$expected===null?-1:(int)$expected];$choices=array_map('intval',$choices);sort($choices);sort($expected);
-                $correct=($q['type']??'quiz')==='quiz'&&$choices===$expected;$max=(int)($q['points']??1000);$points=$correct?(($quiz['scoring']??'speed')==='fixed'?$max:(int)round($max*(.5+.5*max(0,((float)$room['deadline']-microtime(true))/max(1,(int)$q['seconds']))))):0;
+                if(pulseStructuredQuestion($q)&&count($choices)!==count($q['options']))throw new DomainException('Завершите все шаги вопроса.');
+                $choices=pulseQuestionChoices($q,$choices);
+                $correct=pulseQuestionCorrect($q,$choices);$max=(int)($q['points']??1000);$points=$correct?(($quiz['scoring']??'speed')==='fixed'?$max:(int)round($max*(.5+.5*max(0,((float)$room['deadline']-microtime(true))/max(1,(int)$q['seconds']))))):0;
                 query('INSERT INTO answers(player_id,room_id,question_index,choice,points,created_at) VALUES (?,?,?,?,?,?)',[$playerId,$roomId,$index,count($choices)===1?$choices[0]:json_encode($choices),$points,microtime(true)]);query('UPDATE players SET score=score+? WHERE id=?',[$points,$playerId]);query('DELETE FROM pulse_room_group_selections WHERE room_id=? AND telegram_id=? AND question_index=?',[$roomId,$telegram,$index]);
                 $callbackText='Ответ принят. Его не видят остальные участники.';
                 // A mixed web/group room stays open until its timer or the host reveals results.

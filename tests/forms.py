@@ -18,9 +18,9 @@ PHP=shutil.which('php') or 'C:/laragon/bin/php/php-8.3.33-Win32-vs16-x64/php.exe
 def port():
     with socket.socket() as sock:sock.bind(('127.0.0.1',0));return sock.getsockname()[1]
 class Client:
-    def __init__(self,base):self.base=base;self.csrf='';self.opener=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+    def __init__(self,base):self.base=base;self.csrf='';self.player='';self.opener=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
     def call(self,action,body=None,status=200):
-        req=urllib.request.Request(self.base+'/api.php?action='+action,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json','X-CSRF-Token':self.csrf})
+        req=urllib.request.Request(self.base+'/api.php?action='+action,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json','X-CSRF-Token':self.csrf,'X-Player-Token':self.player})
         try:r=self.opener.open(req,timeout=20)
         except urllib.error.HTTPError as e:r=e
         with r:
@@ -288,6 +288,84 @@ with tempfile.TemporaryDirectory(prefix='pulse-forms-') as tmp:
             for table,key,value in [('form_attempts','form_id',group['id']),('form_tg_deliveries','form_id',group['id']),('assessments','id',aid),('assessment_scores','assessment_id',aid),('published_scores','assessment_id',aid)]:
                 assert db.execute(f'SELECT count(*) FROM {table} WHERE {key}=?',(value,)).fetchone()[0]==0
         print('PASS: form deletion permissions, stale revision, in-flight bot guard, rating cleanup and source quiz preservation')
+        block_questions=[
+            {'text':'Установите пары','block':'matching','prompts':['Ной','Моисей','Соломон'],'options':['Ковчег','Исход','Храм'],'correct':[0,1,2]},
+            {'text':'Расположите события','block':'ordering','options':['Выход из Египта','Переход через море','Вход в землю'],'correct':[0,1,2]},
+            {'text':'Вставьте слово: Бог есть ___','block':'missing_word','options':['любовь','страх'],'correct':0},
+            {'text':'Как поступить при ссоре?','block':'scenario','options':['Примириться','Отомстить'],'correct':0},
+            {'text':'Кто сказал: вот я?','block':'speaker','options':['Исаия','Иона'],'correct':0}]
+        block_questions=[dict(q,type='quiz',seconds=90,points=100,reference='Местописание после сдачи') for q in block_questions]
+        block_quiz=admin.call('save',{'title':'Все блоки','scoring':'fixed','questions':block_questions})['id']
+        normalized=next(q for q in admin.call('quizzes')['quizzes'] if q['id']==block_quiz)['questions']
+        for raw,q in zip(block_questions,normalized):
+            if q['block'] in ('matching','ordering'):
+                assert [q['options'][i] for i in q['correct']]==raw['options']
+                assert q['options']!=raw['options'], 'The public list must be shuffled'
+        imported=admin.call('import_preview',{'json':json.dumps({'title':'Импорт блоков','questions':block_questions})})['quiz']
+        assert [q['block'] for q in imported['questions']]==[q['block'] for q in block_questions]
+        for q in imported['questions'][:2]:assert len(q['correct'])==3
+        for invalid in [dict(block_questions[0],prompts=['Один']),dict(block_questions[1],correct=[0,0,1]),dict(block_questions[0],options=['Повтор','Повтор','Другой']),dict(block_questions[2],block='unknown')]:
+            admin.call('save',{'title':'Некорректный блок','questions':[invalid]},400)
+        bf=admin.call('form_create',{'quiz_id':block_quiz})
+        block_guest=Client(purl);block_guest.boot()
+        safe=block_guest.call('form_get&token='+bf['token'])
+        assert all('correct' not in q and 'reference' not in q for q in safe['questions'])
+        assert safe['questions'][0]['prompts']==block_questions[0]['prompts']
+        answers=[q['correct'] for q in normalized]
+        block_guest.call('form_submit',{'token':bf['token'],'name':'Неполный','answers':[normalized[0]['correct'][:2],*answers[1:]]},400)
+        wrong_answers=[list(reversed(answers[0])),list(reversed(answers[1])),*answers[2:]]
+        score=block_guest.call('form_submit',{'token':bf['token'],'name':'Блоки','answers':wrong_answers})
+        assert score['attempt']['percent']==60 and score['attempt']['answers']==wrong_answers
+        correct_guest=Client(purl);correct_guest.boot()
+        assert correct_guest.call('form_submit',{'token':bf['token'],'name':'Верно','answers':answers})['attempt']['percent']==100
+        assert correct_guest.call('form_get&token='+bf['token'])['attempt']['answers']==answers
+        # Live website entry point must preserve the same sequence semantics.
+        room=admin.call('create_room',{'id':block_quiz})
+        player_client=Client(purl);player_client.boot()
+        player_client.player=player_client.call('join',{'code':room['code'],'name':'Игрок блоков'})['token']
+        admin.call('control',{'room':room['id'],'command':'next'})
+        player_client.call('answer',{'index':0,'choices':answers[0][:2]},400)
+        player_client.call('answer',{'index':0,'choices':wrong_answers[0]})
+        live=player_client.call('state');assert live['answer']['correct'] is False and live['answer']['choices']==wrong_answers[0]
+        admin.call('control',{'room':room['id'],'command':'next'})
+        player_client.call('answer',{'index':1,'choices':answers[1]})
+        live=player_client.call('state');assert live['answer']['correct'] is True and live['answer']['points']==100
+        print('PASS: all five blocks save/import, validate, shuffle, keep answers private, preserve order and score correctly on forms and live games')
+        # Structured personal Telegram questions use a private, ordered button sequence.
+        telegram_form=admin.call('form_create',{'quiz_id':block_quiz})
+        bot(message(201,'/start ft_'+telegram_form['token']),True)
+        for index,q in enumerate(normalized):
+            with closing(sqlite3.connect(pdir/'quiz.sqlite')) as db:
+                db.row_factory=sqlite3.Row
+                delivery=dict(db.execute('SELECT * FROM form_tg_deliveries WHERE form_id=? AND kind=?',(telegram_form['id'],'private')).fetchone())
+            if q['block'] in ('matching','ordering'):
+                prefix=f"fa:{delivery['id']}:{delivery['revision']}:{index}:"
+                partial=bot(callback(201,f"fs:{delivery['id']}:{delivery['revision']}:{index}",message_id=delivery['current_message_id']))
+                assert 'Сначала выберите' in json.dumps(partial,ensure_ascii=False)
+                selection=list(reversed(q['correct'])) if index==0 else q['correct']
+                for option in selection:bot(callback(201,prefix+str(option),message_id=delivery['current_message_id']))
+                calls=bot(callback(201,f"fs:{delivery['id']}:{delivery['revision']}:{index}",message_id=delivery['current_message_id']),True)
+            else:calls=bot(answer(201,delivery['current_poll_id'],q['correct']),True)
+            if index<4:assert 'Местописание после сдачи' not in json.dumps(calls,ensure_ascii=False)
+        result=admin.call('form_results&form='+telegram_form['id'])['attempts'][0]
+        assert result['percent']==80
+        review=bot(callback(201,'pa:'+telegram_form['id']))
+        assert 'Ной —' in json.dumps(review,ensure_ascii=False) and 'Местописание после сдачи' in json.dumps(review,ensure_ascii=False)
+        print('PASS: structured private Telegram buttons, step completion, mixed block progression, exact sequence scoring and readable final review')
+        group_blocks=admin.call('form_create',{'quiz_id':block_quiz})
+        binding=admin.call('form_telegram_create',{'form':group_blocks['id']})
+        bot(message(101,binding['command'],-10088,'supergroup'),True)
+        for index,q in enumerate(normalized):
+            delivery=admin.call('form_results&form='+group_blocks['id'])['deliveries'][0]
+            with closing(sqlite3.connect(pdir/'quiz.sqlite')) as db:message_id=db.execute('SELECT current_message_id FROM form_tg_deliveries WHERE id=?',(delivery['id'],)).fetchone()[0]
+            selection=list(reversed(q['correct'])) if index==1 else q['correct']
+            if not isinstance(selection,list):selection=[selection]
+            for option in selection:bot(callback(201,f"fa:{delivery['id']}:{delivery['revision']}:{index}:{option}",-10088,'supergroup',message_id))
+            bot(callback(201,f"fs:{delivery['id']}:{delivery['revision']}:{index}",-10088,'supergroup',message_id))
+            admin.call('form_telegram_command',{'form':group_blocks['id'],'delivery':delivery['id'],'revision':delivery['revision'],'command':'next'});bot(tick=True)
+        group_report=admin.call('form_results&form='+group_blocks['id'])
+        assert group_report['deliveries'][0]['state']=='closed' and group_report['attempts'][0]['percent']==80
+        print('PASS: mixed structured and ordinary blocks in a Telegram group, organizer-controlled progression and ordered scoring')
         if os.environ.get('FORMS_UI')=='1':
             subprocess.run(['node',str(ROOT/'tests/forms_ui.cjs')],env=dict(env,FORMS_TEST_URL=purl,FORMS_QUIZ_ID=quiz,FORMS_USER_A=ua,FORMS_USER_B=ub),check=True,timeout=100)
     finally:
