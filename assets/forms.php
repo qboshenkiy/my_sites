@@ -7,13 +7,22 @@ function formsSchema(): void {
     $db->exec("CREATE TABLE IF NOT EXISTS pulse_forms(
         id TEXT PRIMARY KEY,token TEXT UNIQUE NOT NULL,owner_id TEXT NOT NULL,title TEXT NOT NULL,description TEXT NOT NULL,
         quiz TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,published INTEGER NOT NULL DEFAULT 0,
-        require_account INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,revision INTEGER NOT NULL DEFAULT 1,assessment_id TEXT);
+        require_account INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,revision INTEGER NOT NULL DEFAULT 1,assessment_id TEXT,
+        immediate_results INTEGER NOT NULL DEFAULT 1);
         CREATE TABLE IF NOT EXISTS form_attempts(id TEXT PRIMARY KEY,form_id TEXT NOT NULL REFERENCES pulse_forms(id),
         user_id TEXT,name TEXT NOT NULL,guest_key TEXT NOT NULL,answers TEXT NOT NULL,points REAL NOT NULL,max_points REAL NOT NULL,
         submitted_at INTEGER NOT NULL,source TEXT NOT NULL,UNIQUE(form_id,guest_key));
         CREATE UNIQUE INDEX IF NOT EXISTS form_account_attempt ON form_attempts(form_id,user_id) WHERE user_id IS NOT NULL;
         CREATE INDEX IF NOT EXISTS form_attempt_list ON form_attempts(form_id,submitted_at);
         CREATE TABLE IF NOT EXISTS form_result_links(token_hash TEXT PRIMARY KEY,attempt_id TEXT NOT NULL,expires_at INTEGER NOT NULL);");
+    if(!in_array('immediate_results',array_column(query('PRAGMA table_info(pulse_forms)')->fetchAll(),'name'),true)){
+        $db->exec('BEGIN IMMEDIATE');
+        if(!in_array('immediate_results',array_column(query('PRAGMA table_info(pulse_forms)')->fetchAll(),'name'),true))$db->exec('ALTER TABLE pulse_forms ADD COLUMN immediate_results INTEGER NOT NULL DEFAULT 1');
+        $db->exec('COMMIT');
+    }
+}
+function formResultsVisible(array $form): bool {
+    return !empty($form['published'])||!empty($form['immediate_results']);
 }
 function formOwned(string $id): array {
     hostOnly();$form=query('SELECT * FROM pulse_forms WHERE id=?',[$id])->fetch();
@@ -63,17 +72,19 @@ function formStoreAttempt(array $form,?string $uid,string $key,string $name,arra
     formSyncAssessment($form);return query('SELECT * FROM form_attempts WHERE id=?',[$id])->fetch();
 }
 function formPublic(array $form,array|false $attempt): array {
-    if($attempt&&$form['published'])$attempt=formAdjustedAttempt($form,$attempt);
+    $visible=$attempt&&formResultsVisible($form);
+    if($visible)$attempt=formAdjustedAttempt($form,$attempt);
     $quiz=json_decode($form['quiz'],true);$questions=[];
     foreach($quiz['questions'] as $i=>$q){
         $safe=array_intersect_key($q,array_flip(['text','options','type','image','points','category','multiple']));
-        if($attempt&&$form['published']){$safe['correct']=$q['correct'];$safe['reference']=$q['reference']??'';}
+        if($visible){$safe['correct']=$q['correct'];$safe['reference']=$q['reference']??'';}
         $questions[]=$safe;
     }
     $data=['token'=>$form['token'],'title'=>$form['title'],'description'=>$form['description'],'active'=>(bool)$form['active'],
-        'published'=>(bool)$form['published'],'require_account'=>(bool)$form['require_account'],'questions'=>$questions,'submitted'=>(bool)$attempt];
+        'published'=>(bool)$form['published'],'immediate_results'=>(bool)$form['immediate_results'],'results_visible'=>(bool)$visible,
+        'require_account'=>(bool)$form['require_account'],'questions'=>$questions,'submitted'=>(bool)$attempt];
     if($attempt){$data['attempt']=['name'=>$attempt['name'],'submitted_at'=>$attempt['submitted_at']];
-        if($form['published'])$data['attempt']+=['points'=>(float)$attempt['points'],'max_points'=>(float)$attempt['max_points'],
+        if($visible)$data['attempt']+=['points'=>(float)$attempt['points'],'max_points'=>(float)$attempt['max_points'],
             'percent'=>$attempt['max_points']>0?round($attempt['points']/$attempt['max_points']*100,2):null,'answers'=>json_decode($attempt['answers'],true),'manually_adjusted'=>!empty($attempt['manually_adjusted'])];}
     return $data;
 }
@@ -123,7 +134,8 @@ function formsHandle(string $action,array $input): void {
         $title=cleanText($input['title']??$q['title'],100);$description=$input['description']??$q['description'];
         if(!is_string($description)||mb_strlen($description)>1000)fail('Описание: до 1000 символов.');
         $id=bin2hex(random_bytes(8));$token=bin2hex(random_bytes(16));
-        query('INSERT INTO pulse_forms(id,token,owner_id,title,description,quiz,require_account,created_at) VALUES (?,?,?,?,?,?,?,?)',[$id,$token,$me['id'],$title,trim($description),json_encode($quiz,JSON_UNESCAPED_UNICODE),!empty($input['require_account'])?1:0,time()]);
+        $immediate=$input['immediate_results']??true;if(!is_bool($immediate))fail('Некорректная настройка показа результатов.');
+        query('INSERT INTO pulse_forms(id,token,owner_id,title,description,quiz,require_account,created_at,immediate_results) VALUES (?,?,?,?,?,?,?,?,?)',[$id,$token,$me['id'],$title,trim($description),json_encode($quiz,JSON_UNESCAPED_UNICODE),!empty($input['require_account'])?1:0,time(),$immediate?1:0]);
         communityAudit('create_form',$id,['quiz'=>$q['id']]);out(['id'=>$id,'token'=>$token]);
     }
     $id=(string)($input['form']??$_GET['form']??'');$form=formOwned($id);
@@ -166,11 +178,16 @@ function formsHandle(string $action,array $input): void {
     }else{
         if((int)($input['revision']??-1)!==(int)$form['revision'])fail('Настройки уже изменились. Обновите тест.',409);
         foreach(['active','published'] as $field)if(!isset($input[$field])||!is_bool($input[$field]))fail('Некорректные настройки теста.');
-        query('UPDATE pulse_forms SET active=?,published=?,revision=revision+1 WHERE id=?',[$input['active']?1:0,$input['published']?1:0,$id]);
-        $form=formOwned($id);$assessmentId=formSyncAssessment($form);
-        if($form['published']&&$assessmentId&&in_array($me['role'],['admin','moderator'],true))standingsPublish(query('SELECT * FROM assessments WHERE id=?',[$assessmentId])->fetch());
-        elseif(!$form['published']&&!empty($form['assessment_id']))standingsRemove($form['assessment_id']);
-        communityAudit('configure_form',$id,['active'=>$form['active'],'published'=>$form['published']]);
+        $immediate=$input['immediate_results']??(bool)$form['immediate_results'];if(!is_bool($immediate))fail('Некорректная настройка показа результатов.');
+        $visibilityOnly=$input['active']===(bool)$form['active']&&$input['published']===(bool)$form['published']&&$immediate!==(bool)$form['immediate_results'];
+        query('UPDATE pulse_forms SET active=?,published=?,immediate_results=?,revision=revision+1 WHERE id=?',[$input['active']?1:0,$input['published']?1:0,$immediate?1:0,$id]);
+        $form=formOwned($id);
+        if(!$visibilityOnly){
+            $assessmentId=formSyncAssessment($form);
+            if($form['published']&&$assessmentId&&in_array($me['role'],['admin','moderator'],true))standingsPublish(query('SELECT * FROM assessments WHERE id=?',[$assessmentId])->fetch());
+            elseif(!$form['published']&&!empty($form['assessment_id']))standingsRemove($form['assessment_id']);
+        }
+        communityAudit('configure_form',$id,['active'=>$form['active'],'published'=>$form['published'],'immediate_results'=>$form['immediate_results']]);
     }
     $db->exec('COMMIT');out(['ok'=>true]);
 }

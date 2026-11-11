@@ -106,12 +106,16 @@ function formsBotHistory(string $telegram,int $page): void {
     $where=' FROM form_attempts a JOIN pulse_forms f ON f.id=a.form_id WHERE (a.guest_key=? OR (? IS NOT NULL AND a.user_id=?))';
     $args=['t:'.hash('sha256',$telegram),$uid?:null,$uid?:null];
     $total=(int)query('SELECT count(*)'.$where,$args)->fetchColumn();$page=min(max(0,$page),max(0,(int)ceil($total/8)-1));
-    $rows=query('SELECT f.id,f.title,f.published,a.submitted_at'.$where.' ORDER BY a.submitted_at DESC,a.id LIMIT 8 OFFSET '.($page*8),$args)->fetchAll();
+    $rows=query('SELECT a.*,f.title,f.published,f.immediate_results,f.assessment_id'.$where.' ORDER BY a.submitted_at DESC,a.id LIMIT 8 OFFSET '.($page*8),$args)->fetchAll();
     $buttons=[];
-    foreach($rows as $row)$buttons[]=[['text'=>mb_substr($row['title'],0,45).' · '.date('d.m.Y',(int)$row['submitted_at']).($row['published']?'':' · скрыт'),'callback_data'=>'pr:'.$row['id']]];
+    foreach($rows as $row){
+        $score=formAdjustedAttempt($row,$row);
+        $result=formResultsVisible($row)?($score['max_points']>0?round($score['points']/$score['max_points']*100,2).'%':'Без оценки'):'Ожидает публикации';
+        $buttons[]=[['text'=>mb_substr($row['title'],0,36).' · '.$result.' · '.date('d.m',(int)$row['submitted_at']),'callback_data'=>'pr:'.$row['form_id']]];
+    }
     $nav=[];if($page>0)$nav[]=['text'=>'← Назад','callback_data'=>'fh:'.($page-1)];if(($page+1)*8<$total)$nav[]=['text'=>'Далее →','callback_data'=>'fh:'.($page+1)];if($nav)$buttons[]=$nav;
     if(($url=pulseMiniAppUrl()))$buttons[]=[['text'=>'Открыть Пульс','web_app'=>['url'=>$url]]];
-    formsBotReply($telegram,$total?'Ваши пройденные тесты. Выберите тест, чтобы посмотреть результат. Страница '.($page+1).' из '.(int)ceil($total/8).'.':'Пока нет пройденных тестов. Пройдите тест в этом боте или войдите через Telegram на сайте и отправьте работу.',$buttons);
+    formsBotReply($telegram,$total?"Мои результаты\nПройдено тестов — ".$total."\n\nВыберите тест. Внутри — баллы, ваши ответы и разбор с местописаниями.\nСтраница ".($page+1).' из '.(int)ceil($total/8).'.':'Пока нет пройденных тестов. Пройдите тест в этом боте или войдите через Telegram на сайте и отправьте работу.',$buttons);
 }
 function formsBotUpdate(array $update,string $botId): bool {
     global $db;
@@ -204,10 +208,12 @@ function formsBotUpdate(array $update,string $botId): bool {
             else{
                 if(!$form['active'])throw new DomainException('Приём ответов теста закрыт.');formsBotValidate($form);$user=formsBotIdentity($telegram);
                 if($form['require_account']&&!$user)throw new DomainException('Для этого теста нужен аккаунт марафона. Сначала привяжите Telegram и войдите в Пульс через этого бота.');
-                $already=$user?query('SELECT id FROM form_attempts WHERE form_id=? AND user_id=?',[$form['id'],$user['id']])->fetchColumn():false;
-                if($already)throw new DomainException('Вы уже отправили этот тест на сайте или в Telegram. Результат доступен на сайте после открытия администратором.');
-                query("INSERT INTO form_tg_deliveries(id,form_id,kind,chat_id,chat_title,state,pending,created_at) VALUES (?,?,?,?,?,'queued','next',?)",[bin2hex(random_bytes(8)),$form['id'],'private',$chat,mb_substr($name,0,80),time()]);
-                formsBotReply($chat,$form['title']."\nВопросы придут по одному. Ответ окончательный. Оценку и правильные ответы откроет администратор.");
+                $already=query('SELECT * FROM form_attempts WHERE form_id=? AND (guest_key=? OR user_id=?)',[$form['id'],'t:'.hash('sha256',$telegram),$user['id']??null])->fetch();
+                if($already)formsBotSendResult($form,$chat,$already);
+                else{
+                    query("INSERT INTO form_tg_deliveries(id,form_id,kind,chat_id,chat_title,state,pending,created_at) VALUES (?,?,?,?,?,'queued','next',?)",[bin2hex(random_bytes(8)),$form['id'],'private',$chat,mb_substr($name,0,80),time()]);
+                    formsBotCall('sendMessage',['chat_id'=>$chat,'text'=>$form['title']."\nВопросы придут по одному. Ответ окончательный. ".($form['immediate_results']?'После последнего вопроса покажу ваш результат. Разбор с местописаниями — по кнопке.':'Оценку и правильные ответы откроет администратор.'),'reply_markup'=>['keyboard'=>[[['text'=>'Мои результаты']]],'resize_keyboard'=>true,'is_persistent'=>true]]);
+                }
             }
         }elseif($isBind){
             if(!in_array($message['chat']['type']??'',['group','supergroup'],true))throw new DomainException('Отправьте команду /pulse с кодом в нужной группе.');
@@ -227,7 +233,7 @@ function formsBotUpdate(array $update,string $botId): bool {
             $form=query('SELECT * FROM pulse_forms WHERE id=?',[$result[1]])->fetch();if(!$form)throw new DomainException('Тест не найден.');
             $a=formsBotOwnAttempt($form['id'],$telegram);
             if(!$a)throw new DomainException('У вас нет сохранённой работы по этому тесту.');
-            if(!$form['published'])formsBotSendResult($form,$chat,$a);
+            if(!formResultsVisible($form))formsBotSendResult($form,$chat,$a);
             else if($isReview)formsBotSendReview($form,$chat,$a);else formsBotSendResult($form,$chat,$a);
         }
     }catch(DomainException $e){formsBotRollback();if($callback)$callbackText=$e->getMessage();elseif($chat)formsBotReply($chat,$e->getMessage());}
@@ -242,28 +248,54 @@ function formsBotResultKeyboard(array $form,array $attempt): array {
         query('INSERT INTO form_result_links VALUES (?,?,?)',[hash('sha256',$secret),$attempt['id'],time()+30*86400]);
         $buttons[]=[['text'=>'Результат на сайте','url'=>$base.'/?test='.$form['token'].'#result='.$secret]];
     }
-    $buttons[]=[['text'=>'Показать правильные ответы','callback_data'=>'pa:'.$form['id']]];
-    $buttons[]=[['text'=>'Мои пройденные тесты','callback_data'=>'fh:0']];
+    if(formResultsVisible($form))$buttons[]=[['text'=>'Показать правильные ответы','callback_data'=>'pa:'.$form['id']]];
+    else $buttons[]=[['text'=>'Проверить результат','callback_data'=>'pr:'.$form['id']]];
+    $buttons[]=[['text'=>'Мои результаты','callback_data'=>'fh:0']];
     return $buttons;
 }
 function formsBotSendResult(array $form,string $chat,array $attempt): void {
     $a=formAdjustedAttempt($form,$attempt);
-    $text=$form['title']."\n".($form['published']?'Ваш результат: '.$a['points'].' / '.$a['max_points'].' баллов.':'Ответы приняты. Администратор ещё не открыл результаты.');
+    $text=$form['title']."\n\n";
+    if(formResultsVisible($form)){
+        $text.='Ваш результат: '.($a['max_points']>0?round($a['points']/$a['max_points']*100,2).'%':'Опрос без оценки')."\nБаллы — ".$a['points'].' из '.$a['max_points'];
+        $answers=json_decode($a['answers'],true);$correct=0;$graded=0;
+        foreach(json_decode($form['quiz'],true)['questions'] as $i=>$q){
+            if($q['type']!=='quiz')continue;
+            $graded++;$selected=$answers[$i]??null;$selected=$selected===null?[]:(is_array($selected)?$selected:[$selected]);sort($selected);
+            $expected=is_array($q['correct'])?$q['correct']:[$q['correct']];sort($expected);
+            if($selected===$expected)$correct++;
+        }
+        if($graded)$text.="\nВерных ответов — ".$correct.' из '.$graded;
+        if(!empty($a['manually_adjusted']))$text.="\nОценка скорректирована администратором.";
+        $text.="\n\nНажмите «Показать правильные ответы» для разбора с местописаниями.";
+    }else $text.='Ответы приняты. Администратор ещё не открыл результаты.';
     formsBotReply($chat,$text,formsBotResultKeyboard($form,$attempt));
 }
 function formsBotSendReview(array $form,string $chat,?array $attempt=null): void {
+    if($attempt&&!formResultsVisible($form)){formsBotSendResult($form,$chat,$attempt);return;}
     if($attempt)$attempt=formAdjustedAttempt($form,$attempt);
     $answers=$attempt?json_decode($attempt['answers'],true):[];$chunks=[];
     $text=$form['title']."\n".($attempt?'Ваш результат: '.$attempt['points'].' / '.$attempt['max_points'].' баллов.':"Правильные ответы:");
     foreach(json_decode($form['quiz'],true)['questions'] as $i=>$q){
-        if($q['type']!=='quiz'){if($attempt){$selected=$answers[$i]??null;$selected=$selected===null?[]:(is_array($selected)?$selected:[$selected]);$row="\n\n".($i+1).'. '.$q['text']."\nОпрос — без правильного ответа.\nВаш ответ: ".($selected?implode(', ',array_map(fn($n)=>$q['options'][(int)$n]??'', $selected)):'Нет ответа');if(mb_strlen($text.$row)>3500){$chunks[]=$text;$text='';}$text.=$row;}continue;}
-        $correct=$q['correct']??null;$correct=is_array($correct)?array_map('intval',$correct):[$correct===null?-1:(int)$correct];
-        $row="\n\n".($i+1).'. '.$q['text']."\nПравильно: ".implode(', ',array_map(fn($n)=>$q['options'][$n]??'', $correct));
-        if($attempt){$selected=$answers[$i]??null;$selected=$selected===null?[]:(is_array($selected)?$selected:[$selected]);$expected=$correct;sort($expected);$chosen=array_map('intval',$selected);sort($chosen);$row.=($chosen===$expected?"\n✅ Верно":"\n❌ Неверно")."\nВаш ответ: ".($selected?implode(', ',array_map(fn($n)=>$q['options'][(int)$n]??'', $selected)):'Нет ответа');}
-        if(!empty($q['reference']))$row.="\n".$q['reference'];
-        if(mb_strlen($text.$row)>3500){$chunks[]=$text;$text='';}$text.=$row;
+        if($q['type']!=='quiz'&&!$attempt)continue;
+        $row="\n\n".($i+1).'. '.$q['text'];
+        $selected=$answers[$i]??null;
+        $selected=$selected===null?[]:(is_array($selected)?$selected:[$selected]);
+        if($q['type']==='quiz'){
+            $correct=$q['correct']??null;
+            $correct=is_array($correct)?array_map('intval',$correct):[$correct===null?-1:(int)$correct];
+            $row.="\nПравильно: ".implode(', ',array_map(fn($n)=>$q['options'][$n]??'', $correct));
+            if($attempt){
+                $expected=$correct;sort($expected);$chosen=array_map('intval',$selected);sort($chosen);
+                $row.=$chosen===$expected?"\n✅ Верно":"\n❌ Неверно";
+            }
+        }else $row.="\nОпрос — без правильного ответа.";
+        if($attempt)$row.="\nВаш ответ: ".($selected?implode(', ',array_map(fn($n)=>$q['options'][(int)$n]??'', $selected)):'Нет ответа');
+        if(!empty($q['reference']))$row.="\nМестописание / пояснение — ".$q['reference'];
+        if(mb_strlen($text.$row)>3500){$chunks[]=$text;$text='';}
+        $text.=$row;
     }
-    $chunks[]=$text;foreach($chunks as $chunk){while($chunk!==''){$part=mb_strcut($chunk,0,3500,'UTF-8');$chunk=substr($chunk,strlen($part));formsBotReply($chat,$part);}}
+    $chunks[]=$text;foreach($chunks as $index=>$chunk){while($chunk!==''){$part=mb_strcut($chunk,0,3500,'UTF-8');$chunk=substr($chunk,strlen($part));formsBotReply($chat,$part,$attempt&&$index===count($chunks)-1&&$chunk===''?formsBotResultKeyboard($form,$attempt):null);}}
 }
 function formsBotFinish(array $delivery,array $form): void {
     $voters=query('SELECT telegram_id,name,user_id FROM form_tg_votes WHERE delivery_id=? GROUP BY telegram_id',[$delivery['id']])->fetchAll();
@@ -294,7 +326,7 @@ function formsBotTick(): void {
             if($d['pending']==='finish'||$next>=count($quiz['questions'])){
                 $db->exec('BEGIN IMMEDIATE');formsBotFinish($d,$form);query("UPDATE form_tg_deliveries SET state='closed',pending='',error='' WHERE id=?",[$d['id']]);$db->exec('COMMIT');
                 if($d['kind']==='private'){$a=query('SELECT * FROM form_attempts WHERE form_id=? AND guest_key=?',[$form['id'],'t:'.hash('sha256',$d['chat_id'])])->fetch();if($a){formsBotSendResult($form,$d['chat_id'],$a);continue;}}
-                $finishText='Опрос завершён. Ответы сохранены. '.($form['published']?'Результаты открыты.':'Результаты откроет администратор.');
+                $finishText='Опрос завершён. Ответы сохранены. '.(formResultsVisible($form)?'Личный результат и разбор доступны по кнопке «Мой результат».':'Результаты откроет администратор.');
                 if($d['kind']==='group'&&$d['current_message_id']&&!$d['current_poll_id'])formsBotCall('editMessageText',['chat_id'=>$d['chat_id'],'message_id'=>(int)$d['current_message_id'],'text'=>$finishText,'reply_markup'=>['inline_keyboard'=>[[['text'=>'Мой результат','url'=>'https://t.me/'.getenv('TELEGRAM_BOT_USERNAME').'?start=fr_'.$form['id']]],[['text'=>'Открыть разбор','callback_data'=>'pg:'.$d['id'].':'.$d['revision'].':review']]]]]);
                 else formsBotReply($d['chat_id'],$finishText,$d['kind']==='private'?[[['text'=>'Мой результат','callback_data'=>'pr:'.$form['id']]]]:[[['text'=>'Мой результат','url'=>'https://t.me/'.getenv('TELEGRAM_BOT_USERNAME').'?start=fr_'.$form['id']]],[['text'=>'Отправить правильные ответы','callback_data'=>'pg:'.$d['id'].':'.$d['revision'].':review']]]);
                 continue;

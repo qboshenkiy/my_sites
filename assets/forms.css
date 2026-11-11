@@ -9,3 +9,6 @@
 .self-test-verdict{font-weight:700;margin:12px 0}.self-test-verdict.is-correct{color:var(--success)}.self-test-verdict.is-incorrect{color:var(--danger)}.self-test-review>span:nth-child(2){min-width:0;overflow-wrap:anywhere}.self-test-review small{margin-left:auto}.self-test-review{flex-wrap:wrap}
 
 .forms-attempt-review{width:min(850px,calc(100vw - 24px));max-height:90dvh;overflow:auto}.forms-attempt-review .self-test-question{margin-top:20px}
+
+.question-editor textarea[name^="reference-"]{display:block;width:100%;margin-top:9px;padding:13px 14px;border:1px solid var(--line);border-radius:9px;font:inherit;resize:vertical;background:var(--surface);color:var(--ink)}
+.self-test-reference{overflow-wrap:anywhere;white-space:pre-line}

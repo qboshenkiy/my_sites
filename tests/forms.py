@@ -35,6 +35,17 @@ with tempfile.TemporaryDirectory(prefix='pulse-forms-') as tmp:
     pp,mp=port(),port();purl=f'http://127.0.0.1:{pp}';murl=f'http://127.0.0.1:{mp}'
     env=dict(os.environ,QUIZ_DATA_DIR=str(pdir),MARATHON_DATA_DIR=str(mdir),MARATHON_URL=murl,PULSE_URL=purl,
              PULSE_BRIDGE_SECRET='fixture-bridge-key-'+'f'*40,TELEGRAM_BOT_TOKEN='999999:fixture-telegram-token',TELEGRAM_BOT_USERNAME='fixture_pulse_bot',APP_URL=purl)
+    # Start with the deployed schema to exercise an additive upgrade with saved work.
+    legacy_token='a'*32
+    with closing(sqlite3.connect(pdir/'quiz.sqlite')) as db:
+        db.executescript("""CREATE TABLE pulse_forms(id TEXT PRIMARY KEY,token TEXT UNIQUE NOT NULL,owner_id TEXT NOT NULL,
+            title TEXT NOT NULL,description TEXT NOT NULL,quiz TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,
+            published INTEGER NOT NULL DEFAULT 0,require_account INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,
+            revision INTEGER NOT NULL DEFAULT 1,assessment_id TEXT);""")
+        legacy_quiz={'questions':[{'text':'Сколько?', 'options':['Один','Два'],'correct':0,'type':'quiz','points':10,'reference':'Бытие 1:1'}]}
+        db.execute('INSERT INTO pulse_forms(id,token,owner_id,title,description,quiz,created_at) VALUES (?,?,?,?,?,?,?)',
+                   ('legacy',legacy_token,'legacy-owner','Старый тест','',json.dumps(legacy_quiz),int(time.time())))
+        db.commit()
     servers=[]
     try:
         for root,p in [(ROOT,pp),(ROOT/'marathon',mp)]:servers.append(subprocess.Popen([PHP,'-S',f'127.0.0.1:{p}','-t',str(root),str(root/'router.php')],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL))
@@ -45,14 +56,38 @@ with tempfile.TemporaryDirectory(prefix='pulse-forms-') as tmp:
         admin.call('setup',{'password':'testing-admin-password'});admin.boot()
         a,b,guest,outsider=[Client(purl) for _ in range(4)]
         ua=a.register('Анна','reader_a');ub=b.register('Борис','reader_b');guest.boot();outsider.boot()
+        legacy=guest.call('form_get&token='+legacy_token)
+        assert legacy['immediate_results'] and not legacy['results_visible']
+        legacy=guest.call('form_submit',{'token':legacy_token,'name':'Гость','answers':[0]})
+        assert legacy['attempt']['percent']==100 and legacy['questions'][0]['reference']=='Бытие 1:1'
+        with closing(sqlite3.connect(pdir/'quiz.sqlite')) as db:
+            assert db.execute('SELECT immediate_results FROM pulse_forms WHERE id=?',('legacy',)).fetchone()[0]==1
+        print('PASS: existing form schema migrates additively and old tests show results after completion')
         source=Client(murl);source.boot();source.call('setup',{'login':'admin','password':'testing-admin-password','name':'Команда'});source.boot()
         for tg,name in [('201','Телеграм Анна'),('202','Телеграм Борис')]:
             uid=source.call('create_user',{'name':name,'role':'participant'})['id']
             with closing(sqlite3.connect(mdir/'marathon.sqlite')) as db:db.execute('UPDATE users SET telegram_id=? WHERE id=?',(tg,uid));db.commit()
-        questions=[{'text':'Какие два числа подходят?','type':'quiz','seconds':20,'options':['4','5','6','7','8'],'correct':[0,4],'points':500},
-                   {'text':'Что из этого дерево?','type':'quiz','seconds':20,'options':['Дуб','Камень'],'correct':0,'points':500}]
+        questions=[{'text':'Какие два числа подходят?','type':'quiz','seconds':20,'options':['4','5','6','7','8'],'correct':[0,4],'points':500,'reference':'Числа 6:24–26'},
+                   {'text':'Что из этого дерево?','type':'quiz','seconds':20,'options':['Дуб','Камень'],'correct':0,'points':500,'reference':'Псалом 1:3'}]
         quiz=admin.call('save',{'title':'Самостоятельный тест','questions':questions})['id']
-        def create(**changes):return admin.call('form_create',dict(quiz_id=quiz,**changes))
+        def create(**changes):return admin.call('form_create',dict(quiz_id=quiz,immediate_results=False,**changes))
+        immediate=admin.call('form_create',{'quiz_id':quiz})
+        before=guest.call('form_get&token='+immediate['token'])
+        assert before['immediate_results'] and not before['results_visible']
+        assert all('correct' not in q and 'reference' not in q for q in before['questions'])
+        guest.call('form_submit',{'token':immediate['token'],'name':'Гость','answers':[[0,4]]},400)
+        shown=guest.call('form_submit',{'token':immediate['token'],'name':'Гость','answers':[[0,4],1]})
+        assert shown['results_visible'] and not shown['published'] and shown['attempt']['percent']==50
+        assert shown['attempt']['answers']==[[0,4],1] and shown['questions'][0]['reference']=='Числа 6:24–26'
+        assert guest.call('form_get&token='+immediate['token'])==shown
+        assert not outsider.call('form_get&token='+immediate['token'])['results_visible']
+        manager=admin.call('form_results&form='+immediate['id'])['form']
+        assert manager['assessment_id'] is None
+        admin.call('form_configure',{'form':immediate['id'],'revision':1,'active':True,'published':False,'immediate_results':False})
+        assert 'answers' not in guest.call('form_get&token='+immediate['token'])['attempt']
+        admin.call('form_configure',{'form':immediate['id'],'revision':2,'active':True,'published':False,'immediate_results':True})
+        assert guest.call('form_get&token='+immediate['token'])['attempt']['percent']==50
+        print('PASS: guests see their own score and references immediately, only after a complete submission, without publishing a ranking')
         f=create();token=f['token'];fid=f['id']
         public=guest.call('form_get&token='+token);assert all('correct' not in q and 'reference' not in q for q in public['questions'])
         a.call('form_results&form='+fid,status=404);guest.call('forms',status=401)
@@ -77,6 +112,11 @@ with tempfile.TemporaryDirectory(prefix='pulse-forms-') as tmp:
         admin.call('form_configure',{'form':fid,'revision':1,'active':True,'published':True})
         shown=a.call('form_get&token='+token);assert shown['attempt']['points']==500 and shown['attempt']['percent']==50
         assert all('correct' in q for q in shown['questions'])
+        published_before=a.call('standings')
+        admin.call('form_configure',{'form':fid,'revision':2,'active':True,'published':True,'immediate_results':True})
+        assert a.call('standings')==published_before, 'Changing personal visibility must preserve the published ranking snapshot'
+        admin.call('form_configure',{'form':fid,'revision':3,'active':True,'published':True,'immediate_results':False})
+        assert a.call('standings')==published_before
         assert all('correct' not in q for q in outsider.call('form_get&token='+token)['questions'])
         report=admin.call('form_results&form='+fid);assert len(report['attempts'])==2 and report['form']['assessment_id']
         grade=next(x for x in admin.call('assessments')['assessments'] if x['source_form_id']==fid)
@@ -84,7 +124,7 @@ with tempfile.TemporaryDirectory(prefix='pulse-forms-') as tmp:
         assert a.call('form_get&token='+token)['attempt']['percent']==65
         assert b.call('assessments')['assessments'][0]['scores'][0]['percent']==0
         admin.call('form_configure',{'form':fid,'revision':1,'active':False,'published':True},409)
-        admin.call('form_configure',{'form':fid,'revision':2,'active':False,'published':False})
+        admin.call('form_configure',{'form':fid,'revision':4,'active':False,'published':False})
         assert 'points' not in a.call('form_get&token='+token)['attempt']
         assert a.call('assessments')['assessments']==[]
         outsider.call('form_submit',{'token':token,'name':'Closed','answers':[0,0]},409)
@@ -120,7 +160,7 @@ with tempfile.TemporaryDirectory(prefix='pulse-forms-') as tmp:
         assert poll2!=poll
         bot(answer(202,poll2,0),True)  # Cannot answer another user's private test.
         finished=bot(answer(201,poll2,1),True)
-        assert 'Результат на сайте' in json.dumps(finished,ensure_ascii=False) and 'Показать правильные ответы' in json.dumps(finished,ensure_ascii=False)
+        assert 'Результат на сайте' in json.dumps(finished,ensure_ascii=False) and 'Проверить результат' in json.dumps(finished,ensure_ascii=False)
         assert 'Правильно:' not in json.dumps(finished,ensure_ascii=False)
         data=admin.call('form_results&form='+tf['id']);assert len(data['attempts'])==1 and data['attempts'][0]['percent']==50
         def callback(tg,data,chat=None,kind='private',message_id=None):
@@ -145,6 +185,26 @@ with tempfile.TemporaryDirectory(prefix='pulse-forms-') as tmp:
             db.execute('UPDATE form_result_links SET expires_at=0');db.commit()
         outsider.call('form_get',{'token':tf['token'],'result':secret},404)
         print('PASS: native private Telegram polls, delayed correctness, identity, per-chat isolation, duplicate updates and final scoring')
+        instant_tg=admin.call('form_create',{'quiz_id':quiz})
+        calls=bot(message(201,'/start ft_'+instant_tg['token']),True)
+        assert any(args.get('reply_markup',{}).get('keyboard') for method,args in calls if method=='sendMessage')
+        with closing(sqlite3.connect(pdir/'quiz.sqlite')) as db:poll=db.execute('SELECT current_poll_id FROM form_tg_deliveries WHERE form_id=?',(instant_tg['id'],)).fetchone()[0]
+        calls=bot(answer(201,poll,[0,4]),True)
+        assert 'Числа 6:24' not in json.dumps(calls,ensure_ascii=False)
+        with closing(sqlite3.connect(pdir/'quiz.sqlite')) as db:poll=db.execute('SELECT current_poll_id FROM form_tg_deliveries WHERE form_id=?',(instant_tg['id'],)).fetchone()[0]
+        calls=bot(answer(201,poll,1),True)
+        assert '50%' in json.dumps(calls,ensure_ascii=False) and 'Верных ответов — 1 из 2' in json.dumps(calls,ensure_ascii=False)
+        review=bot(callback(201,'pa:'+instant_tg['id']))
+        assert 'Числа 6:24–26' in json.dumps(review,ensure_ascii=False) and 'Псалом 1:3' in json.dumps(review,ensure_ascii=False)
+        assert 'Ваш ответ:' in json.dumps(review,ensure_ascii=False) and '❌ Неверно' in json.dumps(review,ensure_ascii=False)
+        link_calls=bot(callback(201,'pr:'+instant_tg['id']))
+        link=next(button['url'] for method,args in link_calls if method=='sendMessage' for row in args.get('reply_markup',{}).get('inline_keyboard',[]) for button in row if 'url' in button)
+        linked=outsider.call('form_get',{'token':instant_tg['token'],'result':link.split('#result=')[1]})
+        assert linked['results_visible'] and linked['attempt']['percent']==50
+        history=bot(message(201,'Мои результаты'))
+        history_buttons=[button for method,args in history if method=='sendMessage' for row in args.get('reply_markup',{}).get('inline_keyboard',[]) for button in row]
+        assert any(button.get('callback_data')=='pr:'+instant_tg['id'] and '50%' in button['text'] for button in history_buttons)
+        print('PASS: immediate Telegram percentage, answer count, references after completion, website link and percentages in history')
 
         group=create();connection=admin.call('form_telegram_create',{'form':group['id']});command=connection['command']
         denied=bot(message(201,command,-10010,'supergroup'));assert 'только администратор' in json.dumps(denied,ensure_ascii=False)
