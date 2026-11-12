@@ -69,3 +69,10 @@ const progress=document.createElement('div');progress.className='page-progress';
 let scrollPending=false;
 const updateProgress=()=>{const length=document.documentElement.scrollHeight-innerHeight;progress.style.transform=`scaleX(${length>0?Math.max(0,Math.min(1,scrollY/length)):0})`;scrollPending=false};
 addEventListener('scroll',()=>{if(!scrollPending){scrollPending=true;requestAnimationFrame(updateProgress)}},{passive:true});addEventListener('resize',updateProgress);updateProgress();
+
+const ambient=document.createElement('div');ambient.className='ambient-scene';ambient.setAttribute('aria-hidden','true');
+for(let i=0;i<3;i++){const orb=document.createElement('span');orb.className=`ambient-orb orb-${i+1}`;ambient.append(orb)}document.body.prepend(ambient);
+if(!window.matchMedia('(prefers-reduced-motion: reduce)').matches&&window.matchMedia('(pointer:fine)').matches){
+ let pointerFrame=0,px=50,py=50;
+ addEventListener('pointermove',event=>{px=event.clientX/innerWidth*100;py=event.clientY/innerHeight*100;if(pointerFrame)return;pointerFrame=requestAnimationFrame(()=>{ambient.style.setProperty('--pointer-x',`${px}%`);ambient.style.setProperty('--pointer-y',`${py}%`);pointerFrame=0})},{passive:true});
+}
