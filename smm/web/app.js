@@ -21,7 +21,7 @@ for(const study of d.cases||[]){
  function text(tag,value,cls){const e=document.createElement(tag);e.textContent=value;if(cls)e.className=cls;return e}
  article.append(text('p',study.period,'eyebrow'),text('h2',study.title),text('h3',study.goal),text('p',study.description,'case-description'),text('p',study.resultsPeriod,'case-period'));
  const metrics=document.createElement('div');metrics.className='case-metrics';
- for(const metric of study.metrics){const e=document.createElement('div');e.append(text('strong',metric.value),text('span',metric.label));metrics.append(e)}article.append(metrics);
+ for(const metric of study.metrics){const e=document.createElement('div');const value=text('strong',metric.value);if(Number.isFinite(metric.count)){value.dataset.count=metric.count;value.dataset.divisor=metric.divisor||1;value.dataset.suffix=metric.suffix||'';value.dataset.decimals=metric.decimals||0;value.dataset.final=metric.value}e.append(value,text('span',metric.label));metrics.append(e)}article.append(metrics);
  const list=document.createElement('ul');for(const outcome of study.outcomes)list.append(text('li',outcome));article.append(list,text('p',study.source,'note'));$('.case-list').append(article);
 }
 
@@ -29,15 +29,15 @@ for(const study of d.cases||[]){
 if(d.about){
  const about=d.about,box=$('.about-copy');
  function add(tag,value,cls){const e=document.createElement(tag);e.textContent=value;if(cls)e.className=cls;box.append(e);return e}
- add('p','ЗА КАЖДЫМ ПРОЕКТОМ — ЧЕЛОВЕК','eyebrow');add('h2',about.name+' / THUGGER SMM');add('p',about.role,'about-role');
- const badges=add('div','','about-badges');for(const label of [about.age,about.experience,'Маркетолог по образованию']){const span=document.createElement('span');span.textContent=label;badges.append(span)}
+ add('p','ОБО МНЕ','eyebrow');add('h2',about.name+' / THUGGER SMM');add('p',about.role,'about-role');
+ const badges=add('div','','about-badges');for(const label of [about.experience,'Bishkek']){const span=document.createElement('span');span.textContent=label;badges.append(span)}
  about.paragraphs.forEach(p=>add('p',p,'about-text'));
  const skills=add('div','','skill-chips');about.skills.forEach(skill=>{const span=document.createElement('span');span.textContent=skill;skills.append(span)});
 }
-if(d.instagram){
- for(const selector of ['.actions .button','.nav-contact']){const a=$(selector);a.href=d.instagram;a.target='_blank';a.rel='noopener noreferrer'}
- const contact=$('#contacts .button');if(contact){contact.classList.add('instagram-cta');contact.textContent='Написать @thugger0707 ↗'}
- const sticky=document.createElement('a');sticky.className='mobile-cta';sticky.href=d.instagram;sticky.target='_blank';sticky.rel='noopener noreferrer';sticky.setAttribute('aria-label','Обсудить проект с Егором в Instagram');sticky.textContent='Обсудить проект в Instagram ↗';document.body.append(sticky);
+if(d.telegram){
+ for(const selector of ['.actions .button','.nav-contact']){const a=$(selector);a.href=d.telegram;a.target='_blank';a.rel='noopener noreferrer'}
+ const contact=$('#contacts .button');if(contact){contact.classList.add('instagram-cta');contact.textContent='Обсудить проект в Telegram ↗'}
+ const sticky=document.createElement('a');sticky.className='mobile-cta';sticky.href=d.telegram;sticky.target='_blank';sticky.rel='noopener noreferrer';sticky.setAttribute('aria-label','Обсудить проект с Егором в Telegram');sticky.textContent='Обсудить проект в Telegram ↗';document.body.append(sticky);
 }
 // Enhance only when supported; content stays visible without motion or JavaScript.
 if('IntersectionObserver' in window&&!window.matchMedia('(prefers-reduced-motion: reduce)').matches){
@@ -47,4 +47,15 @@ if('IntersectionObserver' in window&&!window.matchMedia('(prefers-reduced-motion
  document.querySelectorAll('.project-filters button').forEach(button=>button.addEventListener('click',()=>{
   document.querySelectorAll('.work:not([hidden])').forEach(card=>{card.classList.add('is-visible');observer.unobserve(card)});
  }));
+}
+
+// Animate the supplied case values once on entry; never invent or fetch live statistics.
+if('IntersectionObserver' in window&&!window.matchMedia('(prefers-reduced-motion: reduce)').matches){
+ const counters=new IntersectionObserver(entries=>{for(const entry of entries){
+  if(!entry.isIntersecting)continue;counters.unobserve(entry.target);
+  const el=entry.target,target=Number(el.dataset.count),divisor=Number(el.dataset.divisor),suffix=el.dataset.suffix,decimals=Number(el.dataset.decimals),final=el.dataset.final;
+  const started=performance.now(),duration=1600;
+  const tick=now=>{const progress=Math.min((now-started)/duration,1),amount=target*(1-Math.pow(1-progress,3));el.textContent=progress===1?final:(amount/divisor).toLocaleString('ru-RU',{maximumFractionDigits:decimals})+suffix;if(progress<1)requestAnimationFrame(tick)};
+  requestAnimationFrame(tick);
+ }},{threshold:.7});document.querySelectorAll('[data-count]').forEach(el=>counters.observe(el));
 }
