@@ -14,7 +14,7 @@ for(const [i,project] of data.projects.entries()){
  const title=document.createElement('h3');const link=document.createElement('a');link.href=project.url;link.target='_blank';link.rel='noopener noreferrer';link.textContent=project.name+' ↗';title.append(link);
  const line=document.createElement('p');line.className='project-line';line.textContent=project.line;
  const tags=document.createElement('div');tags.className='tags';for(const value of project.tags){const t=document.createElement('span');t.textContent=value;tags.append(t)}
- card.append(top,frame,title,line,tags);$('.project-grid').append(card);
+ const copy=document.createElement('div');copy.className='project-copy';const open=document.createElement('a');open.className='project-open';open.href=project.url;open.target='_blank';open.rel='noopener noreferrer';open.textContent='Открыть проект ↗';copy.append(top,title,line,tags,open);const visual=document.createElement('div');visual.className='showcase-visual';const outline=document.createElement('span');outline.className='showcase-outline';outline.textContent=project.id==='suilo'?'СҮЙЛӨ':'THUGGER';outline.setAttribute('aria-hidden','true');visual.append(outline,frame);card.append(copy,visual);$('.project-grid').append(card);
  preview.onclick=()=>{dialog.querySelector('img').src=project.image;dialog.querySelector('img').alt=`Превью ${project.name}`;dialog.querySelector('h3').textContent=project.name;dialog.querySelector('a').href=project.url;dialog.showModal()};
 }
 let motionEnabled=!reduced.matches;try{if(localStorage.getItem('vano-motion')==='off')motionEnabled=false}catch{}
