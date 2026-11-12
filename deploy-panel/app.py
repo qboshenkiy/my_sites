@@ -24,7 +24,7 @@ import threading
 import time
 import urllib.parse
 
-VERSION = '1.15.0'
+VERSION = '1.15.1'
 LAYOUT = {
     'remote': ['server', 'ops', '.dockerignore'],
     'drawing': ['index.php', 'api.php', 'manifest.webmanifest', 'service-worker.js', 'lib', 'assets', 'ops', '.dockerignore'],
