@@ -41,7 +41,7 @@ if(d.telegram){
 }
 // Enhance only when supported; content stays visible without motion or JavaScript.
 if('IntersectionObserver' in window&&!window.matchMedia('(prefers-reduced-motion: reduce)').matches){
- const targets=document.querySelectorAll('.hero-copy,.hero-art,.section-head,.service,.work,.steps article,.case-panel,.about-photo,.about-copy,.project-profiles a,#contact');
+ const targets=document.querySelectorAll('.hero-copy,.hero-art,.section-head,.service,.work,.steps article,.case-panel,.about-photo,.about-copy,.project-profiles a,.project-filters,.approach>h2,.approach>.eyebrow,.about-badges span,.skill-chips span,#case-studies>.eyebrow,#contact');
  const observer=new IntersectionObserver(entries=>{for(const entry of entries){if(!entry.isIntersecting)continue;entry.target.classList.add('is-visible');observer.unobserve(entry.target)}},{threshold:0.08});
  targets.forEach((target,i)=>{target.classList.add('reveal');target.style.setProperty('--reveal-delay',`${i%3*90}ms`);observer.observe(target)});
  document.querySelectorAll('.project-filters button').forEach(button=>button.addEventListener('click',()=>{
@@ -59,3 +59,13 @@ if('IntersectionObserver' in window&&!window.matchMedia('(prefers-reduced-motion
   requestAnimationFrame(tick);
  }},{threshold:.7});document.querySelectorAll('[data-count]').forEach(el=>counters.observe(el));
 }
+
+const gallery=$('.works');
+for(const [selector,direction] of [['.portfolio-prev',-1],['.portfolio-next',1]]){
+ $(selector).onclick=()=>{const first=gallery.querySelector('.work:not([hidden])');if(first)gallery.scrollBy({left:direction*(first.getBoundingClientRect().width+16),behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'})};
+}
+document.querySelectorAll('.project-filters button').forEach(button=>button.addEventListener('click',()=>gallery.scrollTo({left:0,behavior:'instant'})));
+const progress=document.createElement('div');progress.className='page-progress';progress.setAttribute('aria-hidden','true');document.body.append(progress);
+let scrollPending=false;
+const updateProgress=()=>{const length=document.documentElement.scrollHeight-innerHeight;progress.style.transform=`scaleX(${length>0?Math.max(0,Math.min(1,scrollY/length)):0})`;scrollPending=false};
+addEventListener('scroll',()=>{if(!scrollPending){scrollPending=true;requestAnimationFrame(updateProgress)}},{passive:true});addEventListener('resize',updateProgress);updateProgress();
