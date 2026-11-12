@@ -1,0 +1,27 @@
+services:
+  web:
+    build:
+      dockerfile: ops/Dockerfile.telegram
+    depends_on:
+      api: {condition: service_healthy}
+  api:
+    build: {context: ., dockerfile: ops/Dockerfile.telegram, target: api}
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes: [telegram-data:/data]
+    environment:
+      APP_URL: ${APP_URL:-https://suilo.vano.sbena.net/}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz', timeout=3)"]
+      interval: 10s
+      timeout: 4s
+      retries: 4
+    logging:
+      driver: json-file
+      options: {max-size: "5m", max-file: "2"}
+volumes:
+  telegram-data:

@@ -1,6 +1,6 @@
 import recordings from './audio.json'
 export type InstallEvent = Event & { prompt(): Promise<void>; userChoice: Promise<{outcome:string}> }
-type WebApp = { initData: string; ready():void; expand():void; colorScheme?:string; setHeaderColor?(color:string):void; setBackgroundColor?(color:string):void }
+type WebApp = { BackButton?:{show():void;hide():void;onClick(fn:()=>void):void;offClick(fn:()=>void):void}; initData: string; ready():void; expand():void; colorScheme?:string; setHeaderColor?(color:string):void; setBackgroundColor?(color:string):void }
 type Recognition = {
   lang:string; interimResults:boolean; maxAlternatives:number;
   onresult: ((e:{results: ArrayLike<ArrayLike<{transcript:string}>>})=>void)|null;
@@ -9,18 +9,35 @@ type Recognition = {
 type Platform = Window & { Telegram?: {WebApp?:WebApp}; SpeechRecognition?: new()=>Recognition; webkitSpeechRecognition?: new()=>Recognition; Capacitor?: {isNativePlatform():boolean} }
 const platform = window as Platform
 export const isNative = () => !!platform.Capacitor?.isNativePlatform()
-export function connectTelegram() {
-  if (!/tgWebApp(?:Data|Version|Platform)/.test(location.hash+location.search)) return
-  const script = document.createElement('script')
-  script.src='https://telegram.org/js/telegram-web-app.js'
-  script.onload=()=>{
-    const app=platform.Telegram?.WebApp
-    if (!app) return
-    app.ready()
-    app.expand()
-    app.setHeaderColor?.('#184c3b')
-  }
-  document.head.append(script)
+let telegramReady:Promise<string>|undefined
+export function telegramBack(handler?:()=>void) {
+  const button=platform.Telegram?.WebApp?.BackButton
+  if(!button)return ()=>{}
+  if(!handler){button.hide();return ()=>{}}
+  button.show();button.onClick(handler)
+  return ()=>{button.offClick(handler);button.hide()}
+}
+export function connectTelegram():Promise<string> {
+  if (!/tgWebApp(?:Data|Version|Platform)/.test(location.hash+location.search)) return Promise.resolve('')
+  if(telegramReady)return telegramReady
+  telegramReady=new Promise(resolve=>{
+    const raw=new URLSearchParams(location.hash.slice(1)).get('tgWebAppData')??new URLSearchParams(location.search).get('tgWebAppData')??''
+    const script=document.createElement('script')
+    let completed=false
+    const complete=()=>{
+      if(completed)return
+      completed=true
+      const app=platform.Telegram?.WebApp
+      document.documentElement.dataset.telegram='true'
+      if(app){app.ready();app.expand();app.setHeaderColor?.('#184c3b')}
+      resolve(app?.initData||raw)
+    }
+    script.src='https://telegram.org/js/telegram-web-app.js'
+    script.onload=complete;script.onerror=complete
+    document.head.append(script)
+    setTimeout(complete,8000)
+  })
+  return telegramReady
 }
 export function speak(text:string, failed:()=>void) {
   const recording = (recordings as Record<string,string>)[text]

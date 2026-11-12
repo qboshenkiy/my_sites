@@ -48,7 +48,7 @@ def respond(token, app_url, update, last_reply):
     if len(last_reply) >= 4096:
         last_reply.clear()
     api(token, 'sendMessage', chat_id=chat_id,
-        text='Салам! Откройте «Сүйлө», чтобы пройти урок кыргызского или потренироваться в диалогах.',
+        text='Салам! Учите кыргызский по 5 слов в день. Откройте «Сүйлө»: вход через Telegram, слова и ваш прогресс.',
         reply_markup={'inline_keyboard': [[{'text': 'Открыть Сүйлө', 'web_app': {'url': app_url}}]]})
     last_reply[chat_id] = now
 

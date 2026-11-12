@@ -1,4 +1,5 @@
 import { openDB } from 'idb'
+import { emptyVocabulary, mergeVocabulary, type VocabState } from './vocabulary/model'
 import type { Exercise, Word } from './course'
 
 export type Attempt = { id: string; day: string; xp: number; at: number }
@@ -8,15 +9,16 @@ export type Mistake = { id: string; prompt: string; given: string; expected: str
 export type Draft = { id: string; index: number; mistakes: number }
 export type PersonalWord = {id:string; ru:string; ky:string; at:number; deleted?:boolean}
 export type Progress = {
+  vocabulary: VocabState
   personalWords: Record<string, PersonalWord>
   name: string; level: string; goal: number; theme: 'light' | 'dark' | 'system'; forgiving: boolean;
   completed: Record<string, Completion>; activity: Attempt[]; cards: Record<string, Card>; errors: Mistake[]; draft?: Draft;
 }
-export const fresh: Progress = {name:'',level:'A0',goal:30,theme:'system',forgiving:false,personalWords:{},completed:{},activity:[],cards:{},errors:[]}
+export const fresh: Progress = {name:'',level:'A0',goal:30,theme:'system',forgiving:false,vocabulary:emptyVocabulary(),personalWords:{},completed:{},activity:[],cards:{},errors:[]}
 let connection: ReturnType<typeof openDB> | undefined
 const database = () => connection ??= openDB('suilo', 1, {upgrade(db) {db.createObjectStore('progress')}}).catch(error=>{connection=undefined;throw error})
-export async function load() { return {...fresh, ...(await (await database()).get('progress','local'))} as Progress }
-export async function persist(p: Progress) { await (await database()).put('progress',p,'local') }
+export async function load(key='local') { return {...structuredClone(fresh), ...(await (await database()).get('progress',key))} as Progress }
+export async function persist(p: Progress,key='local') { await (await database()).put('progress',p,key) }
 export function day(date = new Date()) {
   return [date.getFullYear(),date.getMonth()+1,date.getDate()].map(v=>String(v).padStart(2,'0')).join('-')
 }
@@ -83,5 +85,5 @@ export function mergeProgress(local:Progress, cloud:Progress):Progress {
   for (const [key, word] of Object.entries(local.personalWords)) {
     if (!personalWords[key] || personalWords[key].at <= word.at) personalWords[key]=word
   }
-  return {...local, personalWords,cards,completed,activity:[...activity.values()],errors:[...errors.values()].sort((a,b)=>b.at-a.at).slice(0,100)}
+  return {...local, vocabulary:mergeVocabulary(local.vocabulary,cloud.vocabulary),personalWords,cards,completed,activity:[...activity.values()],errors:[...errors.values()].sort((a,b)=>b.at-a.at).slice(0,100)}
 }

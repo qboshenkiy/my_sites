@@ -17,7 +17,7 @@ PATHS = ['src', 'public', 'ops', 'index.html', 'package.json', 'package-lock.jso
 PROJECT = {
     'id': 'suilo', 'name': 'Сүйлө · кыргызский язык', 'kind': 'docker',
     'repo': REPO, 'branch': 'suilo', 'subdir': 'suilo', 'directory': str(TARGET),
-    'compose': 'compose.yaml', 'services': ['web', 'bot'], 'main_service': 'web',
+    'compose': 'compose.yaml', 'services': ['web', 'bot', 'api'], 'main_service': 'web',
     'profiles': [], 'paths': PATHS, 'wait_health': True,
 }
 BEGIN, END = '# Suilo HTTPS BEGIN', '# Suilo HTTPS END'
@@ -124,6 +124,9 @@ def install(source):
     for service in ('guard-request-gate.service', 'guard-firewall.service'):
         run('systemctl', 'is-active', '--quiet', service)
     copy_initial(source)
+    telegram_overlay=TARGET / 'compose.gitdeck-telegram.yaml'
+    if not telegram_overlay.exists():
+        telegram_overlay.write_text('# Suilo Telegram accounts v1\n'+(source / 'ops/compose.telegram.yaml').read_text())
     old_overlay = overlay.read_bytes() if overlay.exists() else None
     overlay.write_text(json.dumps({
         'services': {'web': {'networks': {'default': {}, 'gitdeck_https': {'aliases': ['suilo-web']}}}},
@@ -132,7 +135,7 @@ def install(source):
     edited = False
     registered = False
     try:
-        run('docker','compose','-f','compose.yaml','-f',overlay.name,'up','-d','--build','--wait','--wait-timeout','90',cwd=TARGET)
+        run('docker','compose','-f','compose.yaml','-f',overlay.name,'-f',telegram_overlay.name,'up','-d','--build','--wait','--wait-timeout','90',cwd=TARGET)
         if caddyfile.read_text() != original:
             raise ValueError('Caddyfile изменился во время сборки. Повторите установку.')
         if not prior:
@@ -160,7 +163,7 @@ def install(source):
             caddyfile.write_text(original)
             panel.compose(proxy, ['exec','-T','proxy','caddy','reload','--config','/etc/caddy/Caddyfile','--adapter','caddyfile'], None)
         if old_overlay is None:
-            subprocess.run(['docker','compose','-f','compose.yaml','-f',overlay.name,'down'], cwd=TARGET, check=False)
+            subprocess.run(['docker','compose','-f','compose.yaml','-f',overlay.name,'-f',telegram_overlay.name,'down'], cwd=TARGET, check=False)
             overlay.unlink(missing_ok=True)
         else:
             overlay.write_bytes(old_overlay)

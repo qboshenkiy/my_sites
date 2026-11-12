@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { ArrowDownToLine, ArrowLeft, ArrowRight, BookOpen, ChartNoAxesColumnIncreasing, Check, ChevronRight, Compass, Flame, Flag, GraduationCap, LockKeyhole, MessagesSquare, Mountain, Search, Settings2, Sparkles, Star, Target, Trophy, Volume2, Zap } from 'lucide-react'
 import { allWords, levels, type Exercise, type Word } from './course'
 import { addWords, daily, day, fresh, load, mergeProgress, persist, review, schedule, streak, total, type PersonalWord, type Progress } from './progress'
-import { connectTelegram, isNative, speak, type InstallEvent } from './platform'
+import { connectTelegram, isNative, speak, telegramBack, type InstallEvent } from './platform'
 import { ExerciseScreen, type ExerciseResult } from './Exercise'
 import { PersonalWords } from './PersonalWords'
 import { StudyCards } from './StudyCards'
@@ -13,23 +13,35 @@ import { Conversation } from './Conversation'
 import { Mascot } from './Mascot'
 import { cloud, synchronize } from './cloud'
 import './style.css'
+import { inTelegram, telegramLogin, telegramSync, type TelegramUser } from './telegram'
+import { registerSW } from 'virtual:pwa-register'
+import { Vocabulary } from './Vocabulary'
+import { counters, emptyVocabulary, type VocabState } from './vocabulary/model'
 
 const navigation = [
-  {id:'map',title:'Путь',icon:Compass},
+  {id:'learn',title:'Учить слова',icon:Sparkles},
   {id:'words',title:'Мои слова',icon:BookOpen},
-  {id:'talk',title:'Диалоги',icon:MessagesSquare},
+  {id:'map',title:'Уроки',icon:Compass},
   {id:'stats',title:'Прогресс',icon:ChartNoAxesColumnIncreasing},
   {id:'settings',title:'Настройки',icon:Settings2},
 ] as const
-type Page = typeof navigation[number]['id'] | 'install'
+type Page = typeof navigation[number]['id'] | 'install' | 'talk'
 type PracticeWord = Word & { id?: string }
 const practiceKey = (word:PracticeWord) => word.id ? `personal:${word.id}` : word.ky
 type Lesson = typeof levels[number]['lessons'][number]
-const slug = (path: string):Page => navigation.find(item=>item.id===path)?.id ?? (path==='install'?'install':'map')
+const slug = (path: string):Page => navigation.find(item=>item.id===path)?.id ?? (path==='install'?'install':path==='talk'?'talk':'learn')
 function App() {
   const [p,setP]=useState<Progress>(fresh)
   const pRef=useRef(p)
+  const storageKey=useRef('local')
+  const [telegramUser,setTelegramUser]=useState<TelegramUser>()
+  const [telegramStatus,setTelegramStatus]=useState('')
+  const [retrySync,setRetrySync]=useState(0)
+  const syncingTelegram=useRef(false)
+  const telegramDirty=useRef(false)
   const queue=useRef(Promise.resolve())
+  const [update,setUpdate]=useState<()=>void>()
+  const [offlineReady,setOfflineReady]=useState(false)
   const [ready,setReady]=useState(false)
   const [storageError,setStorageError]=useState('')
   const [page,setPage]=useState<Page>(()=>slug(new URLSearchParams(location.search).get('page')??''))
@@ -49,29 +61,75 @@ function App() {
   const [syncing,setSyncing]=useState(false)
   const [cloudUser,setCloudUser]=useState('')
   useEffect(()=>{
-    load().then(saved=>{pRef.current=saved;setP(saved)}).catch(()=>setStorageError('Хранилище недоступно. Прогресс сохранится только до закрытия.')).finally(()=>setReady(true))
+    if(!isNative()) {
+      const updateSW=registerSW({onNeedRefresh(){setUpdate(()=>()=>void updateSW(true))},onOfflineReady(){setOfflineReady(true)}})
+    }
+    void (async()=>{
+      try {
+        const initData=await connectTelegram()
+        if(inTelegram()) {
+          setTelegramStatus('Подключаем аккаунт Telegram…')
+          try {
+            if(!initData)throw new Error('Откройте приложение кнопкой из бота Telegram.')
+            const user=await telegramLogin(initData)
+            storageKey.current='telegram:'+user.id
+            setTelegramUser(user)
+            let saved=await load(storageKey.current)
+            if(!saved.name)saved={...saved,name:user.name}
+            try {saved=await telegramSync(saved);setTelegramStatus('Аккаунт Telegram · прогресс сохранён на сервере')}
+            catch {setTelegramStatus('Прогресс на устройстве. Повторим сохранение при подключении.');telegramDirty.current=true}
+            await persist(saved,storageKey.current)
+            pRef.current=saved;setP(saved)
+            return
+          }catch(error){storageKey.current='local';setTelegramUser(undefined);setTelegramStatus(error instanceof Error?error.message:'Не удалось войти через Telegram.')}
+        }
+        const saved=await load()
+        pRef.current=saved;setP(saved)
+      }catch {setStorageError('Хранилище недоступно. Прогресс сохранится только до закрытия.')}
+      finally {setReady(true)}
+    })()
     const handleInstall=(e:Event)=>{e.preventDefault();setInstall(e as InstallEvent)}
     const installed=()=>setInstall(undefined)
-    const connectivity=()=>setOnline(navigator.onLine)
+    const connectivity=()=>{setOnline(navigator.onLine);setRetrySync(v=>v+1)}
     const onPop=()=>{setPage(slug(new URLSearchParams(location.search).get('page')??''));setLesson(undefined);setRunning(false);setPractice(undefined);setStudy(undefined);setResult(undefined)}
     window.addEventListener('beforeinstallprompt',handleInstall)
     window.addEventListener('appinstalled',installed)
     window.addEventListener('online',connectivity);window.addEventListener('offline',connectivity);window.addEventListener('popstate',onPop)
-    connectTelegram()
     const sub=cloud?.auth.onAuthStateChange((_,session)=>setCloudUser(session?.user.email??''))
     return ()=>{window.removeEventListener('beforeinstallprompt',handleInstall);window.removeEventListener('appinstalled',installed);window.removeEventListener('online',connectivity);window.removeEventListener('offline',connectivity);window.removeEventListener('popstate',onPop);sub?.data.subscription.unsubscribe()}
   },[])
   useEffect(()=>{document.documentElement.dataset.theme=p.theme},[p.theme])
+  useEffect(()=>{
+    if(!ready||!telegramUser||!online||!telegramDirty.current)return
+    const timer=setTimeout(async()=>{
+      if(syncingTelegram.current)return
+      syncingTelegram.current=true
+      const snapshot=pRef.current
+      try {
+        const remote=await telegramSync(snapshot)
+        const merged=mergeProgress(pRef.current,remote)
+        if(pRef.current===snapshot){telegramDirty.current=false;setTelegramStatus('Аккаунт Telegram · прогресс сохранён на сервере')}
+        else {telegramDirty.current=true;setRetrySync(v=>v+1)}
+        pRef.current=merged;setP(merged)
+        queue.current=queue.current.catch(()=>{}).then(()=>persist(merged,storageKey.current))
+      }catch {setTelegramStatus('Сохранено на устройстве. Сервер недоступен — нажмите «Повторить».')}
+      finally {syncingTelegram.current=false}
+    },4000)
+    return ()=>clearTimeout(timer)
+  },[p,ready,telegramUser,online,retrySync])
+  useEffect(()=>telegramBack(page!=='learn'?()=>go('learn'):undefined),[page,ready])
+
   const save=(next:Progress, afterWrite=false)=>{
     pRef.current=next
+    if(telegramUser){telegramDirty.current=true;setTelegramStatus('Сохраняем прогресс…')}
     if (!afterWrite) setP(next)
-    queue.current=queue.current.catch(()=>{}).then(()=>persist(next)).then(()=>setStorageError('')).catch(()=>setStorageError('Не удалось сохранить прогресс на устройстве.'))
+    queue.current=queue.current.catch(()=>{}).then(()=>persist(next,storageKey.current)).then(()=>setStorageError('')).catch(()=>setStorageError('Не удалось сохранить прогресс на устройстве.'))
     return queue.current.then(()=>{if (afterWrite && pRef.current===next) setP(next)})
   }
   const go=(next:Page)=>{
     setPage(next);setLesson(undefined);setRunning(false);setResult(undefined);setPractice(undefined);setStudy(undefined)
     const url=new URL(location.href)
-    if (next==='map') url.searchParams.delete('page'); else url.searchParams.set('page',next)
+    if (next==='learn') url.searchParams.delete('page'); else url.searchParams.set('page',next)
     if (url.href!==location.href) history.pushState(null,'',url)
     window.scrollTo(0,0)
   }
@@ -79,7 +137,7 @@ function App() {
   const completedCount=level.lessons.filter(item=>p.completed[item.id]).length
   const nextLesson=level.lessons.find(item=>!p.completed[item.id])
   const currentDay=daily(p)
-  const currentStreak=streak(p.activity)
+  const currentStreak=streak([...p.activity,...Object.entries(p.vocabulary?.activity??{}).filter(([,v])=>v.introduced||v.answers).map(([day])=>({id:'vocab:'+day,day,xp:0,at:0}))])
   const personalWords=Object.values(p.personalWords).filter(word=>!word.deleted)
   const learned=allWords.filter(word=>p.cards[word.ky])
   const due=learned.filter(word=>p.cards[word.ky].due<=Date.now()).sort((a,b)=>p.cards[a.ky].due-p.cards[b.ky].due)
@@ -173,6 +231,21 @@ function App() {
     catch {setSyncMessage('Синхронизация недоступна. Локальный прогресс сохранён.')}
     finally {setSyncing(false)}
   }
+  async function saveVocabulary(vocabulary:VocabState) {
+    const writing=queue.current.catch(()=>{}).then(async()=>{
+      const current=pRef.current
+      const next={...current,vocabulary}
+      await persist(next,storageKey.current)
+      const latest=pRef.current===current?next:{...pRef.current,vocabulary:mergeProgress(next,pRef.current).vocabulary}
+      if(latest!==next)await persist(latest,storageKey.current)
+      if(telegramUser){telegramDirty.current=true;setTelegramStatus('Сохраняем прогресс…')}
+      pRef.current=latest;setP(latest);setStorageError('')
+    })
+    queue.current=writing.catch(()=>{})
+    await writing
+  }
+  const vocab=p.vocabulary??emptyVocabulary()
+  const vocabCount=counters(vocab)
   const pageTitle=navigation.find(item=>item.id===page)?.title??'Скачать'
   const visible=learned.filter(word=>(!topic || levels.some(l=>l.lessons.some(item=>item.id===topic&&item.words.includes(word)))) &&
     (filter==='all'||(filter==='due' ? p.cards[word.ky].due<=Date.now() : p.cards[word.ky].box>=3)) &&
@@ -201,14 +274,17 @@ function App() {
     {!nextLesson&&levels.indexOf(level)<levels.length-1&&<div className="actions"><button className="primary" onClick={()=>save({...p,level:levels[levels.indexOf(level)+1].id})}>Открыть следующий уровень <ArrowRight size={18}/></button></div>}
   </>
   return <div className="app-shell">
-    <aside className="sidebar"><button className="brand" onClick={()=>go('map')}><img src="/icon.svg" alt=""/><span>Сүйлө<small>КЫРГЫЗСКИЙ ЯЗЫК</small></span></button>
+    <aside className="sidebar"><button className="brand" onClick={()=>go('learn')}><img src="/icon.svg" alt=""/><span>Сүйлө<small>КЫРГЫЗСКИЙ ЯЗЫК</small></span></button>
       <nav aria-label="Разделы">{navigation.map(({id,title,icon:Icon})=><button key={id} aria-current={page===id?'page':undefined} onClick={()=>go(id)}><Icon size={21}/><span>{title}</span></button>)}</nav>
       <button className="sidebar-install" onClick={()=>go('install')}><ArrowDownToLine size={19}/> Скачать приложение</button>
     </aside>
-    <div className="workspace"><header className="topbar"><button className="brand mobile-brand" onClick={()=>go('map')}><img src="/icon.svg" alt=""/><span>Сүйлө</span></button><span className="breadcrumb">Обучение <ChevronRight size={14}/> <b>{pageTitle}</b></span>
-      <div className="top-metrics"><span title="Серия дней"><Flame size={19} className="flame"/> {currentStreak}</span><span title="Весь опыт"><Zap size={18} className="zap"/> {total(p)} XP</span><button className="avatar" onClick={()=>go('settings')} aria-label="Профиль">{p.name.trim().slice(0,1).toUpperCase()||'С'}</button></div>
+    <div className="workspace"><header className="topbar"><button className="brand mobile-brand" onClick={()=>go('learn')}><img src="/icon.svg" alt=""/><span>Сүйлө</span></button><span className="breadcrumb">Обучение <ChevronRight size={14}/> <b>{pageTitle}</b></span>
+      <div className="top-metrics"><span title="Серия дней"><Flame size={19} className="flame"/> {currentStreak}</span><span title="Слова в обучении"><BookOpen size={18}/> {vocabCount.started} / 1000</span><button className="avatar" onClick={()=>go('settings')} aria-label="Профиль">{p.name.trim().slice(0,1).toUpperCase()||'С'}</button></div>
     </header>
-    {!online&&<p className="notice">Офлайн · уроки и локальный прогресс доступны</p>}
+    {telegramStatus&&<p className="notice telegram-account-status" role="status">{telegramUser&&<Check size={15}/>} {telegramStatus} {telegramUser&&telegramDirty.current&&<button className="secondary" onClick={()=>setRetrySync(v=>v+1)}>Повторить</button>}{inTelegram()&&!telegramUser&&ready&&<button className="secondary" onClick={()=>location.reload()}>Повторить вход</button>}</p>}
+    {update&&<p className="notice" role="status">Новая версия готова. Пройденные шаги сохранены. <button className="secondary" onClick={update}>Обновить приложение</button></p>}
+    {offlineReady&&!update&&<p className="notice" role="status">Все 1000 слов загружены для работы без интернета. <button aria-label="Скрыть уведомление" onClick={()=>setOfflineReady(false)}>×</button></p>}
+    {!online&&<p className="notice">Офлайн · все 1000 слов и прогресс доступны на устройстве</p>}
     {storageError&&<p role="alert" className="notice">{storageError}</p>}
     {!ready ? <main className="main"><p role="status">Загружаем прогресс…</p></main> :
     <div className={`layout ${page==='map'&&!lesson&&!result?'with-aside':''}`}><main className="main">
@@ -224,31 +300,34 @@ function App() {
         {lesson.words.length>0&&<details className="lesson-vocabulary"><summary>Слова урока · {lesson.words.length}</summary><div className="intro-words">{lesson.words.map(word=><div key={word.ky}><b lang="ky">{word.ky}</b><small>{word.ru}</small></div>)}</div></details>}
         <div className="lesson-start"><div><span className="eyebrow">ШАГ 3 · ПРАКТИКА</span><p>Правило можно открыть в любом задании.</p></div><button className="primary" onClick={()=>begin(lesson)}>{p.draft?.id===lesson.id?'Продолжить задания':'Перейти к заданиям'} <ArrowRight size={19}/></button></div>
       </section> :
+      page==='learn' ? <Vocabulary state={vocab} save={saveVocabulary} view="home" forgiving={p.forgiving}/> :
       page==='map' ? map :
-      page==='words' ? <div className="page-entrance"><div className="page-heading"><span className="eyebrow">ЛИЧНЫЙ СЛОВАРЬ</span><h1>Мои слова</h1><p>{learned.length} изучено · {due.length} пора повторить · {learned.filter(w=>p.cards[w.ky].box>=3).length} закреплено</p></div>
+      page==='words' ? <div className="page-entrance"><Vocabulary state={vocab} save={saveVocabulary} view="dictionary" forgiving={p.forgiving}/>
+        <details className="legacy-words"><summary>Личные карточки и слова старых уроков</summary>
         <PersonalWords words={personalWords} add={addPersonalWords} edit={changePersonalWord} remove={id=>changePersonalWord(id,{deleted:true})} study={()=>setStudy(personalDeck())} train={()=>trainPersonalWords()}/>
         <h2 className="course-words-title">Слова из уроков</h2>
         <div className="surface word-tools"><label className="search"><Search size={18}/><input placeholder="Слово или перевод" aria-label="Найти слово" value={search} onChange={e=>setSearch(e.target.value)}/></label><select aria-label="Тема" value={topic} onChange={e=>setTopic(e.target.value)}><option value="">Все темы</option>{levels.flatMap(l=>l.lessons.filter(item=>item.words.length).map(item=><option key={item.id} value={item.id}>{item.title}</option>))}</select><select aria-label="Статус" value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">Все слова</option><option value="due">Пора повторить</option><option value="known">Закреплённые</option></select><button className="primary" disabled={!due.length} onClick={()=>setPractice({words:due.slice(0,8),index:0,mistakes:0})}>Быстрое повторение <ArrowRight size={17}/></button></div>
         {wordError&&<p role="status" className="notice">{wordError}</p>}
         {!visible.length&&<div className="surface empty"><BookOpen size={30}/><h2>{learned.length?'Слов не найдено':'Здесь будут ваши слова'}</h2><p>{learned.length?'Попробуйте изменить поиск или фильтры.':'Завершите урок, чтобы добавить его слова в словарь.'}</p>{!learned.length&&<button className="secondary" onClick={()=>go('map')}>К урокам <ArrowRight size={17}/></button>}</div>}
         <div className="word-grid">{visible.map(word=><article className="surface word" key={word.ky}><div className="word-title"><h2 lang="ky">{word.ky}</h2><button className="icon-button" aria-label={`Произнести ${word.ky}`} onClick={()=>{setWordError('');speak(word.ky,()=>setWordError('Кыргызская озвучка этого слова недоступна.'))}}><Volume2 size={19}/></button></div><b>{word.ru}</b><p lang="ky">{word.example}</p><small>{p.cards[word.ky].due<=Date.now()?'Пора повторить':`Повторить ${new Date(p.cards[word.ky].due).toLocaleString('ru',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}`}</small><div className="actions"><button className="secondary" onClick={()=>save({...p,cards:{...p.cards,[word.ky]:schedule(p.cards[word.ky],true)}})}>Знаю</button><button className="secondary" onClick={()=>save({...p,cards:{...p.cards,[word.ky]:schedule(p.cards[word.ky],false)}})}>Повторить</button></div></article>)}</div>
-      </div> :
+      </details></div> :
       page==='talk' ? <Conversation level={p.level} reviewWord={weak?.ky}/> :
       page==='stats' ? <div className="page-entrance"><div className="page-heading"><span className="eyebrow">ТВОИ РЕЗУЛЬТАТЫ</span><h1>Прогресс</h1><p>Следите за регулярностью и возвращайтесь к сложным фразам.</p></div>
+        <Vocabulary state={vocab} save={saveVocabulary} view="stats" forgiving={p.forgiving}/>
         <div className="stat-grid">{[[total(p)+' XP','Всего опыта'],[currentStreak,'Дней подряд'],[Object.keys(p.completed).length,'Уроков завершено']].map(([n,label])=><div className="surface stat" key={label}><b>{n}</b><span>{label}</span></div>)}</div>
         <section className="surface stats-section"><h2>Последние 7 дней</h2><div className="week">{Array.from({length:7},(_,i)=>{const date=new Date();date.setDate(date.getDate()-6+i);const xp=p.activity.filter(a=>a.day===day(date)).reduce((s,a)=>s+a.xp,0);return <div key={day(date)}><b>{xp}</b><span className="bar"><i style={{height:`${Math.min(100,xp/Math.max(30,p.goal)*100)}%`}}/></span><small>{date.toLocaleDateString('ru',{weekday:'short'})}</small></div>})}</div></section>
         <section className="surface stats-section"><h2>Достижения</h2><div className="achievement-list">{achievements.map(({title,copy,active,icon:Icon})=><div key={title}><span className={active?'badge-icon unlocked':'badge-icon'}><Icon size={20}/></span><span><b>{title}</b><small>{copy}</small></span><span>{active?'Открыто':'Закрыто'}</span></div>)}</div></section>
         <section className="surface stats-section"><h2>История ошибок</h2>{!p.errors.length?<p className="muted">Ошибок пока нет.</p>:<div className="error-list">{p.errors.map(err=><div key={err.id}><b>{err.prompt}</b><small>Ваш ответ: {err.given}</small><small>Правильно: {err.expected}</small></div>)}</div>}</section>
       </div> :
-      page==='settings' ? <div className="page-entrance"><div className="page-heading"><span className="eyebrow">ВАШЕ ПРОСТРАНСТВО</span><h1>Настройки</h1><p>Настройте темп и внешний вид приложения.</p></div><section className="surface settings">
+      page==='settings' ? <div className="page-entrance"><div className="page-heading"><span className="eyebrow">ВАШЕ ПРОСТРАНСТВО</span><h1>Настройки</h1><p>Настройте темп и внешний вид приложения.</p></div><Vocabulary state={vocab} save={saveVocabulary} view="settings" forgiving={p.forgiving}/><section className="surface settings">
         <h2>Профиль</h2><label>Имя<input value={p.name} maxLength={50} placeholder="Как к вам обращаться?" onChange={e=>save({...p,name:e.target.value})}/></label>
         <label>Уровень<select aria-label="Уровень" value={p.level} onChange={e=>save({...p,level:e.target.value})}>{levels.map(l=><option value={l.id} key={l.id}>{l.id} · {l.title}</option>)}</select></label>
         <label>Дневная цель<select aria-label="Дневная цель" value={p.goal} onChange={e=>save({...p,goal:Number(e.target.value)})}>{[10,20,30,50,80].map(goal=><option key={goal} value={goal}>{goal} XP</option>)}</select></label>
         <label>Тема<select aria-label="Тема" value={p.theme} onChange={e=>save({...p,theme:e.target.value as Progress['theme']})}><option value="system">Как на устройстве</option><option value="light">Светлая</option><option value="dark">Тёмная</option></select></label>
         <label className="checkbox"><input type="checkbox" checked={p.forgiving} onChange={e=>save({...p,forgiving:e.target.checked})}/> Разрешить ввод без ң, ө, ү</label>
         <small>Замена букв действует только при совпадении остального текста с допустимым ответом.</small>
-      </section><section className="surface settings"><h2>Синхронизация</h2>
-        {!cloud?<p>Прогресс хранится на этом устройстве. Облачная синхронизация появится после настройки сервера Supabase.</p>:
+      </section><section className="surface settings"><h2>Аккаунт и синхронизация</h2>{telegramUser&&<><p>Вы вошли через Telegram: <b>{telegramUser.name}</b>{telegramUser.username?` · @${telegramUser.username}`:''}</p><p>{telegramStatus}</p><button className="secondary" onClick={()=>{telegramDirty.current=true;setRetrySync(v=>v+1)}}>Синхронизировать сейчас</button><p className="muted">Старые занятия этого устройства можно отдельно добавить в аккаунт.</p><button className="secondary" onClick={async()=>{const device=await load();await save(mergeProgress(pRef.current,device));setTelegramStatus('Занятия устройства добавлены. Сохраняем на сервере…')}}>Добавить старый прогресс устройства</button></>}
+        {!cloud?(!telegramUser&&<p>Откройте приложение через <a href="https://t.me/duolingo_by_vano_bot" target="_blank" rel="noreferrer">Telegram-бота</a>, чтобы войти и сохранять прогресс на сервере. Без входа прогресс остаётся на устройстве.</p>):
           cloudUser ? <><p>{cloudUser}</p><div className="actions"><button className="primary" disabled={syncing} onClick={()=>void sync()}>Синхронизировать</button><button className="secondary" onClick={()=>void cloud?.auth.signOut()}>Выйти</button></div></>:
           <form onSubmit={async e=>{e.preventDefault();const {error}=await cloud!.auth.signInWithOtp({email,options:{emailRedirectTo:location.origin+'/?page=settings'}});setSyncMessage(error?'Не удалось отправить письмо.':'Проверьте почту и откройте ссылку для входа.')}}><label>Email<input type="email" value={email} onChange={e=>setEmail(e.target.value)} required/></label><button className="primary">Получить ссылку</button></form>}
         {syncMessage&&<p role="status">{syncMessage}</p>}</section></div> :
