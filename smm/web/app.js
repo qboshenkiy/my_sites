@@ -25,12 +25,25 @@ for(const study of d.cases||[]){
  const list=document.createElement('ul');for(const outcome of study.outcomes)list.append(text('li',outcome));article.append(list,text('p',study.source,'note'));$('.case-list').append(article);
 }
 
+
+if(d.about){
+ const about=d.about,box=$('.about-copy');
+ function add(tag,value,cls){const e=document.createElement(tag);e.textContent=value;if(cls)e.className=cls;box.append(e);return e}
+ add('p','ЗА КАЖДЫМ ПРОЕКТОМ — ЧЕЛОВЕК','eyebrow');add('h2',about.name+' / THUGGER SMM');add('p',about.role,'about-role');
+ const badges=add('div','','about-badges');for(const label of [about.age,about.experience,'Маркетолог по образованию']){const span=document.createElement('span');span.textContent=label;badges.append(span)}
+ about.paragraphs.forEach(p=>add('p',p,'about-text'));
+ const skills=add('div','','skill-chips');about.skills.forEach(skill=>{const span=document.createElement('span');span.textContent=skill;skills.append(span)});
+}
+if(d.instagram){
+ for(const selector of ['.actions .button','.nav-contact']){const a=$(selector);a.href=d.instagram;a.target='_blank';a.rel='noopener noreferrer'}
+ const contact=$('#contacts .button');if(contact){contact.classList.add('instagram-cta');contact.textContent='Написать @thugger0707 ↗'}
+ const sticky=document.createElement('a');sticky.className='mobile-cta';sticky.href=d.instagram;sticky.target='_blank';sticky.rel='noopener noreferrer';sticky.setAttribute('aria-label','Обсудить проект с Егором в Instagram');sticky.textContent='Обсудить проект в Instagram ↗';document.body.append(sticky);
+}
 // Enhance only when supported; content stays visible without motion or JavaScript.
 if('IntersectionObserver' in window&&!window.matchMedia('(prefers-reduced-motion: reduce)').matches){
- const targets=document.querySelectorAll('.hero-copy,.hero-art,.section-head,.service,.work,.steps article,.case-panel,.results>div,.reference-image,#contact');
+ const targets=document.querySelectorAll('.hero-copy,.hero-art,.section-head,.service,.work,.steps article,.case-panel,.about-photo,.about-copy,.project-profiles a,#contact');
  const observer=new IntersectionObserver(entries=>{for(const entry of entries){if(!entry.isIntersecting)continue;entry.target.classList.add('is-visible');observer.unobserve(entry.target)}},{threshold:0.08});
  targets.forEach((target,i)=>{target.classList.add('reveal');target.style.setProperty('--reveal-delay',`${i%3*90}ms`);observer.observe(target)});
- // Filtering must not leave previously off-screen cards hidden while reflowing.
  document.querySelectorAll('.project-filters button').forEach(button=>button.addEventListener('click',()=>{
   document.querySelectorAll('.work:not([hidden])').forEach(card=>{card.classList.add('is-visible');observer.unobserve(card)});
  }));
