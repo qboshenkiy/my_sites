@@ -24,7 +24,7 @@ import threading
 import time
 import urllib.parse
 
-VERSION = '1.14.0'
+VERSION = '1.15.0'
 LAYOUT = {
     'remote': ['server', 'ops', '.dockerignore'],
     'drawing': ['index.php', 'api.php', 'manifest.webmanifest', 'service-worker.js', 'lib', 'assets', 'ops', '.dockerignore'],
@@ -1603,6 +1603,294 @@ class ServerMonitor:
             return dict(self.docker)
 
 
+# Database access is kept in app.py so installations running an older GitDeck can self-update.
+class DatabaseExplorer:
+    PAGE = 25
+    MAX_BACKUP = 512 * 1024 * 1024
+    OMIT = {'node_modules', 'vendor', '.git', 'jobs', 'ref-cache', 'backups', 'previous', 'new', 'dist', 'models', 'audio', 'uploads', 'books'}
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.operation = threading.Lock()
+        self.sources = {}
+        self.stamp = 0
+        self.warnings = []
+
+    @staticmethod
+    def identifier(*parts):
+        return hashlib.sha256('\0'.join(map(str, parts)).encode()).hexdigest()[:24]
+
+    @staticmethod
+    def quote(name):
+        return '"' + name.replace('"', '""') + '"'
+
+    @staticmethod
+    def literal(value):
+        return "'" + value.replace("'", "''") + "'"
+
+    @staticmethod
+    def sensitive(name):
+        return bool(re.search(r'password|passwd|digest|salt|token|secret|session|cookie|authorization|credential|private.key', name, re.I))
+
+    @staticmethod
+    def command(args, *, text=None, timeout=8, limit=4 * 1024 * 1024):
+        with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
+            result = subprocess.run(args, input=text.encode() if text is not None else None,
+                                    stdout=output, stderr=errors, timeout=timeout, check=False)
+            if result.returncode:
+                raise RuntimeError('Источник недоступен. Проверьте контейнер и права подключения.')
+            if output.tell() > limit:
+                raise ValueError('Слишком большой ответ. Уточните поиск.')
+            output.seek(0)
+            return output.read().decode('utf-8')
+
+    def pg(self, source, sql):
+        prefix = ['docker', 'exec', '-i', source['container'], 'psql', '-X', '-qAt', '-U', source['user'], '-d', source['database'], '-v', 'ON_ERROR_STOP=1', '-f', '-']
+        text = "SET standard_conforming_strings=on; SET statement_timeout='2500ms'; SET lock_timeout='1000ms'; BEGIN READ ONLY;\n" + sql + ';\nROLLBACK;\n'
+        return json.loads(self.command(prefix, text=text))
+
+    def catalog(self, config, refresh=False):
+        with self.lock:
+            if not refresh and self.stamp and time.time() - self.stamp < 30:
+                return self.public_catalog()
+            sources, roots, warnings = {}, [], []
+            projects = {str(Path(p['directory']).resolve()): p for p in config['projects']}
+            for p in config['projects']:
+                roots.append((p['id'], p['name'], Path(p['directory']), ''))
+            roots.append(('gitdeck', 'GitDeck', Path(config['state_dir']), ''))
+            try:
+                ids = self.command(['docker', 'ps', '-aq']).split()
+                containers = json.loads(self.command(['docker', 'inspect', *ids], limit=8 * 1024 * 1024)) if ids else []
+            except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError):
+                containers = []
+                warnings.append('Docker недоступен: показаны только базы в каталогах проектов и панели.')
+            for item in containers:
+                labels = item['Config'].get('Labels') or {}
+                working = labels.get('com.docker.compose.project.working_dir', '')
+                registered = projects.get(str(Path(working).resolve())) if working else None
+                if registered:
+                    pid, title = registered['id'], registered['name']
+                elif working.startswith('/opt/') and labels.get('com.docker.compose.project'):
+                    pid = labels['com.docker.compose.project']
+                    title = pid + ' · Docker'
+                else:
+                    continue
+                image = item['Config'].get('Image', '')
+                if re.search(r'(^|/)postgres(?::|@|$)', image) and item['State']['Running']:
+                    env = dict(line.split('=', 1) for line in item['Config'].get('Env', []) if '=' in line)
+                    source = dict(kind='postgres', project=pid, project_name=title, container=item['Id'],
+                                  container_name=item['Name'].lstrip('/'), user=env.get('POSTGRES_USER', 'postgres'),
+                                  database=env.get('POSTGRES_DB') or env.get('POSTGRES_USER', 'postgres'))
+                    try:
+                        databases = self.pg(source, "SELECT COALESCE(json_agg(datname ORDER BY datname),'[]') FROM pg_database WHERE datallowconn AND NOT datistemplate")
+                        for database in databases:
+                            record = dict(source, database=database, name=database)
+                            record['id'] = self.identifier('postgres', pid, source['container_name'], database)
+                            sources[record['id']] = record
+                    except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired):
+                        warnings.append(title + ': PostgreSQL не отвечает на чтение каталога.')
+                for mount in item.get('Mounts', []):
+                    path = Path(mount['Source'])
+                    if mount['Type'] == 'volume' or (mount['Type'] == 'bind' and working and path.is_relative_to(Path(working))):
+                        if path.is_dir() and not path.is_symlink():
+                            roots.append((pid, title, path, item['Name'].lstrip('/')))
+            seen = set()
+            for pid, title, root, container in roots:
+                if root.is_symlink() or not root.is_dir():
+                    continue
+                visited = 0
+                for base, dirs, files in os.walk(root, followlinks=False):
+                    dirs[:] = [d for d in dirs if d not in self.OMIT and 'backup' not in d.lower() and not (Path(base) / d).is_symlink()]
+                    if len(Path(base).relative_to(root).parts) >= 5 or visited > 15000:
+                        dirs[:] = []
+                    for name in files:
+                        visited += 1
+                        if not name.lower().endswith(('.sqlite', '.sqlite3', '.db')):
+                            continue
+                        file = Path(base) / name
+                        if file.is_symlink() or file.resolve() in seen:
+                            continue
+                        try:
+                            with file.open('rb') as stream:
+                                if stream.read(16) != b'SQLite format 3\x00':
+                                    continue
+                            seen.add(file.resolve())
+                            record = dict(kind='sqlite', project=pid, project_name=title, name=name,
+                                          path=str(file.resolve()), root=str(root.resolve()), bytes=file.stat().st_size, container_name=container)
+                            record['id'] = self.identifier('sqlite', pid, record['path'])
+                            sources[record['id']] = record
+                        except OSError:
+                            warnings.append(title + ': не удалось проверить один из файлов базы.')
+            self.sources, self.warnings, self.stamp = sources, warnings, time.time()
+            return self.public_catalog()
+
+    def public_catalog(self):
+        keys = ('id', 'kind', 'project', 'project_name', 'name', 'bytes', 'path', 'container_name')
+        return {'sources': sorted([{k: s[k] for k in keys if k in s} for s in self.sources.values()], key=lambda s: (s['project_name'], s['name'])),
+                'warnings': self.warnings, 'updated_at': self.stamp}
+
+    def source(self, config, source_id):
+        self.catalog(config)
+        if not isinstance(source_id, str) or source_id not in self.sources:
+            raise ValueError('База не найдена. Обновите список источников.')
+        return dict(self.sources[source_id])
+
+    def connect(self, source):
+        file, root = Path(source['path']), Path(source['root'])
+        if file.is_symlink() or not file.resolve().is_relative_to(root) or file.resolve() != file:
+            raise ValueError('Путь базы изменился. Обновите каталог.')
+        connection = sqlite3.connect(file.as_uri() + '?mode=ro', uri=True, timeout=1)
+        connection.execute('PRAGMA query_only=ON')
+        connection.create_function('gitdeck_contains',2,lambda value,needle:int(value is not None and str(needle).casefold() in str(value).casefold()),deterministic=True)
+        deadline = time.monotonic() + 2.5
+        connection.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
+        return connection
+
+    def tables(self, source):
+        if source['kind'] == 'postgres':
+            rows = self.pg(source, "SELECT COALESCE(json_agg(json_build_object('name',table_name,'schema',table_schema) ORDER BY table_schema,table_name),'[]') FROM information_schema.tables WHERE table_type='BASE TABLE' AND table_schema NOT IN ('pg_catalog','information_schema')")
+            return [dict(r, id=self.identifier(r['schema'], r['name']), label=r['schema'] + '.' + r['name']) for r in rows]
+        db = self.connect(source)
+        try:
+            return [{'id': name, 'name': name, 'label': name} for (name,) in db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+        finally:
+            db.close()
+
+    def table(self, source, table_id):
+        record = next((t for t in self.tables(source) if t['id'] == table_id), None)
+        if not record:
+            raise ValueError('Выберите существующую таблицу.')
+        return record
+
+    def rows(self, source, table_id, search='', offset=0):
+        if not isinstance(search, str) or len(search) > 200 or type(offset) is not int or not 0 <= offset <= 100000:
+            raise ValueError('Поиск — до 200 символов, смещение — до 100000 строк.')
+        table = self.table(source, table_id)
+        if source['kind'] == 'postgres':
+            columns = self.pg(source, "SELECT COALESCE(json_agg(json_build_object('name',column_name,'type',data_type) ORDER BY ordinal_position),'[]') FROM information_schema.columns WHERE table_schema=" + self.literal(table['schema']) + ' AND table_name=' + self.literal(table['name']))
+            if len(columns) > 128:
+                raise ValueError('В таблице больше 128 столбцов. Используйте резервную копию.')
+            if not columns:
+                raise ValueError('В таблице нет столбцов для просмотра.')
+            target = self.quote(table['schema']) + '.' + self.quote(table['name'])
+            expressions = [self.literal('•••') if self.sensitive(c['name']) else self.literal('[двоичные данные]') if c['type'] == 'bytea' else 'left(' + self.quote(c['name']) + '::text,1000)' for c in columns]
+            where = ''
+            if search:
+                pattern = '%' + search.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
+                allowed = [self.quote(c['name']) + '::text ILIKE ' + self.literal(pattern) for c in columns if c['type'] != 'bytea' and not self.sensitive(c['name'])]
+                where = ' WHERE (' + ' OR '.join(allowed) + ')' if allowed else ' WHERE false'
+            sql = 'SELECT COALESCE(json_agg(record),\'[]\') FROM (SELECT json_build_array(' + ','.join(expressions) + ') AS record FROM ' + target + where + ' ORDER BY ' + self.quote(columns[0]['name']) + '::text NULLS FIRST LIMIT 26 OFFSET ' + str(offset) + ') AS page'
+            values = self.pg(source, sql)
+        else:
+            db = self.connect(source)
+            try:
+                columns = [{'name': r[1], 'type': r[2], 'pk': bool(r[5])} for r in db.execute('PRAGMA table_info(' + self.quote(table['name']) + ')')]
+                if len(columns) > 128:
+                    raise ValueError('В таблице больше 128 столбцов. Используйте резервную копию.')
+                readable = [c for c in columns if not self.sensitive(c['name']) and 'BLOB' not in c['type'].upper()]
+                where, params = '', []
+                if search:
+                    pattern = '%' + search.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
+                    where = ' WHERE (' + ' OR '.join('gitdeck_contains(' + self.quote(c['name']) + ',?)' for c in readable) + ')' if readable else ' WHERE 0'
+                    params = [search] * len(readable)
+                # Sensitive cells and large objects never leave SQLite in a browser response.
+                expressions = ["'•••'" if self.sensitive(c['name']) else "CASE WHEN typeof(" + self.quote(c['name']) + ")='blob' THEN '[двоичные данные]' ELSE substr(CAST(" + self.quote(c['name']) + ' AS TEXT),1,1000) END' for c in columns]
+                sort = [c['name'] for c in columns if c.get('pk')] or [columns[0]['name']]
+                sql = 'SELECT ' + ','.join(expressions) + ' FROM ' + self.quote(table['name']) + where + ' ORDER BY ' + ','.join(self.quote(c) for c in sort) + ' LIMIT 26 OFFSET ?'
+                values = db.execute(sql, [*params, offset]).fetchall()
+            finally:
+                db.close()
+        return {'table': table, 'columns': [dict(c, sensitive=self.sensitive(c['name'])) for c in columns],
+                'rows': [list(row) for row in values[:self.PAGE]], 'has_more': len(values) > self.PAGE, 'offset': offset, 'page_size': self.PAGE,
+                'note': 'Текст до 1000 символов. Секретные столбцы скрыты; двоичные данные не выводятся. Поиск по подстроке без учёта регистра; секретные столбцы в поиске не участвуют.'}
+
+    def backup(self, config, source):
+        folder = Path(config['state_dir']) / 'database-backups'
+        folder.mkdir(mode=0o700, exist_ok=True)
+        if folder.is_symlink():
+            raise ValueError('Некорректный каталог резервных копий.')
+        existing = list(folder.glob('*.json'))
+        if len(existing) >= 100 or sum(p.stat().st_size for p in folder.iterdir() if p.is_file()) > 5 * 1024**3:
+            raise ValueError('Достигнут лимит хранилища копий. Перенесите старые копии с сервера.')
+        if shutil.disk_usage(folder).free < self.MAX_BACKUP * 2:
+            raise ValueError('Для копии нужен минимум 1 ГиБ свободного места.')
+        token = secrets.token_hex(16)
+        partial = folder / (token + '.partial')
+        suffix = '.sqlite' if source['kind'] == 'sqlite' else '.dump'
+        final = folder / (token + suffix)
+        try:
+            if source['kind'] == 'sqlite':
+                if Path(source['path']).stat().st_size > self.MAX_BACKUP:
+                    raise ValueError('База больше 512 МиБ. Используйте отдельное резервирование сервера.')
+                db, output = self.connect(source), sqlite3.connect(partial)
+                deadline = time.monotonic() + 25
+                def progress(status, remaining, total):
+                    if time.monotonic() > deadline or partial.stat().st_size > self.MAX_BACKUP:
+                        raise ValueError('Копия превысила лимит времени или размера.')
+                try:
+                    db.backup(output, pages=128, progress=progress, sleep=.01)
+                finally:
+                    output.close(); db.close()
+            else:
+                args = ['docker', 'exec', source['container'], 'pg_dump', '-U', source['user'], '-d', source['database'], '-Fc', '--no-owner', '--no-acl']
+                with partial.open('xb') as output, tempfile.TemporaryFile() as errors:
+                    process = subprocess.Popen(args, stdout=output, stderr=errors)
+                    deadline = time.monotonic() + 45
+                    try:
+                        while process.poll() is None:
+                            if time.monotonic() > deadline or partial.stat().st_size > self.MAX_BACKUP:
+                                raise ValueError('Копия превысила 45 секунд или 512 МиБ.')
+                            time.sleep(.1)
+                        if process.returncode:
+                            raise RuntimeError('Не удалось создать копию PostgreSQL.')
+                    finally:
+                        if process.poll() is None:
+                            process.kill(); process.wait()
+            if partial.stat().st_size > self.MAX_BACKUP:
+                raise ValueError('Копия больше 512 МиБ.')
+            os.chmod(partial, 0o600); os.replace(partial, final)
+            filename = re.sub(r'[^a-zA-Z0-9_-]', '-', source['project']) + '-' + time.strftime('%Y%m%d-%H%M%S') + suffix
+            metadata = dict(id=token, source=source['id'], project_name=source['project_name'], database=source['name'], kind=source['kind'], filename=filename, bytes=final.stat().st_size, at=time.time(), file=final.name)
+            record = folder / (token + '.json')
+            record.write_text(json.dumps(metadata, ensure_ascii=False)); record.chmod(0o600)
+            return {k: v for k, v in metadata.items() if k != 'file'}
+        except Exception:
+            partial.unlink(missing_ok=True); final.unlink(missing_ok=True)
+            raise
+
+    def backups(self, config):
+        folder = Path(config['state_dir']) / 'database-backups'
+        if not folder.exists() or folder.is_symlink():
+            return []
+        result = []
+        for p in folder.glob('*.json'):
+            if p.is_symlink():
+                continue
+            try:
+                row = json.loads(p.read_text())
+                result.append({k: row[k] for k in ('id', 'source', 'project_name', 'database', 'kind', 'filename', 'bytes', 'at')})
+            except (ValueError, KeyError, OSError):
+                continue
+        return sorted(result, key=lambda r: r['at'], reverse=True)
+
+    def download(self, config, token):
+        if not re.fullmatch('[a-f0-9]{32}', token):
+            raise ValueError('Некорректная копия.')
+        folder = Path(config['state_dir']) / 'database-backups'
+        manifest = folder / (token + '.json')
+        if folder.is_symlink() or manifest.is_symlink():
+            raise ValueError('Некорректная копия.')
+        record = json.loads(manifest.read_text())
+        if record['file'] not in (token + '.sqlite', token + '.dump'):
+            raise ValueError('Некорректный путь копии.')
+        file = folder / record['file']
+        if file.is_symlink() or not file.is_file():
+            raise ValueError('Файл копии не найден.')
+        if not re.fullmatch(r'[a-zA-Z0-9_.-]{1,180}',record['filename']):
+            raise ValueError('Некорректное имя копии.')
+        return file, record['filename']
+
+
 class Panel(http.server.BaseHTTPRequestHandler):
     sessions = {}
     attempts = []
@@ -1670,6 +1958,53 @@ class Panel(http.server.BaseHTTPRequestHandler):
         session = self.session()
         if not session:
             return self.send(401, {'error': 'Войдите в панель'})
+        if url.path.startswith('/api/databases'):
+            if not self.server.explorer.operation.acquire(blocking=False):
+                return self.send(409, {'error': 'Предыдущий запрос к базе ещё выполняется.'})
+            try:
+                explorer = self.server.explorer
+                query = urllib.parse.parse_qs(url.query)
+                source_id = query.get('source', [''])[0]
+                if self.server.demo:
+                    if url.path == '/api/databases':
+                        return self.send(200, {'sources': [{'id':'demo-sqlite','kind':'sqlite','project':'demo','project_name':'Марафон · демо','name':'marathon.sqlite','bytes':262144,'path':'/data/marathon.sqlite'}, {'id':'demo-postgres','kind':'postgres','project':'chrono-demo','project_name':'Chrono Logos · демо','name':'chrono','container_name':'chrono-demo-db'}], 'warnings':[], 'updated_at':time.time()})
+                    if url.path == '/api/databases/tables':
+                        return self.send(200, {'tables':[{'id':'participants','name':'participants','label':'participants'},{'id':'reading','name':'reading','label':'reading'}]})
+                    if url.path == '/api/databases/rows':
+                        rows = [['1','Анна','12'],['2','Иван','7'],['3','Мария','18']]
+                        term = query.get('search',[''])[0].lower()
+                        return self.send(200, {'columns':[{'name':'id','type':'INTEGER','sensitive':False},{'name':'name','type':'TEXT','sensitive':False},{'name':'chapters','type':'INTEGER','sensitive':False}], 'rows':[r for r in rows if not term or any(term in c.lower() for c in r)],'offset':0,'page_size':25,'has_more':False,'note':'Демонстрационные записи. Действующие базы не подключены.'})
+                    if url.path == '/api/databases/backups':
+                        return self.send(200, {'backups':[]})
+                    return self.send(403, {'error':'Скачивание в предпросмотре отключено.'})
+                if url.path == '/api/databases':
+                    return self.send(200, explorer.catalog(self.server.config, query.get('refresh') == ['1']))
+                if url.path == '/api/databases/backups':
+                    return self.send(200, {'backups': explorer.backups(self.server.config)})
+                if url.path == '/api/databases/download':
+                    file, filename = explorer.download(self.server.config, query.get('id', [''])[0])
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/octet-stream')
+                    self.send_header('Content-Disposition', 'attachment; filename="' + filename + '"')
+                    self.send_header('Content-Length', str(file.stat().st_size))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.send_header('X-Content-Type-Options', 'nosniff')
+                    self.end_headers()
+                    with file.open('rb') as stream:
+                        shutil.copyfileobj(stream, self.wfile, length=1024 * 1024)
+                    return
+                source = explorer.source(self.server.config, source_id)
+                if url.path == '/api/databases/tables':
+                    return self.send(200, {'tables': explorer.tables(source)})
+                if url.path == '/api/databases/rows':
+                    return self.send(200, explorer.rows(source, query.get('table', [''])[0], query.get('search', [''])[0], int(query.get('offset', ['0'])[0])))
+                return self.send(404, {'error':'Не найдено'})
+            except (ValueError, TypeError, KeyError, FileNotFoundError):
+                return self.send(400, {'error':'Источник, таблица или параметры недоступны. Обновите список и проверьте поиск.'})
+            except (OSError, RuntimeError, sqlite3.Error, subprocess.TimeoutExpired):
+                return self.send(503, {'error':'База временно недоступна или запрос превысил время ожидания. Уточните поиск и повторите.'})
+            finally:
+                self.server.explorer.operation.release()
         if url.path in ('/api/server', '/api/containers'):
             try:
                 monitor = self.server.monitor
@@ -1766,6 +2101,29 @@ class Panel(http.server.BaseHTTPRequestHandler):
             with self.mutex:
                 Panel.sessions.pop(cookie['gitdeck'].value, None)
             return self.send(200, {'ok': True}, cookie='gitdeck=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict')
+        if self.path == '/api/databases/backup':
+            if self.server.demo:
+                return self.send(403, {'error':'В предпросмотре резервирование отключено.'})
+            if not self.server.explorer.operation.acquire(blocking=False):
+                return self.send(409, {'error':'Дождитесь завершения запроса к базе.'})
+            try:
+                import fcntl
+                with self.mutex, (Path(self.server.config['state_dir']) / 'worker.lock').open('a') as lock:
+                    try:
+                        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        return self.send(409, {'error':'Сейчас выполняется обновление. Создайте копию после его завершения.'})
+                    with db_open(self.server.config) as db:
+                        if db.execute("SELECT 1 FROM jobs WHERE status NOT IN ('success','failed') LIMIT 1").fetchone():
+                            return self.send(409, {'error':'Дождитесь завершения задания GitDeck.'})
+                    source = self.server.explorer.source(self.server.config, data.get('source'))
+                    return self.send(200, {'backup': self.server.explorer.backup(self.server.config, source)})
+            except (ValueError, TypeError, KeyError) as error:
+                return self.send(400, {'error':str(error) or 'Некорректный источник.'})
+            except (OSError, RuntimeError, sqlite3.Error, subprocess.TimeoutExpired):
+                return self.send(503, {'error':'Не удалось создать копию. Проверьте источник и свободное место.'})
+            finally:
+                self.server.explorer.operation.release()
         if self.path in ('/api/project/save', '/api/project/remove'):
             try:
                 with self.mutex:
@@ -1938,6 +2296,7 @@ def serve(config, config_path, demo=False):
     db_open(config).close()
     server = http.server.ThreadingHTTPServer(('127.0.0.1', int(config.get('port', 8120))), Panel)
     server.config, server.config_path, server.demo = config, str(Path(config_path).resolve()), demo
+    server.explorer = DatabaseExplorer()
     if not demo:
         try:
             register_bookvoice(server)

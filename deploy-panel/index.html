@@ -17,7 +17,7 @@
 @media(max-width:1150px){.deck-shell .wrap{padding:24px}.deck-metrics{gap:10px}.deck-metric{padding:16px}.deck-metric-value{font-size:25px}.deck-facts{grid-template-columns:repeat(2,minmax(0,1fr))}.deck-heading{align-items:start;flex-direction:column}.deck-storage-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:900px){.deck-nav{width:180px;padding:24px 11px}.deck-shell .wrap{margin-left:180px;padding:22px}.deck-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.deck-grid,.deck-shell .cards{grid-template-columns:1fr}.deck-heading h1,.deck-shell .intro h1{font-size:28px}.deck-project-tools{align-items:stretch;flex-direction:column}.deck-project-tools .deck-search{width:100%}}
 @media(max-width:650px){header{height:65px;padding:0 17px;position:sticky}header .brand{font-size:21px}.brand>span:first-child{width:30px;height:30px;font-size:23px}header .secondary{font-size:10px;min-height:34px;padding:8px 12px}.deck-nav{top:65px;bottom:auto;width:100%;height:62px;display:block;padding:7px 10px;overflow-x:auto;white-space:nowrap;border-right:0;border-bottom:1px solid var(--deck-line);background:#131d1bfa}.deck-nav [role=tablist]{display:flex;gap:5px;min-width:max-content}.deck-tab{width:auto;display:flex;gap:6px;padding:9px 10px;margin:0;min-height:42px;font-size:10px}.deck-tab>span:first-child{font-size:15px;width:15px}.deck-nav-label,.deck-nav-footer{display:none}.deck-shell .wrap{margin:62px 0 0;padding:18px 15px 24px}.deck-context{font-size:9px;margin-bottom:22px;align-items:start}.deck-live{font-size:9px;gap:5px;white-space:nowrap}.deck-heading{gap:16px;margin-bottom:22px}.deck-heading h1,.deck-shell .intro h1{font-size:27px;line-height:1.2;margin:9px 0 12px}.deck-heading p,.deck-shell .intro p{font-size:11px;line-height:1.8}.deck-heading>.primary{font-size:11px}.deck-metrics{gap:10px;margin-bottom:18px}.deck-metric{padding:14px;border-radius:10px}.deck-metric-top{font-size:10px}.deck-metric-icon{font-size:12px;padding:6px}.deck-metric-value{font-size:25px;margin:12px 0 5px}.deck-metric-detail{font-size:9px;min-height:30px}.deck-meter{margin-top:11px}.deck-grid{gap:16px;margin-bottom:17px}.deck-panel{padding:18px;border-radius:11px}.deck-panel h2{font-size:14px}.deck-panel-head{margin-bottom:16px}.deck-panel-head>span{font-size:10px}.deck-range{width:100%;gap:4px;justify-content:space-between;padding:4px}.deck-range button{padding:7px 9px;font-size:10px}.deck-facts{gap:18px}.deck-facts strong{font-size:11px}.deck-chart svg{min-height:125px}.deck-chart-note{font-size:9px}.deck-shell .card{padding:21px}.deck-shell .card .icon{margin-bottom:17px}.deck-shell .card-tools .secondary{font-size:11px;min-height:40px}.deck-shell .meta{font-size:11px}.deck-shell .repo{font-size:10px}.deck-shell .bar{font-size:10px;line-height:1.7}.deck-storage-grid{gap:10px}.deck-storage-item{padding:13px}.deck-storage-item h3{font-size:10px}.deck-storage-item strong{font-size:19px}.deck-logs-controls{gap:10px}.deck-logs-controls select{font-size:16px;max-width:100%}.deck-logs-controls .deck-log-source{flex-basis:100%}.deck-log-filter .deck-search{width:100%;flex-basis:100%}.deck-search input{font-size:16px}.deck-log-output{font-size:10px;padding:13px;max-height:400px}.deck-log-tools button{font-size:10px}.deck-shell td,.deck-shell th{padding:13px 12px}.deck-shell dialog{padding:21px;max-width:calc(100% - 20px)}.deck-shell dialog input,.deck-shell dialog select,.deck-shell dialog textarea{font-size:16px}.deck-shell footer{line-height:1.8;font-size:9px}.login{margin:48px 17px;max-width:420px;padding:27px}.login input{font-size:16px}}
-@media(max-width:650px){.deck-nav [role=tablist]{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));min-width:0;gap:4px}.deck-tab{width:100%;flex-direction:column;gap:3px;font-size:9px;padding:6px 3px;min-height:47px;justify-content:center}.deck-tab>span:first-child{font-size:16px}}
+@media(max-width:700px){.deck-nav [role=tablist]{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));min-width:0;gap:4px}.deck-tab{width:100%;flex-direction:column;gap:3px;font-size:9px;padding:6px 3px;min-height:47px;justify-content:center}.deck-tab>span:first-child{font-size:16px}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
 </style><style>
 /* Final consistency layer for GitDeck. */
@@ -30,6 +30,10 @@ header{box-shadow:0 5px 24px #00000014}.deck-shell .cards{gap:20px}.card{positio
 @media(max-width:700px){.card{padding:22px}.deck-project-count{margin-left:0;flex-basis:100%}.deck-project-filter select{max-width:100%}.deck-shell .cards{gap:14px}}
 </style><style>
 :root{--deck-bg:#111719;--deck-panel:#1a2225;--deck-line:#334047;--deck-muted:#a6b3b8;--deck-accent:#5dd6bd;background:var(--deck-bg)}header{background:#141c1fed}.deck-nav{background:#141c1f}.deck-shell .card,.deck-panel,.deck-metric,.login,dialog{background:#1a2225;border-color:#334047}.deck-shell .primary,.primary{background:#5dd6bd;color:#092a24}.deck-shell .primary:hover:not(:disabled),.primary:hover:not(:disabled){background:#8ce8d2}.deck-metric-icon{background:#203b36;color:#79dfc2}.bar{background:#192226;border-color:#334047}.deck-tab[aria-selected=true]{background:#203b36;border-color:#37665a;color:#a6f1df}.deck-metric-bar i{background:#5dd6bd}.deck-nav-footer{color:#a6b3b8}
+</style><style id="database-style">.db-summary{display:flex;align-items:center;gap:24px;flex-wrap:wrap;border-top:1px solid var(--deck-line);border-bottom:1px solid var(--deck-line);padding:17px 0;margin-bottom:24px;color:var(--deck-muted);font-size:12px}.db-summary b{color:var(--deck-accent);font-size:22px;margin-right:5px}.db-readonly{display:flex;align-items:center;gap:7px;margin-left:auto}.db-readonly .ui-icon{width:16px;height:16px}.db-layout{display:grid;grid-template-columns:290px minmax(0,1fr);gap:20px;align-items:start}.db-sources{padding:18px!important;min-width:0}.db-search-label{display:block;margin-bottom:9px;font-size:11px;color:var(--deck-muted)}#db-source-search{width:100%;min-height:43px;margin-bottom:12px}.db-source-list{max-height:650px;overflow-y:auto}.db-source{width:100%;display:flex;align-items:center;gap:11px;padding:14px 10px;text-align:left;border:1px solid transparent;background:none;border-radius:11px;margin-top:5px}.db-source:hover{background:#5dd6bd09}.db-source.selected{background:#5dd6bd10;border-color:#5dd6bd55}.db-source>span:nth-child(2){display:grid;gap:4px;min-width:0;flex:1}.db-source strong{font-size:12px;line-height:1.5}.db-source small{font-size:11px;overflow-wrap:anywhere;color:var(--deck-muted)}.db-source em{font-size:9px;font-style:normal;letter-spacing:.03em;color:var(--deck-accent)}.db-source-icon{padding:8px;background:#5dd6bd09;border-radius:9px}.db-source-icon .ui-icon{width:18px;height:18px}.db-content{min-width:0;padding:25px!important}.db-placeholder{display:grid;place-items:center;align-content:center;text-align:center;min-height:330px;padding:22px}.db-placeholder>.ui-icon{width:40px;height:40px;color:var(--deck-accent);margin-bottom:24px}.db-placeholder h2{font-size:22px;margin-bottom:12px}.db-placeholder p{color:var(--deck-muted);font-size:13px;max-width:340px;line-height:1.8}.db-detail-head{display:flex;align-items:center;justify-content:space-between;gap:18px}.db-detail-head h2{margin:8px 0;font-size:23px}.db-detail-head p{color:var(--deck-muted);font-size:12px;overflow-wrap:anywhere}.db-location{margin:18px 0 22px;font-size:11px;color:var(--deck-muted)}.db-location summary{cursor:pointer;min-height:30px}.db-location code{display:block;background:#0002;padding:12px;border-radius:8px;overflow-wrap:anywhere;white-space:normal}.db-query-tools{display:grid;grid-template-columns:minmax(140px,1fr) minmax(190px,1.5fr);gap:12px;margin-bottom:22px}.db-query-tools label{display:grid;gap:8px;font-size:11px;color:var(--deck-muted);min-width:0}.db-query-tools input,.db-query-tools select{min-width:0;width:100%;min-height:43px;max-width:100%}.db-query-tools form{display:flex;gap:8px;align-items:end}.db-query-tools form label{flex:1;min-width:0}.db-query-tools button{min-height:43px}.db-record-meta{display:flex;justify-content:space-between;gap:12px;font-size:10px;color:var(--deck-muted);padding:0 0 13px}.db-table-scroll{width:100%;max-height:570px;overflow:auto;border:1px solid var(--deck-line);border-radius:12px}.db-records{border-collapse:collapse;width:100%;font-size:12px;margin:0}.db-records th{position:sticky;top:0;background:#202c30;z-index:1;text-align:left;border-bottom:1px solid var(--deck-line);padding:13px 15px;vertical-align:top;white-space:nowrap}.db-records th small{display:block;font-size:9px;font-weight:400;color:var(--deck-muted);margin-top:6px}.db-records th b{font-size:11px;letter-spacing:0;color:var(--deck-accent)}.db-records td{padding:13px 15px;border-bottom:1px solid #ffffff08;vertical-align:top;min-width:100px;max-width:320px}.db-records tr:last-child td{border-bottom:0}.db-cell{max-width:300px;min-width:60px;max-height:105px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65}.db-null{font-size:9px;color:var(--deck-muted);font-style:italic}.db-pagination{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:17px}.db-pagination span{font-size:11px;color:var(--deck-muted)}.db-note{font-size:11px;line-height:1.7;color:var(--deck-muted);margin:17px 0 0}.db-message{background:#5dd6bd10;border:1px solid #5dd6bd33;border-radius:12px;padding:16px 19px;margin:0 0 20px;color:var(--deck-accent);font-size:13px;line-height:1.6}.db-backups{margin-top:22px}.db-backup-list article{display:flex;align-items:center;gap:14px;padding:17px 0;border-top:1px solid var(--deck-line)}.db-backup-list article>div{flex:1;min-width:0}.db-backup-list strong{display:block;font-size:12px;line-height:1.6}.db-backup-list small{display:block;font-size:10px;color:var(--deck-muted);margin-top:5px;overflow-wrap:anywhere}.db-backup-list a{white-space:nowrap;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;min-height:40px}.db-backups .deck-panel-head p{font-size:12px;max-width:650px;line-height:1.7}#db-detail[aria-busy=true]{opacity:.65}.db-sources .empty{padding:22px 4px;font-size:12px}.db-source:focus-visible{outline:2px solid var(--deck-accent);outline-offset:1px}
+@media(max-width:1150px){.db-layout{grid-template-columns:240px minmax(0,1fr)}.db-query-tools{grid-template-columns:1fr}.db-content{padding:21px!important}}
+@media(max-width:900px){.db-layout{grid-template-columns:1fr}.db-source-list{max-height:235px}.db-sources{padding:16px!important}.db-summary{gap:18px}.db-readonly{margin-left:0;flex-basis:100%}.db-backups .deck-panel-head{align-items:start}}
+@media(max-width:700px){.deck-nav [role=tablist]{grid-template-columns:repeat(6,minmax(0,1fr))!important;gap:0}.deck-tab{font-size:8px!important;min-width:0}.db-detail-head{flex-wrap:wrap}.db-detail-head h2{font-size:21px}.db-content{padding:18px 13px!important}.db-record-meta{font-size:9px}.db-summary{gap:14px;margin-top:20px}.db-summary b{font-size:20px}.db-summary>span{font-size:10px}.db-pagination{gap:8px}.db-pagination button{font-size:10px;padding:10px}.db-backup-list article{flex-wrap:wrap}.db-backup-list article>a{margin-left:30px}.db-backups .deck-panel-head{flex-wrap:wrap}.db-placeholder{padding:12px;min-height:230px}}
 </style></head><body>
 <header><div class="brand"><span data-ui-icon="server"></span> GitDeck<span>.</span></div><div class="row"><span class="tag">LINUX / GIT / DOCKER</span><button class="secondary hidden" id="logout">Выйти</button></div></header>
 <div id="login" class="login"><div class="eyebrow">УПРАВЛЕНИЕ СЕРВЕРОМ</div><h1>Все обновления<br>в одном месте.</h1><p>Войдите с паролем, заданным при установке панели.</p><form id="login-form"><label for="password">Пароль администратора</label><input id="password" type="password" autocomplete="current-password" required maxlength="512"><button class="primary">Войти в GitDeck →</button><p class="error" id="login-error" role="alert"></p></form></div>
@@ -153,7 +157,7 @@ document.addEventListener('click',async event=>{const button=event.target.closes
 </script>
 <script>
 // Keep deployment forms intact; monitoring and navigation are independent of update jobs.
-const deckTabs=[['overview','◈','Обзор'],['projects','▦','Проекты'],['server','⌁','Сервер'],['containers','▣','Docker'],['logs','≡','Журналы']];
+const deckTabs=[['overview','◈','Обзор'],['projects','▦','Проекты'],['server','⌁','Сервер'],['containers','▣','Docker'],['databases','▣','Базы'],['logs','≡','Журналы']];
 let deckView='overview',deckPeriod=3600,deckMetrics=null,deckDocker=null,deckMetricsBusy=false,deckDockerBusy=false,deckLogsBusy=false,deckLogText='',deckLogStamp=null,deckLogError='',deckBooted=false;
 let deckSourceSignature='',deckChartRegistry={};
 const deckNumber=(n,d=1)=>n==null||!Number.isFinite(Number(n))?'—':Number(n).toLocaleString('ru-RU',{maximumFractionDigits:d});
@@ -168,7 +172,7 @@ const deckClock=t=>t?new Date(t*1000).toLocaleTimeString('ru-RU',{hour:'2-digit'
 const deckRange=()=>`<div class="deck-range" role="group" aria-label="Период графиков">${[[900,'15 мин'],[3600,'1 час'],[21600,'6 часов'],[86400,'24 часа'],[604800,'7 дней']].map(([value,label])=>`<button data-period="${value}" class="${value===deckPeriod?'selected':''}" aria-pressed="${value===deckPeriod}">${label}</button>`).join('')}</div>`;
 function deckSetup(){
  const main=$('#dashboard'),nav=document.createElement('aside');nav.id='deck-nav';nav.className='deck-nav hidden';nav.setAttribute('aria-label','Навигация GitDeck');
- nav.innerHTML=`<div class="deck-nav-label">РАБОЧЕЕ ПРОСТРАНСТВО</div><div role="tablist" aria-label="Разделы панели">${deckTabs.map(([id,icon,label])=>`<button class="deck-tab" id="deck-tab-${id}" role="tab" aria-controls="deck-view-${id}" aria-selected="false" tabindex="-1" data-deck-view="${id}"><span aria-hidden="true">${AppUI.icon({overview:'grid',projects:'library',server:'server',containers:'box',logs:'logs'}[id])}</span><span>${label}</span></button>`).join('')}</div><div class="deck-nav-footer"><strong id="deck-version">GitDeck</strong>Локальный доступ<br>через SSH-туннель</div>`;
+ nav.innerHTML=`<div class="deck-nav-label">РАБОЧЕЕ ПРОСТРАНСТВО</div><div role="tablist" aria-label="Разделы панели">${deckTabs.map(([id,icon,label])=>`<button class="deck-tab" id="deck-tab-${id}" role="tab" aria-controls="deck-view-${id}" aria-selected="false" tabindex="-1" data-deck-view="${id}"><span aria-hidden="true">${AppUI.icon({overview:'grid',projects:'library',server:'server',containers:'box',databases:'library',logs:'logs'}[id])}</span><span>${label}</span></button>`).join('')}</div><div class="deck-nav-footer"><strong id="deck-version">GitDeck</strong>Локальный доступ<br>через SSH-туннель</div>`;
  document.body.insertBefore(nav,main);$('#demo').textContent='Предпросмотр: показатели сервера, графики и логи демонстрационные. Изменения и обновления отключены.';
  const projects=document.createElement('section');projects.id='deck-view-projects';projects.setAttribute('role','tabpanel');projects.setAttribute('aria-labelledby','deck-tab-projects');
  [...main.children].forEach(node=>projects.append(node));main.append(projects);
@@ -197,7 +201,7 @@ function deckSelectView(id,updateHash=true){
  for(const [name] of deckTabs){$('#deck-view-'+name).classList.toggle('hidden',name!==id);const tab=$('#deck-tab-'+name);tab.setAttribute('aria-selected',String(name===id));tab.tabIndex=name===id?0:-1;}
  $('#deck-context-title').textContent=deckTabs.find(tab=>tab[0]===id)[2];$('#deck-tooltip').classList.add('hidden');
  if(updateHash)history.replaceState(null,'','#'+id);
- if(deckBooted){if(['overview','server'].includes(id))deckFetchMetrics();if(id==='containers'||id==='overview')deckFetchDocker();if(id==='logs')deckFetchLog();}
+ if(deckBooted){if(['overview','server'].includes(id))deckFetchMetrics();if(id==='containers'||id==='overview')deckFetchDocker();if(id==='logs')deckFetchLog();if(id==='databases')deckDatabaseLoad();}
 }
 function deckFilterProjects(){
  const search=$('#deck-project-search').value.toLocaleLowerCase(),status=$('#deck-project-status').value;let count=0;
@@ -298,7 +302,89 @@ async function deckFetchLog(){
  try{const d=await api('/api/runtime-log?project='+encodeURIComponent(source)+'&tail='+tail);if(source!==$('#deck-log-source').value||tail!==$('#deck-log-tail').value)return;deckLogText=d.log;deckLogError='';deckLogStamp=d.updated_at;deckRenderLog();if(d.truncated)$('#deck-log-status').textContent+=' · показан последний 1 МиБ журнала';}
  catch(e){if(source===$('#deck-log-source').value){deckLogError=e.message;deckRenderLog();}}finally{deckLogsBusy=false;$('#deck-log-refresh').disabled=false;if(source!==$('#deck-log-source').value||tail!==$('#deck-log-tail').value)deckFetchLog();}
 }
+// The explorer only issues catalog/SELECT requests. Backups use the existing CSRF-protected API.
+const deckDB={loaded:false,sources:[],warnings:[],selected:'',tables:[],table:'',rows:null,offset:0,search:'',backups:[],busy:false,error:'',message:'',filter:''};
+const dbUrl=(path,params={})=>'/api/databases'+path+'?'+new URLSearchParams(params);
+const dbSelected=()=>deckDB.sources.find(s=>s.id===deckDB.selected);
+function deckDatabaseSetup(){
+ $('#deck-view-databases').innerHTML=`<div class="deck-heading"><div><div class="eyebrow">ДАННЫЕ ВАШИХ ПРОЕКТОВ</div><h1>Базы данных.</h1><p>SQLite и PostgreSQL в одном месте. Просматривайте записи и сохраняйте резервные копии.</p></div><button class="secondary" id="db-refresh">Обновить источники</button></div><div class="db-summary" id="db-summary"></div><p class="deck-alert hidden" id="db-error" role="alert"></p><p class="db-message hidden" id="db-message" role="status"></p><div class="db-layout"><aside class="deck-panel db-sources"><label class="db-search-label" for="db-source-search">Найти проект или базу</label><input id="db-source-search" type="search" placeholder="Например, Сүйлө" autocomplete="off"><div id="db-sources" class="db-source-list"></div></aside><section class="deck-panel db-content"><div id="db-detail"></div></section></div><section class="deck-panel db-backups"><div class="deck-panel-head"><div><h2>Резервные копии</h2><p>Полная SQLite или pg_dump PostgreSQL. Копии остаются на сервере и доступны для скачивания.</p></div><button class="secondary" id="db-backup-refresh">Обновить список</button></div><div id="db-backups"></div></section>`;
+ $('#db-refresh').onclick=()=>deckDatabaseLoad(true);
+ $('#db-backup-refresh').onclick=()=>dbTask(async()=>{await dbFetchBackups();dbRenderBackups()});
+ $('#db-source-search').oninput=e=>{deckDB.filter=e.target.value;dbRenderSources()};
+ $('#db-sources').onclick=e=>{const b=e.target.closest('[data-db-source]');if(b&&!deckDB.busy)dbChooseSource(b.dataset.dbSource)};
+ $('#db-detail').addEventListener('change',e=>{if(e.target.id==='db-table'&&!deckDB.busy){deckDB.table=e.target.value;deckDB.offset=0;deckDB.search='';dbFetchRows()}});
+ $('#db-detail').addEventListener('submit',e=>{if(e.target.id==='db-search-form'){e.preventDefault();if(deckDB.busy)return;deckDB.search=$('#db-search').value.trim();deckDB.offset=0;dbFetchRows()}});
+ $('#db-detail').addEventListener('click',e=>{const page=e.target.closest('[data-db-page]');if(page&&!deckDB.busy){deckDB.offset=Math.max(0,deckDB.offset+Number(page.dataset.dbPage)*25);dbFetchRows()}if(e.target.closest('#db-create-backup')&&!deckDB.busy)dbCreateBackup()});
+ dbRender();
+}
+function dbStatus(){
+ $('#db-error').textContent=deckDB.error;$('#db-error').classList.toggle('hidden',!deckDB.error);
+ $('#db-message').textContent=deckDB.message;$('#db-message').classList.toggle('hidden',!deckDB.message);
+ $('#db-refresh').disabled=deckDB.busy;$('#db-backup-refresh').disabled=deckDB.busy;
+ $('#db-sources').querySelectorAll('button').forEach(b=>b.disabled=deckDB.busy);
+ $('#db-detail').querySelectorAll('button,select,input').forEach(b=>{if(b.dataset.dbPage){b.disabled=deckDB.busy||(b.dataset.dbPage==='-1'?deckDB.offset===0:!deckDB.rows?.has_more)}else if(b.id==='db-create-backup')b.disabled=deckDB.busy||state.demo;else b.disabled=deckDB.busy;});
+ $('#db-detail').setAttribute('aria-busy',String(deckDB.busy));
+}
+async function dbTask(task){
+ if(deckDB.busy)return;deckDB.busy=true;deckDB.error='';dbStatus();
+ try{await task()}catch(error){deckDB.error=error.message}finally{deckDB.busy=false;dbRenderSources();dbRenderDetail();dbStatus()}
+}
+async function dbFetchBackups(){deckDB.backups=(await api('/api/databases/backups')).backups;}
+async function deckDatabaseLoad(fresh=false){
+ if(deckDB.busy||(!fresh&&deckDB.loaded))return;
+ await dbTask(async()=>{
+  const result=await api('/api/databases'+(fresh?'?refresh=1':''));deckDB.sources=result.sources;deckDB.warnings=result.warnings;deckDB.loaded=true;
+  if(!deckDB.sources.some(s=>s.id===deckDB.selected)){deckDB.selected='';deckDB.tables=[];deckDB.table='';deckDB.rows=null}
+  await dbFetchBackups();dbRender();
+ });
+}
+async function dbChooseSource(id){
+ deckDB.selected=id;deckDB.table='';deckDB.tables=[];deckDB.rows=null;deckDB.search='';deckDB.offset=0;deckDB.message='';dbRender();
+ await dbTask(async()=>{
+  deckDB.tables=(await api(dbUrl('/tables',{source:id}))).tables;deckDB.table=deckDB.tables[0]?.id||'';
+  if(deckDB.table)deckDB.rows=await api(dbUrl('/rows',{source:id,table:deckDB.table,offset:0}));
+  dbRender();
+ });
+}
+async function dbFetchRows(){
+ const source=deckDB.selected,table=deckDB.table;
+ if(!source||!table)return;
+ deckDB.rows=null;dbRenderDetail();
+ await dbTask(async()=>{
+  deckDB.rows=await api(dbUrl('/rows',{source,table,search:deckDB.search,offset:deckDB.offset}));dbRenderDetail();
+ });
+}
+async function dbCreateBackup(){
+ const source=dbSelected();if(!source)return;
+ deckDB.message='Создаём копию «'+source.name+'». Это может занять до 45 секунд. Приложение продолжает работать.';
+ await dbTask(async()=>{
+  const result=await api('/api/databases/backup',{source:source.id});
+  deckDB.message='Копия «'+result.backup.filename+'» готова. Скачайте её в разделе ниже.';
+  await dbFetchBackups();dbRenderBackups();
+ });
+}
+function dbRender(){
+ const sql=deckDB.sources.filter(s=>s.kind==='sqlite').length,pg=deckDB.sources.length-sql;
+ $('#db-summary').innerHTML=`<span><b>${deckDB.sources.length}</b> баз</span><span><b>${sql}</b> SQLite</span><span><b>${pg}</b> PostgreSQL</span><span class="db-readonly">${AppUI.icon('lock')} Просмотр без изменения записей</span>`;
+ dbRenderSources();dbRenderDetail();dbRenderBackups();dbStatus();
+}
+function dbRenderSources(){
+ const q=deckDB.filter.toLocaleLowerCase('ru');const sources=deckDB.sources.filter(s=>(s.project_name+' '+s.name).toLocaleLowerCase('ru').includes(q));
+ $('#db-sources').innerHTML=sources.map(s=>`<button class="db-source ${s.id===deckDB.selected?'selected':''}" data-db-source="${esc(s.id)}" aria-pressed="${s.id===deckDB.selected}"><span class="db-source-icon">${AppUI.icon('box')}</span><span><strong>${esc(s.project_name)}</strong><small>${esc(s.name)}</small><em>${s.kind==='sqlite'?'SQLite · '+deckBytes(s.bytes):'PostgreSQL'}</em></span><span aria-hidden="true">›</span></button>`).join('')||`<div class="empty">${deckDB.loaded?'Базы не найдены. Измените поиск или обновите источники.':'Загружаем источники…'}</div>`;
+ if(deckDB.warnings?.length)$('#db-sources').insertAdjacentHTML('beforeend','<p class="db-note">'+deckDB.warnings.map(esc).join('<br>')+'</p>');
+}
+function dbRenderDetail(){
+ const s=dbSelected();if(!s){$('#db-detail').innerHTML='<div class="db-placeholder">'+AppUI.icon('library')+'<h2>Выберите базу слева</h2><p>Здесь появятся таблицы проекта, поиск и записи. Служебные базы ботов также доступны.</p></div>';return}
+ const d=deckDB.rows;
+ $('#db-detail').innerHTML=`<div class="db-detail-head"><div><span class="eyebrow">${s.kind==='sqlite'?'SQLITE':'POSTGRESQL'}</span><h2>${esc(s.project_name)}</h2><p>${esc(s.name)}</p></div><button class="primary" id="db-create-backup" ${state.demo?'disabled':''}>Создать копию</button></div><details class="db-location"><summary>Расположение базы</summary><code>${esc(s.path||s.container_name+' · '+s.name)}</code></details><div class="db-query-tools"><label for="db-table">Таблица<select id="db-table" ${!deckDB.tables.length?'disabled':''}>${deckDB.tables.map(t=>`<option value="${esc(t.id)}" ${deckDB.table===t.id?'selected':''}>${esc(t.label)}</option>`).join('')}</select></label><form id="db-search-form"><label for="db-search">Найти запись<input id="db-search" type="search" maxlength="200" value="${esc(deckDB.search)}" placeholder="Текст или число" autocomplete="off"></label><button class="secondary" ${!deckDB.table?'disabled':''}>Найти</button></form></div>${d?`<div class="db-record-meta"><span>Строки ${d.rows.length?deckDB.offset+1:0}–${deckDB.offset+d.rows.length}</span><span>${d.columns.length} столбцов · страница по 25</span></div><div class="db-table-scroll" tabindex="0" role="region" aria-label="Записи таблицы"><table class="db-records"><thead><tr>${d.columns.map(c=>`<th scope="col"><b>${esc(c.name)}</b><small>${esc(c.type||'—')}${c.sensitive?' · скрыто':''}</small></th>`).join('')}</tr></thead><tbody>${d.rows.map(row=>`<tr>${row.map(cell=>`<td><div class="db-cell">${cell===null?'<span class="db-null">NULL</span>':esc(cell)}</div></td>`).join('')}</tr>`).join('')}</tbody></table>${!d.rows.length?'<p class="empty">Записей нет. Таблица пуста или ничего не найдено.</p>':''}</div><div class="db-pagination"><button class="secondary" data-db-page="-1" ${deckDB.offset===0?'disabled':''}>← Назад</button><span>Страница ${Math.floor(deckDB.offset/25)+1}</span><button class="secondary" data-db-page="1" ${!d.has_more?'disabled':''}>Далее →</button></div><p class="db-note">${esc(d.note)}</p>`:`<div class="empty">${deckDB.tables.length?'Выберите таблицу.':'В базе пока нет таблиц или список ещё загружается.'}</div>`}`;
+ if(state.demo)$('#db-create-backup').disabled=true;
+}
+function dbRenderBackups(){
+ $('#db-backups').innerHTML=deckDB.backups.length?'<div class="db-backup-list">'+deckDB.backups.map(b=>`<article><span>${AppUI.icon('box')}</span><div><strong>${esc(b.project_name)} · ${esc(b.database)}</strong><small>${esc(date(b.at))} · ${deckBytes(b.bytes)} · ${esc(b.filename)}</small></div><a class="secondary" href="/api/databases/download?id=${encodeURIComponent(b.id)}" download>Скачать ↓</a></article>`).join('')+'</div>':'<div class="empty">Копий пока нет. Выберите базу и нажмите «Создать копию».</div>';
+}
+
 deckSetup();
+deckDatabaseSetup();
 const deckRenderPrevious=render;render=function(){deckRenderPrevious();deckState();};
 const deckApiPrevious=api;api=async function(url,body){try{return await deckApiPrevious(url,body);}catch(e){if($('#dashboard').classList.contains('hidden')){document.body.classList.remove('deck-shell');$('#deck-nav').classList.add('hidden');deckBooted=false;}throw e;}};
 document.addEventListener('click',event=>{const tab=event.target.closest('[data-deck-view],[data-go-view]');if(tab){deckSelectView(tab.dataset.deckView||tab.dataset.goView);return;}const range=event.target.closest('[data-period]');if(range){deckPeriod=Number(range.dataset.period);$('#deck-range-wrap').innerHTML=deckRange();deckFetchMetrics();}});
