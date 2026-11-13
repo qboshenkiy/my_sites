@@ -1,7 +1,7 @@
 window.PORTFOLIO = {
  brand: 'VANO',
- headline: ['Меньше рутины.','Больше дела.'],
- subtitle: 'Автоматизация и сайты для вашего бизнеса. Продумываю, собираю, запускаю.',
+ headline: ['Освободите время','для главного.'],
+ subtitle: 'Сайты и автоматизация, которые берут рутину на себя.',
  telegram: 'https://t.me/vanoTMvano',
  telegramLabel: '@vanoTMvano',
  projects: [
