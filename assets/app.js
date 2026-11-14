@@ -125,7 +125,7 @@ function captureDraft() {
   const form = document.querySelector('#editor-form'); if (!form) return;
   if(form.dataset.bluff==='1')return captureBluffDraft(form);
   const fd=new FormData(form); draft.title=fd.get('title'); draft.description=fd.get('description'); draft.mode=fd.get('mode'); draft.scoring=draft.mode==='board'?'fixed':fd.get('scoring');
-  draft.questions=draft.questions.map((q,i)=>({...q,text:fd.get(`text-${i}`),reference:fd.get(`reference-${i}`)||'',type:fd.get(`type-${i}`),seconds:Number(fd.get(`seconds-${i}`)),category:fd.get(`category-${i}`)||'',points:Number(fd.get(`points-${i}`)),correct:fd.get(`type-${i}`)==='quiz'?fd.getAll(`correct-${i}`).map(Number):null,...pulseCaptureBlock(q,i,fd)}));
+  draft.questions=draft.questions.map((q,i)=>({...q,text:fd.get(`text-${i}`),reference:fd.get(`reference-${i}`)||'',verse:fd.get(`verse-${i}`)||'',type:fd.get(`type-${i}`),seconds:Number(fd.get(`seconds-${i}`)),category:fd.get(`category-${i}`)||'',points:Number(fd.get(`points-${i}`)),correct:fd.get(`type-${i}`)==='quiz'?fd.getAll(`correct-${i}`).map(Number):null,...pulseCaptureBlock(q,i,fd)}));
 }
 function joinPage() {
   stopPoll(); page='join';

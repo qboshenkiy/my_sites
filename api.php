@@ -153,7 +153,8 @@ try {
             if($mode==='board'){ $cell=$category.'|'.$points;if(isset($cells[$cell]))fail('В категории не должно быть двух вопросов с одинаковыми баллами.');$cells[$cell]=true; }
             $image=$q['image']??null;if($image&&!query('SELECT id FROM images WHERE id=?',[$image])->fetchColumn())fail('Изображение не найдено.');
             $reference=$q['reference']??'';if(!is_string($reference)||mb_strlen($reference)>200)fail('Ссылка на источник: максимум 200 символов.');
-            $normalized=['reference'=>trim($reference),'text'=>cleanText($q['text']??'',250),'type'=>$type,'seconds'=>$seconds,'options'=>$options,'correct'=>$correct,'multiple'=>$type==='quiz'&&count($correctIndexes??[])>1,'category'=>$category,'points'=>$points,'image'=>$image,'block'=>$q['block']??'choice'];
+            $verse=$q['verse']??'';if(!is_string($verse)||mb_strlen($verse)>2000)fail('Текст стиха: до 2000 символов.');
+            $normalized=['verse'=>trim($verse),'reference'=>trim($reference),'text'=>cleanText($q['text']??'',250),'type'=>$type,'seconds'=>$seconds,'options'=>$options,'correct'=>$correct,'multiple'=>$type==='quiz'&&count($correctIndexes??[])>1,'category'=>$category,'points'=>$points,'image'=>$image,'block'=>$q['block']??'choice'];
             if(isset($q['prompts']))$normalized['prompts']=$q['prompts'];
             try{$valid[]=pulseNormalizeBlock($normalized);}catch(DomainException $e){fail($e->getMessage());}
         }
@@ -250,7 +251,7 @@ try {
         $answer=$player?query('SELECT choice,points FROM answers WHERE player_id=? AND question_index=?',[$player['id'],$index])->fetch():null;
         if($answer){$selected=json_decode((string)$answer['choice'],true);$answer['choices']=is_array($selected)?array_map('intval',$selected):[(int)$answer['choice']];$answer['correct']=pulseQuestionCorrect($question,$answer['choices']);}
         $revealed=in_array($room['status'],['results','finished'],true);
-        if ($question && !$revealed) unset($question['correct'],$question['reference']);
+        if ($question && !$revealed) unset($question['correct'],$question['reference'],$question['verse']);
         if (($player||$projector) && !$revealed) {
             $counts=[]; if ($answer) unset($answer['points'],$answer['correct']);
             // Current-question scores would reveal correctness before the host reveals results.

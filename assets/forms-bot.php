@@ -86,7 +86,7 @@ function formsBotGroupKeyboard(array $delivery,array $form,array $question): arr
 function formsBotGroupText(array $delivery,array $form): string {
     $quiz=json_decode($form['quiz'],true);$qi=(int)$delivery['position'];$q=$quiz['questions'][$qi];
     $answered=(int)query('SELECT count(*) FROM form_tg_votes WHERE delivery_id=? AND question_index=?',[$delivery['id'],$qi])->fetchColumn();
-    $text=$form['title']."\nВопрос ".($qi+1).' из '.count($quiz['questions'])."\n\n".$q['text'];
+    $text=$form['title']."\nВопрос ".($qi+1).' из '.count($quiz['questions'])."\n\n".(!empty($q['category'])?'Категория — '.$q['category']."\n\n":'').$q['text'];
     if(!empty($q['image']))$text.="\n\nИзображение: ".rtrim(getenv('APP_URL')?:'','/').'/api.php?action=image&id='.$q['image'];
     $text.=pulseQuestionInstruction($q);
     if($delivery['kind']==='private'){
@@ -270,7 +270,7 @@ function formsBotSendResult(array $form,string $chat,array $attempt): void {
     $a=formAdjustedAttempt($form,$attempt);
     $text=$form['title']."\n\n";
     if(formResultsVisible($form)){
-        $text.='Ваш результат: '.($a['max_points']>0?round($a['points']/$a['max_points']*100,2).'%':'Опрос без оценки')."\nБаллы — ".$a['points'].' из '.$a['max_points'];
+        $text.='Ваш результат: '.($a['max_points']>0?round($a['points']/$a['max_points']*100,2).'%':'Опрос без оценки')."\nБаллы — ".$a['points'].' из '.$a['max_points']."\nДата — ".date('d.m.Y',(int)$a['submitted_at']);
         $answers=json_decode($a['answers'],true);$correct=0;$graded=0;
         foreach(json_decode($form['quiz'],true)['questions'] as $i=>$q){
             if($q['type']!=='quiz')continue;
@@ -291,6 +291,7 @@ function formsBotSendReview(array $form,string $chat,?array $attempt=null): void
     foreach(json_decode($form['quiz'],true)['questions'] as $i=>$q){
         if($q['type']!=='quiz'&&!$attempt)continue;
         $row="\n\n".($i+1).'. '.$q['text'];
+        if(!empty($q['category']))$row.="\nКатегория — ".$q['category'];
         $selected=$answers[$i]??null;
         $selected=$selected===null?[]:(is_array($selected)?$selected:[$selected]);
         if($q['type']==='quiz'){
@@ -302,6 +303,7 @@ function formsBotSendReview(array $form,string $chat,?array $attempt=null): void
             }
         }else $row.="\nОпрос — без правильного ответа.";
         if($attempt)$row.="\nВаш ответ: ".($selected?pulseQuestionAnswerText($q,$selected):'Нет ответа');
+        if(!empty($q['verse']))$row.="\nТекст стиха\n".$q['verse'];
         if(!empty($q['reference']))$row.="\nМестописание / пояснение — ".$q['reference'];
         if(mb_strlen($text.$row)>3500){$chunks[]=$text;$text='';}
         $text.=$row;
@@ -357,7 +359,9 @@ function formsBotTick(): void {
                 $db->exec('BEGIN IMMEDIATE');query("UPDATE form_tg_deliveries SET position=?,current_poll_id=NULL,current_message_id=?,state='active',pending='',error='' WHERE id=?",[$next,$messageId,$d['id']]);$db->exec('COMMIT');continue;
             }
             if(!empty($q['image']))formsBotCall('sendPhoto',['chat_id'=>$d['chat_id'],'photo'=>rtrim(getenv('APP_URL')?:'','/').'/api.php?action=image&id='.$q['image']]);
-            $args=['chat_id'=>$d['chat_id'],'question'=>($next+1).'/'.count($quiz['questions']).' · '.$q['text'],
+            $pollText=($next+1).'/'.count($quiz['questions']).' · '.$q['text'];
+            if(!empty($q['category'])){if(mb_strlen($q['category']."\n".$pollText)<=300)$pollText=$q['category']."\n".$pollText;else formsBotReply($d['chat_id'],'Категория — '.$q['category']);}
+            $args=['chat_id'=>$d['chat_id'],'question'=>$pollText,
                 'options'=>array_map(fn($text)=>['text'=>$text],$q['options']),'type'=>'regular','is_anonymous'=>false,'allows_multiple_answers'=>count(is_array($q['correct']??null)?$q['correct']:[])>1,'allows_revoting'=>false,'hide_results_until_closes'=>true];
             if($d['kind']==='group')$args['reply_markup']=['inline_keyboard'=>[[['text'=>'Следующий вопрос →','callback_data'=>'pg:'.$d['id'].':'.$d['revision'].':next'],['text'=>'Завершить','callback_data'=>'pg:'.$d['id'].':'.$d['revision'].':finish']]]];
             $sent=formsBotCall('sendPoll',$args);if(!isset($sent['poll']['id'],$sent['message_id']))throw new RuntimeException('Не подтверждена отправка опроса.');

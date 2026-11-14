@@ -70,7 +70,7 @@ function normalizeQuizImport(string $json,array $settings=[]): array {
             $reference=importQuizText($q['reference']??'',200,$where.', reference',false);
             $time=importQuizNumber($q['seconds']??$seconds,5,120,$where.', время');
             if(!empty($q['image']))$hasImages=true;
-            $valid[]=['text'=>$text,'type'=>$type,'seconds'=>$time,'options'=>$texts,'correct'=>$correct,'multiple'=>count($correctIndexes)>1,'category'=>$cat,'points'=>$points,'image'=>null,'reference'=>$reference];
+            $valid[]=['verse'=>importQuizText($q['verse']??'',2000,$where.', verse',false),'text'=>$text,'type'=>$type,'seconds'=>$time,'options'=>$texts,'correct'=>$correct,'multiple'=>count($correctIndexes)>1,'category'=>$cat,'points'=>$points,'image'=>null,'reference'=>$reference];
             $last=count($valid)-1;$valid[$last]['block']=$q['block']??'choice';if(isset($q['prompts']))$valid[$last]['prompts']=$q['prompts'];$valid[$last]=pulseNormalizeBlock($valid[$last]);
             if($mode==='bluff'&&count($correctIndexes)>1)throw new DomainException($where.': в Бредовухе укажите один правильный ответ.');
             if($mode==='bluff'){if($type!=='quiz')throw new DomainException($where.': Бредовухе нужен правильный ответ, тип poll не подходит.');$last=count($valid)-1;$valid[$last]['truth']=$texts[$correct];$valid[$last]['aliases']=[];$valid[$last]['options']=[];$valid[$last]['correct']=null;$valid[$last]['multiple']=false;$valid[$last]['points']=1000;}

@@ -17,14 +17,22 @@ const {chromium}=require('playwright');const assert=require('node:assert/strict'
   await admin.selectOption('#new-self-test [name=quiz_id]',process.env.FORMS_QUIZ_ID);await admin.fill('#new-self-test [name=title]','Бытие · проверка знаний');await admin.click('#new-self-test [type=submit]');
   await admin.waitForSelector('.forms-copy-row input');const url=await admin.inputValue('.forms-copy-row input');
   const context=await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true});const guest=await context.newPage();guest.on('pageerror',e=>errors.push(e.message));
-  await guest.goto(url);assert.equal(await guest.locator('.self-test-reference').count(),0);assert.ok(!(await guest.content()).includes('Числа 6:24'));await guest.fill('[name=participant_name]','Тестовая работа Анны');await guest.check('[name=self-q-0][value="0"]');await guest.check('[name=self-q-0][value="4"]');await guest.check('[name=self-q-1][value="0"]');
+  await guest.goto(url);assert.match(await guest.textContent('main'),/Благословение/);assert.equal(await guest.locator('.self-test-reference').count(),0);assert.ok(!(await guest.content()).includes('Числа 6:24'));await guest.fill('[name=participant_name]','Тестовая работа Анны');await guest.check('[name=self-q-0][value="0"]');await guest.check('[name=self-q-0][value="4"]');await guest.check('[name=self-q-1][value="0"]');
   await guest.reload();await guest.waitForSelector('#public-self-test');assert.equal(await guest.inputValue('[name=participant_name]'),'Тестовая работа Анны');assert.equal(await guest.locator('[name=self-q-0][value="0"]').isChecked(),true);assert.equal(await guest.locator('[name=self-q-0][value="4"]').isChecked(),true);
   const folder=path.resolve(__dirname,'../dist/pulse-forms-preview');fs.mkdirSync(folder,{recursive:true});
   await guest.screenshot({path:path.join(folder,'test-mobile.png'),fullPage:true});
   await guest.click('#public-self-test [type=submit]');await guest.locator('dialog #confirm-dialog').click();await guest.waitForSelector('.self-test-score');
   assert.match(await guest.textContent('.self-test-score'),/100%/);assert.ok(await guest.locator('.self-test-review').count()>0);assert.match(await guest.textContent('main'),/Числа 6:24–26/);
+  assert.match(await guest.textContent('main'),/Да благословит тебя Господь/);
+  await context.clearCookies();await guest.goto(url);await guest.waitForSelector('.self-test-score');assert.match(await guest.textContent('.self-test-score'),/100%/);assert.equal(await guest.locator('#public-self-test').count(),0);
   for(const width of [320,390,1440]){await guest.setViewportSize({width,height:900});assert.ok(await guest.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'result overflow '+width);if(width!==320)await guest.screenshot({path:path.join(folder,'result-'+width+'.png'),fullPage:true});}
   await admin.click('[data-form-action="refresh"]');await admin.waitForFunction(()=>document.querySelector('.forms-stats strong')?.textContent==='1');
+  await admin.click('[data-form-action="share-answers"]');await admin.waitForSelector('dialog input');
+  const answerUrl=await admin.inputValue('dialog input');const answerPage=await browser.newPage();
+  await answerPage.goto(answerUrl);await answerPage.waitForSelector('.self-test-question');
+  assert.match(await answerPage.textContent('main'),/ПРАВИЛЬНЫЕ ОТВЕТЫ/);assert.match(await answerPage.textContent('main'),/Да благословит тебя Господь/);
+  assert.equal(await answerPage.locator('.self-test-score').count(),0);assert.ok(!(await answerPage.textContent('main')).includes('Тестовая работа Анны'));
+  await answerPage.close();await admin.locator('[data-close-key]').click();
   await admin.click('[data-form-action="toggle-immediate"]');await admin.waitForFunction(()=>currentForm.form.immediate_results===0);
   await guest.reload();await guest.waitForSelector('.self-test-wait');assert.equal(await guest.locator('.self-test-review').count(),0);
   await admin.click('[data-form-action="toggle-immediate"]');await admin.waitForFunction(()=>currentForm.form.immediate_results===1);

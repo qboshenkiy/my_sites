@@ -43,7 +43,7 @@ function pulseBlockAnswerText(q,choices){
 }
 function pulseBlockReview(q,answer,index,heading=true,own=true){
  const selected=Array.isArray(answer)?answer:[],right=correctIndexes(q),exact=JSON.stringify(selected)===JSON.stringify(right);
- return `<section class="self-test-question block-review">${heading?`<span class="self-test-number">Вопрос ${index+1} · ${esc(pulseBlockNames[q.block])}</span><h2>${esc(q.text)}</h2>`:''}<p class="self-test-verdict ${own?(exact?'is-correct':'is-incorrect'):''}">${own?(exact?'✓ Верно':selected.length?'✕ Неверно':'✕ Нет ответа'):'Правильный ответ'}</p>${right.map((expected,i)=>`<div class="self-test-review ${!own||selected[i]===expected?'correct':'incorrect'}"><div><strong>${q.block==='matching'?esc(q.prompts[i]):'Шаг '+(i+1)}</strong>${own?`<p>Ваш ответ — ${esc(q.options[selected[i]]??'Нет ответа')}</p>`:''}${!own||selected[i]!==expected?`<p>Правильный ответ — ${esc(q.options[expected])}</p>`:''}</div></div>`).join('')}${heading&&q.reference?`<p class="self-test-reference"><strong>Местописание / пояснение</strong><br>${esc(q.reference)}</p>`:''}</section>`;
+ return `<section class="self-test-question block-review">${heading?`<span class="self-test-number">Вопрос ${index+1}${q.category?' · '+esc(q.category):''} · ${esc(pulseBlockNames[q.block])}</span><h2>${esc(q.text)}</h2>`:''}<p class="self-test-verdict ${own?(exact?'is-correct':'is-incorrect'):''}">${own?(exact?'✓ Верно':selected.length?'✕ Неверно':'✕ Нет ответа'):'Правильный ответ'}</p>${right.map((expected,i)=>`<div class="self-test-review ${!own||selected[i]===expected?'correct':'incorrect'}"><div><strong>${q.block==='matching'?esc(q.prompts[i]):'Шаг '+(i+1)}</strong>${own?`<p>Ваш ответ — ${esc(q.options[selected[i]]??'Нет ответа')}</p>`:''}${!own||selected[i]!==expected?`<p>Правильный ответ — ${esc(q.options[expected])}</p>`:''}</div></div>`).join('')}${heading&&q.verse?`<blockquote class="self-test-verse">${esc(q.verse)}</blockquote>`:''}${heading&&q.reference?`<p class="self-test-reference"><strong>Местописание / пояснение</strong><br>${esc(q.reference)}</p>`:''}</section>`;
 }
 function pulseLiveBlock(q,s,isHost,revealed,answered){
  if(revealed)return pulseBlockReview(q,s.answer?.choices||[],s.index,false,!isHost);
@@ -70,6 +70,6 @@ document.addEventListener('change',event=>{
   if(kind==='matching')next.prompts=next.options.map((_,i)=>previous.prompts?.[i]||'');
   next.seconds=previous.seconds;
  }
- draft.questions[index]={...next,category:previous.category,points:previous.points,image:previous.image,reference:previous.reference};
+ draft.questions[index]={...next,category:previous.category,points:previous.points,image:previous.image,reference:previous.reference,verse:previous.verse};
  drawEditor();
 });

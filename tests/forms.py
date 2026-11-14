@@ -67,7 +67,7 @@ with tempfile.TemporaryDirectory(prefix='pulse-forms-') as tmp:
         for tg,name in [('201','Телеграм Анна'),('202','Телеграм Борис')]:
             uid=source.call('create_user',{'name':name,'role':'participant'})['id']
             with closing(sqlite3.connect(mdir/'marathon.sqlite')) as db:db.execute('UPDATE users SET telegram_id=? WHERE id=?',(tg,uid));db.commit()
-        questions=[{'text':'Какие два числа подходят?','type':'quiz','seconds':20,'options':['4','5','6','7','8'],'correct':[0,4],'points':500,'reference':'Числа 6:24–26'},
+        questions=[{'text':'Какие два числа подходят?','type':'quiz','seconds':20,'options':['4','5','6','7','8'],'correct':[0,4],'points':500,'reference':'Числа 6:24–26','category':'Благословение','verse':'Да благословит тебя Господь\nи сохранит тебя!'},
                    {'text':'Что из этого дерево?','type':'quiz','seconds':20,'options':['Дуб','Камень'],'correct':0,'points':500,'reference':'Псалом 1:3'}]
         quiz=admin.call('save',{'title':'Самостоятельный тест','questions':questions})['id']
         def create(**changes):return admin.call('form_create',dict(quiz_id=quiz,immediate_results=False,**changes))
@@ -80,6 +80,18 @@ with tempfile.TemporaryDirectory(prefix='pulse-forms-') as tmp:
         assert shown['results_visible'] and not shown['published'] and shown['attempt']['percent']==50
         assert shown['attempt']['answers']==[[0,4],1] and shown['questions'][0]['reference']=='Числа 6:24–26'
         assert guest.call('form_get&token='+immediate['token'])==shown
+        shared_key=admin.call('form_share_answers',{'form':immediate['id']})['secret']
+        answer_key=outsider.call('form_get',{'token':immediate['token'],'answers':shared_key})
+        assert answer_key['answer_key'] and 'attempt' not in answer_key and answer_key['questions'][0]['verse']
+        outsider.call('form_share_answers',{'form':immediate['id']},401)
+        assert not outsider.call('form_get&token='+immediate['token'])['submitted']
+        admin.call('form_revoke_answers',{'form':immediate['id']})
+        outsider.call('form_get',{'token':immediate['token'],'answers':shared_key},404)
+        secret=shown['result_secret']
+        anonymous_again=Client(purl);anonymous_again.boot()
+        reopened=anonymous_again.call('form_get',{'token':immediate['token'],'result':secret})
+        assert reopened['attempt']['percent']==50 and reopened['questions'][0]['verse']=='Да благословит тебя Господь\nи сохранит тебя!'
+        assert 'verse' not in outsider.call('form_get&token='+immediate['token'])['questions'][0]
         assert not outsider.call('form_get&token='+immediate['token'])['results_visible']
         manager=admin.call('form_results&form='+immediate['id'])['form']
         assert manager['assessment_id'] is None
@@ -195,6 +207,7 @@ with tempfile.TemporaryDirectory(prefix='pulse-forms-') as tmp:
         calls=bot(answer(201,poll,1),True)
         assert '50%' in json.dumps(calls,ensure_ascii=False) and 'Верных ответов — 1 из 2' in json.dumps(calls,ensure_ascii=False)
         review=bot(callback(201,'pa:'+instant_tg['id']))
+        assert 'Да благословит тебя Господь' in json.dumps(review,ensure_ascii=False)
         assert 'Числа 6:24–26' in json.dumps(review,ensure_ascii=False) and 'Псалом 1:3' in json.dumps(review,ensure_ascii=False)
         assert 'Ваш ответ:' in json.dumps(review,ensure_ascii=False) and '❌ Неверно' in json.dumps(review,ensure_ascii=False)
         link_calls=bot(callback(201,'pr:'+instant_tg['id']))

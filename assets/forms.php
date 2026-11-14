@@ -15,6 +15,7 @@ function formsSchema(): void {
         submitted_at INTEGER NOT NULL,source TEXT NOT NULL,UNIQUE(form_id,guest_key));
         CREATE UNIQUE INDEX IF NOT EXISTS form_account_attempt ON form_attempts(form_id,user_id) WHERE user_id IS NOT NULL;
         CREATE INDEX IF NOT EXISTS form_attempt_list ON form_attempts(form_id,submitted_at);
+        CREATE TABLE IF NOT EXISTS form_answer_links(token_hash TEXT PRIMARY KEY,form_id TEXT NOT NULL,expires_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS form_result_links(token_hash TEXT PRIMARY KEY,attempt_id TEXT NOT NULL,expires_at INTEGER NOT NULL);");
     if(!in_array('immediate_results',array_column(query('PRAGMA table_info(pulse_forms)')->fetchAll(),'name'),true)){
         $db->exec('BEGIN IMMEDIATE');
@@ -28,6 +29,13 @@ function formResultsVisible(array $form): bool {
 function formOwned(string $id): array {
     hostOnly();$form=query('SELECT * FROM pulse_forms WHERE id=?',[$id])->fetch();
     if(!$form||!communityOwn($form))fail('Тест не найден.',404);return $form;
+}
+function formWebResultSecret(array $attempt): string {
+    $key=query("SELECT value FROM settings WHERE key='form_result_secret'")->fetchColumn();
+    if(!$key){query("INSERT OR IGNORE INTO settings VALUES ('form_result_secret',?)",[bin2hex(random_bytes(32))]);$key=query("SELECT value FROM settings WHERE key='form_result_secret'")->fetchColumn();}
+    $secret=hash_hmac('sha256',$attempt['id'],$key);
+    query('INSERT INTO form_result_links VALUES (?,?,?) ON CONFLICT(token_hash) DO UPDATE SET expires_at=excluded.expires_at',[hash('sha256',$secret),$attempt['id'],time()+365*86400]);
+    return $secret;
 }
 function formGuestKey(): string {
     global $me;
@@ -79,7 +87,7 @@ function formPublic(array $form,array|false $attempt): array {
     $quiz=json_decode($form['quiz'],true);$questions=[];
     foreach($quiz['questions'] as $i=>$q){
         $safe=array_intersect_key($q,array_flip(['text','options','type','image','points','category','multiple','block','prompts']));
-        if($visible){$safe['correct']=$q['correct'];$safe['reference']=$q['reference']??'';}
+        if($visible){$safe['correct']=$q['correct'];$safe['reference']=$q['reference']??'';$safe['verse']=$q['verse']??'';}
         $questions[]=$safe;
     }
     $data=['token'=>$form['token'],'title'=>$form['title'],'description'=>$form['description'],'active'=>(bool)$form['active'],
@@ -99,13 +107,19 @@ function formAdjustedAttempt(array $form,array $attempt): array {
 }
 function formsHandle(string $action,array $input): void {
     global $db,$me;
-    if(!in_array($action,['forms','form_create','form_get','form_submit','form_configure','form_delete','form_results','form_attempt','form_link_attempt','form_telegram_create','form_telegram_command'],true))return;
+    if(!in_array($action,['forms','form_create','form_get','form_submit','form_configure','form_share_answers','form_revoke_answers','form_delete','form_results','form_attempt','form_link_attempt','form_telegram_create','form_telegram_command'],true))return;
     formsSchema();
     if(in_array($action,['form_get','form_submit'],true)){
         $token=$input['token']??$_GET['token']??'';
         if(!is_string($token)||!preg_match('/^[a-f0-9]{32}$/',$token))fail('Тест не найден.',404);
         if($action==='form_submit')$db->exec('BEGIN IMMEDIATE');
         $form=query('SELECT * FROM pulse_forms WHERE token=?',[$token])->fetch();if(!$form)fail('Тест не найден.',404);
+        if($action==='form_get'&&isset($input['answers'])){
+            $secret=$input['answers'];
+            if(!is_string($secret)||!preg_match('/^[a-f0-9]{64}$/D',$secret)||!query('SELECT 1 FROM form_answer_links WHERE token_hash=? AND form_id=? AND expires_at>=?',[hash('sha256',$secret),$form['id'],time()])->fetchColumn())fail('Ссылка на ответы недействительна или отозвана.',404);
+            $quiz=json_decode($form['quiz'],true);
+            out(['answer_key'=>true,'title'=>$form['title'],'token'=>$form['token'],'questions'=>$quiz['questions']]);
+        }
         $attempt=formAttempt($form);
         if($action==='form_get'&&isset($input['result'])){
             $secret=$input['result'];if(!is_string($secret)||!preg_match('/^[a-f0-9]{64}$/D',$secret))fail('Ссылка результата недействительна.',404);
@@ -120,7 +134,7 @@ function formsHandle(string $action,array $input): void {
             $name=$me?$me['name']:cleanText($input['name']??'',80);
             $attempt=formStoreAttempt($form,$me['id']??null,formGuestKey(),$name,$answers,'web');
         }
-        $result=formPublic($form,$attempt);if($action==='form_submit')$db->exec('COMMIT');out($result);
+        $result=formPublic($form,$attempt);if($attempt&&!isset($input['result']))$result['result_secret']=formWebResultSecret($attempt);if($action==='form_submit')$db->exec('COMMIT');out($result);
     }
     hostOnly();
     if($action==='forms'){
@@ -141,6 +155,15 @@ function formsHandle(string $action,array $input): void {
         communityAudit('create_form',$id,['quiz'=>$q['id']]);out(['id'=>$id,'token'=>$token]);
     }
     $id=(string)($input['form']??$_GET['form']??'');$form=formOwned($id);
+    if($action==='form_share_answers'){
+        $secret=bin2hex(random_bytes(32));
+        query('DELETE FROM form_answer_links WHERE expires_at<?',[time()]);
+        query('INSERT INTO form_answer_links VALUES (?,?,?)',[hash('sha256',$secret),$form['id'],time()+365*86400]);
+        out(['secret'=>$secret]);
+    }
+    if($action==='form_revoke_answers'){
+        query('DELETE FROM form_answer_links WHERE form_id=?',[$form['id']]);out(['ok'=>true]);
+    }
     if($action==='form_attempt'){
         $attempt=query('SELECT * FROM form_attempts WHERE id=? AND form_id=?',[(string)($input['attempt']??''),$id])->fetch();
         if(!$attempt)fail('Работа не найдена.',404);
@@ -168,6 +191,7 @@ function formsHandle(string $action,array $input): void {
             query('DELETE FROM assessments WHERE id=?',[$assessment['id']]);
         }
         query('DELETE FROM form_result_links WHERE attempt_id IN (SELECT id FROM form_attempts WHERE form_id=?)',[$id]);
+        query('DELETE FROM form_answer_links WHERE form_id=?',[$id]);
         query('DELETE FROM form_attempts WHERE form_id=?',[$id]);
         foreach(['form_tg_polls','form_tg_votes','form_tg_selections'] as $table)query('DELETE FROM '.$table.' WHERE delivery_id IN (SELECT id FROM form_tg_deliveries WHERE form_id=?)',[$id]);
         query('DELETE FROM form_tg_deliveries WHERE form_id=?',[$id]);

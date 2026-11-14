@@ -48,7 +48,7 @@ function pulseGameBotText(array $delivery,array $room,array $quiz): string {
         if(!empty($q['reference']))$text.="\n\nМестописание / пояснение — ".$q['reference'];
         return $text."\n\nОтветили: {$answers} / {$players}. Следующий вопрос появится здесь.";
     }
-    return "ПУЛЬС · ВОПРОС ".($index+1)." / {$total}\n\n".$q['text'].pulseQuestionInstruction($q)."\n\nОтветьте кнопками ниже. Выбор можно отменить или изменить до отправки.\nОтветили: {$answers} / {$players}";
+    return "ПУЛЬС · ВОПРОС ".($index+1)." / {$total}\n\n".(!empty($q['category'])?'Категория — '.$q['category']."\n\n":'').$q['text'].pulseQuestionInstruction($q)."\n\nОтветьте кнопками ниже. Выбор можно отменить или изменить до отправки.\nОтветили: {$answers} / {$players}";
 }
 function pulseGameBotTick(): void {
     foreach(query('SELECT * FROM pulse_room_groups WHERE chat_id IS NOT NULL ORDER BY created_at LIMIT 100')->fetchAll() as $d){
