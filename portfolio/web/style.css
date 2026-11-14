@@ -18,3 +18,5 @@
 @media(min-width:1001px){.laptop-art{width:43vw;right:5vw;top:30%}}
 @media(max-width:700px){.laptop-art{width:80vw;right:8vw;bottom:14svh}.laptop-caption{display:none}}
 @media(max-width:700px) and (max-height:740px){.laptop-art{width:74vw;right:9vw;bottom:13svh}}
+.motion-off .laptop-shadow{animation:none}
+@media(max-width:700px) and (max-height:740px){.laptop-art{bottom:11svh}}
