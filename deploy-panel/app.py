@@ -60,6 +60,8 @@ NOTES = {
 
 
 def register_notes(server):
+    if 'notes' in server.config.get('disabled_auto_projects', []):
+        return
     old = next((p for p in server.config['projects'] if p['id'] == 'notes'), None)
     if old:
         if all(old.get(k) == NOTES[k] for k in ('kind','repo','subdir','directory','compose')) and 'bot' not in old.get('services',[]):
@@ -101,6 +103,8 @@ KOPILKA = {
 
 
 def register_kopilka(server):
+    if 'kopilka' in server.config.get('disabled_auto_projects', []):
+        return
     if any(p['id'] == 'kopilka' for p in server.config['projects']):
         return
     project = project_from_form(dict(KOPILKA), None, server.config)
@@ -136,6 +140,8 @@ GUARD = {
 
 
 def register_guard(server):
+    if 'guard' in server.config.get('disabled_auto_projects', []):
+        return
     if any(p['id'] == 'guard' for p in server.config['projects']):
         return
     project = project_from_form(dict(GUARD), None, server.config)
@@ -163,6 +169,8 @@ def setup_guard(config, p, job, log):
 
 
 def register_bookvoice(server):
+    if 'bookvoice' in server.config.get('disabled_auto_projects', []):
+        return
     # Updating GitDeck adds a discoverable card, without provisioning or touching data.
     if any(p['id'] == 'bookvoice' for p in server.config['projects']):
         return
@@ -344,6 +352,10 @@ def save_config(server, projects, revision):
     if revision != config_revision(server.config):
         raise ValueError('Настройки уже изменились. Обновите страницу и повторите')
     config = dict(server.config, projects=projects)
+    previous_ids = {p['id'] for p in server.config['projects']}
+    current_ids = {p['id'] for p in projects}
+    config['disabled_auto_projects'] = sorted(
+        (set(server.config.get('disabled_auto_projects', [])) | (previous_ids - current_ids)) - current_ids)
     validate_config(config)
     state = Path(config['state_dir']).resolve()
     for p in projects:

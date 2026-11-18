@@ -6,6 +6,10 @@ import struct
 import urllib.parse
 
 
+class ContainerNotFound(ValueError):
+    """A removed container is distinct from an unavailable Docker daemon."""
+
+
 class UnixConnection(http.client.HTTPConnection):
     def __init__(self):
         super().__init__('localhost',timeout=25)
@@ -22,6 +26,8 @@ def request(method,path,data=None,limit=8*1024*1024):
         connection.request(method,'/v1.44'+path,body,{'Content-Type':'application/json'})
         response=connection.getresponse();raw=response.read(limit+1)
         if len(raw)>limit:raise ValueError('Журнал слишком большой. Уменьшите период.')
+        if response.status==404 and path.startswith('/containers/'):
+            raise ContainerNotFound('Контейнер не установлен')
         if response.status>=300:raise ValueError('Docker не выполнил запрос. Проверьте контейнер.')
         return raw
     finally:

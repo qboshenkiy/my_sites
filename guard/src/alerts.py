@@ -197,6 +197,7 @@ class Service:
             info=None
             try:
                 info=monitor.inspect_bot(bot)
+                if info.get('status')=='not_installed':continue
                 self.observe_bot(bot,info,now)
             except (OSError,ValueError,TimeoutError):
                 errors[bot]=monitor.BOTS[bot]['name']+': Guard не смог проверить состояние контейнера; остановка бота не подтверждена.'

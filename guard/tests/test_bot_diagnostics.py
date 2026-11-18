@@ -4,7 +4,7 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
 import app
 import alerts
@@ -13,6 +13,27 @@ import monitor
 
 
 class DiagnosticTests(unittest.TestCase):
+    def test_docker_missing_container_is_distinct_from_service_failure(self):
+        for status in (404, 500):
+            connection=Mock()
+            connection.getresponse.return_value.status=status
+            connection.getresponse.return_value.read.return_value=b'{}'
+            with patch.object(monitor.docker_api,'UnixConnection',return_value=connection):
+                with self.assertRaises(ValueError) as error:
+                    monitor.docker_api.inspect('removed-bot')
+            self.assertEqual(isinstance(error.exception,monitor.docker_api.ContainerNotFound),status==404)
+            connection.close.assert_called_once()
+
+    def test_removed_bot_disappears_but_stopped_bot_remains_visible(self):
+        def inspect(container):
+            if container=='milk-duty-web-1':raise monitor.docker_api.ContainerNotFound()
+            return {'status':'exited','exit_code':0}
+        with patch.object(monitor.docker_api,'inspect',side_effect=inspect),patch.object(monitor.docker_api,'logs',return_value=''):
+            rows=monitor.bots()
+            self.assertEqual(monitor.inspect_bot('milk'),{'status':'not_installed'})
+        self.assertEqual([r['id'] for r in rows],['marathon','pulse'])
+        self.assertTrue(all(r['status']=='exited' for r in rows))
+
     def test_safe_causes_distinguish_recipient_conflict_token_and_network(self):
         for code,kind in [(401,'token'),(403,'forbidden'),(409,'conflict'),(429,'rate_limit'),(503,'telegram_server')]:
             self.assertEqual(diagnostics.explain('Telegram failed HTTP '+str(code))['code'],kind)
@@ -64,6 +85,15 @@ class HealthAlertTests(unittest.TestCase):
             self.service.collect()
         self.assertEqual(self.service.listing()['alerts'],[])
         self.assertIn('не подтверждает остановку',self.service.public()['scan_errors']['pulse'])
+
+    def test_removed_bot_is_not_polled_or_reported_as_broken(self):
+        def inspect(bot):
+            return {'status':'not_installed' if bot=='milk' else 'running'}
+        with patch.object(monitor,'inspect_bot',side_effect=inspect),patch.object(monitor,'proxy_logs',return_value=''),patch.object(monitor,'bot_action',return_value={'events':[],'cursor':0}) as activity:
+            self.service.collect()
+        self.assertEqual([c.args[0] for c in activity.call_args_list],['marathon','pulse'])
+        self.assertEqual(self.service.public()['scan_errors'],{})
+        self.assertEqual(self.service.listing()['alerts'],[])
 
     def test_refused_requests_explained_in_spam_notification(self):
         self.service.save({'http_limit':10})

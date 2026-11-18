@@ -119,7 +119,10 @@ def proxy_logs(since,tail=10000):
 def inspect_bot(bot):
     if docker_bridge.enabled():
         return docker_bridge.request('inspect_bot',bot=bot)
-    return docker_api.inspect(BOTS[bot]['container'])
+    try:
+        return docker_api.inspect(BOTS[bot]['container'])
+    except docker_api.ContainerNotFound:
+        return {'status':'not_installed'}
 
 
 def bot_action(bot,action,data=None):
@@ -147,6 +150,8 @@ def bots():
             else:row['diagnosis']='Процесс запущен. Это не проверка доставки сообщений Telegram.'
             try:row['last_error']=bot_diagnostics.recent(docker_api.logs(item['container'],time.time()-86400,tail=80,timestamps=True))
             except (OSError,ValueError,TimeoutError):row['log_error']='Журнал не удалось прочитать; состояние контейнера показано отдельно.'
+        except docker_api.ContainerNotFound:
+            continue
         except (OSError,ValueError,TimeoutError):
             row.update(status='unavailable',diagnosis='Guard не смог проверить контейнер. Остановка бота не подтверждена.')
         result.append(row)
