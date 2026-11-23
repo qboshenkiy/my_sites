@@ -27,7 +27,7 @@ function telegramAdminList(int $page,int $week,bool $report,callable $reply): vo
 }
 function telegramAdminCard(string $id,int $week,callable $reply): void {
     $u=user($id);$w=telegramAdminWeek($id,$week);$status=$w['completed']?'Выполнен':($w['status']==='overdue'?'Просрочен':($w['status']==='upcoming'?'Неделя ещё не началась':'В процессе'));
-    $lines=['👤 '.$u['name'].(!$u['active']?' · аккаунт отключён':''),'Неделя '.$week.' · '.$w['start'].' — '.$w['end'],'Круг '.$w['cycle'].' · '.$status,$w['bookProgress']['label'].' · '.$w['chapters'].'/'.$w['goal'].' глав · '.$w['days'].' дн.','Всего за неделю: '.$w['totalChapters'].' глав. Завершено кругов: '.$w['completedCycles'].'.',planBookText($w['books'])];
+    $lines=['👤 '.$u['name'].(!$u['active']?' · аккаунт отключён':''),'Неделя '.$week.' · '.$w['start'].' — '.$w['end'],($w['cycle']>0?'Круг '.$w['cycle']:'Нет активного круга').' · '.$status,$w['bookProgress']['label'].' · '.$w['chapters'].'/'.$w['goal'].' глав · '.$w['days'].' дн.','Всего за неделю: '.$w['totalChapters'].' глав. Завершено кругов: '.$w['completedCycles'].'.',planBookText($w['books'])];
     $buttons=[];if($u['active']&&$w['editable'])$buttons[]=[['text'=>'✏️ Изменить главы и дни','callback_data'=>'ad:e:'.$id.':'.$week]];
     if($u['active']&&$w['canComplete']&&!$w['completed'])$buttons[]=[['text'=>'✅ Отметить план прочитанным','callback_data'=>'ad:c:'.$id.':'.$week]];
     if(!$w['editable']&&$w['canComplete'])$lines[]='Неделя закрыта для исправлений. Администратор может открыть её на сайте. Поздняя отметка выполнения доступна отдельно.';
@@ -43,7 +43,7 @@ function telegramAdminPreview(array $actor,string $telegramId,array $p,int $chap
     if($days!==null&&($days<($chapters?1:0)||$days>3660))throw new DomainException('Дни: от '.($chapters?1:0).' до 3660.');
     if($p['mode']==='edit')assertWeekEditable($p['week'],$p['target']);elseif(!$w['canComplete'])throw new DomainException('Неделя ещё не началась.');
     $token=bin2hex(random_bytes(16));$p=array_merge($p,['stage'=>'confirm','chapters'=>$chapters,'days'=>$days,'token_hash'=>hash('sha256',$token)]);telegramAdminState($actor,$telegramId,$p);
-    $reply('Сохранить результат?'."\n".$u['name'].' · неделя '.$p['week'].' · круг '.$w['cycle']."\n".'Было: '.$w['chapters'].'/'.$w['goal'].' глав, '.$w['days'].' дн.'."\n".'Станет: '.$chapters.'/'.$w['goal'].' глав, '.($days===null?'дни автоматически':$days.' дн.').'.'."\n".'Это общий итог текущего круга, а не прибавление. Ежедневные записи сохранятся. Пока ничего не изменено.',[[['text'=>'✓ Сохранить','callback_data'=>'ad:y:'.$token],['text'=>'Отмена','callback_data'=>'ad:n:'.$token]]]);
+    $reply('Сохранить результат?'."\n".$u['name'].' · неделя '.$p['week'].' · '.weeklyCycleLabel($w['cycle'])."\n".'Было: '.$w['chapters'].'/'.$w['goal'].' глав, '.$w['days'].' дн.'."\n".'Станет: '.$chapters.'/'.$w['goal'].' глав, '.($days===null?'дни автоматически':$days.' дн.').'.'."\n".'Это общий итог текущего круга, а не прибавление. Ежедневные записи сохранятся. Пока ничего не изменено.',[[['text'=>'✓ Сохранить','callback_data'=>'ad:y:'.$token],['text'=>'Отмена','callback_data'=>'ad:n:'.$token]]]);
 }
 function telegramAdminMenu(string $text,bool $callback,?array $actor,string $telegramId,callable $reply): bool {
     $command=in_array($text,['👥 Участники','📋 Общий отчёт','/admin'],true);$adminCallback=$callback&&str_starts_with($text,'ad:');
@@ -77,7 +77,7 @@ function telegramAdminMenu(string $text,bool $callback,?array $actor,string $tel
                 $p=['stage'=>'input','mode'=>$m[1]==='e'?'edit':'complete','target'=>$id,'week'=>$week,'fingerprint'=>telegramAdminFingerprint($id,$week)];
                 if($m[1]==='c'){telegramAdminPreview($actor,$telegramId,$p,$w['goal'],null,$reply);return true;}
                 assertWeekEditable($week,$id);telegramAdminState($actor,$telegramId,$p);sql('DELETE FROM telegram_menu_states WHERE user_id=?',[$actor['id']]);
-                $reply('✏️ '.$u['name'].' · неделя '.$week.' · круг '.$w['cycle']."\n".'Сейчас: '.$w['chapters'].'/'.$w['goal'].' глав, '.$w['days'].' дн.'."\n".'Введите общий итог глав от 0 до '.$w['goal'].'. Например «5». Для ручных дней — «5 2» (5 глав за 2 дня). Одно число включает автоматический расчёт дней. Следом появится подтверждение.',[[['text'=>'Отмена','callback_data'=>'ad:u:'.$id.':'.$week]]]);return true;
+                $reply('✏️ '.$u['name'].' · неделя '.$week.' · '.weeklyCycleLabel($w['cycle'])."\n".'Сейчас: '.$w['chapters'].'/'.$w['goal'].' глав, '.$w['days'].' дн.'."\n".'Введите общий итог глав от 0 до '.$w['goal'].'. Например «5». Для ручных дней — «5 2» (5 глав за 2 дня). Одно число включает автоматический расчёт дней. Следом появится подтверждение.',[[['text'=>'Отмена','callback_data'=>'ad:u:'.$id.':'.$week]]]);return true;
             }
             $reply('Кнопка недоступна. Откройте «👥 Участники» заново.');return true;
         }

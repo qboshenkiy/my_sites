@@ -134,7 +134,7 @@ with tempfile.TemporaryDirectory(prefix='marathon-menu-') as folder:
         reader.call('start_week_repeat',{'week':2,'cycle':3})
         assert profile()['stats']['pace']['cycle']==5, 'Deleted/restored pass identifiers must never collide'
         admin.call('delete_week_cycle',{'user':other,'week':2,'cycle':1,'active_cycle':1})
-        w=admin.call('profile',suffix='&user='+other)['stats']['pace'];assert w['cycle']==2 and w['chapters']==0 and w['completedCycles']==0
+        w=admin.call('profile',suffix='&user='+other)['stats']['pace'];assert w['cycle']==0 and w['chapters']==0 and w['completedCycles']==0
         workbook=admin.call('export_xlsx',suffix='&week=2')
         with zipfile.ZipFile(io.BytesIO(workbook)) as z:
             xml=z.read('xl/worksheets/sheet1.xml').decode();assert 'Круг недели' in xml and '<v>5</v>' in xml
@@ -173,6 +173,7 @@ with tempfile.TemporaryDirectory(prefix='marathon-menu-') as folder:
         payload={'user':other,'week':2,'cycle':other_week['cycle'],'chapters':0,'book_plan_key':other_week['bookPlanKey'],'book_index':1,'book_chapter':11}
         saved=admin.call('week_result',payload)['week']
         assert saved['chapters']==5 and saved['bookProgress']['last']=='Вторая · глава 11'
+        payload['cycle']=saved['cycle']
         admin.call('week_result',dict(payload,book_plan_key='stale'),409)
         admin.call('week_result',dict(payload,book_chapter=99),400)
         assert admin.call('profile',suffix='&user='+other)['stats']['reports'][1]['chapters']==5

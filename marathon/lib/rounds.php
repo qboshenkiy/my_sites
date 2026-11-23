@@ -7,6 +7,8 @@ function weeklyCycle(string $id,int $week): int {
 }
 function nextWeeklyCycle(string $id,int $week): int {return max(weeklyCycle($id,$week),(int)sql('SELECT COALESCE(MAX(cycle),0) FROM weekly_repeats WHERE user_id=? AND week=?',[$id,$week])->fetchColumn())+1;}
 function setWeeklyCycle(string $id,int $week,int $cycle): void {sql('INSERT INTO weekly_cycle_state VALUES (?,?,?) ON CONFLICT(user_id,week) DO UPDATE SET cycle=excluded.cycle',[$id,$week,$cycle]);}
+function ensureWeeklyCycle(string $id,int $week): void {if(weeklyCycle($id,$week)===0)setWeeklyCycle($id,$week,nextWeeklyCycle($id,$week));}
+function weeklyCycleLabel(int $cycle): string {return $cycle>0?'круг '.$cycle:'нет активного круга';}
 function clearCycleData(string $id,int $week,string $actor): void {
     sql('DELETE FROM reading_entries WHERE user_id=? AND week=?',[$id,$week]);sql('DELETE FROM week_completions WHERE user_id=? AND week=?',[$id,$week]);
     sql('UPDATE reports SET chapters_manual=0,chapters_override=NULL,days_manual=NULL,reading_on=NULL,editor_id=?,updated_at=? WHERE user_id=? AND week=?',[$actor,time(),$id,$week]);
@@ -28,7 +30,8 @@ function changeWeeklyCycle(string $id,string $actor,int $week,int $cycle,int $ex
     $row=sql('SELECT * FROM weekly_repeats WHERE user_id=? AND week=? AND cycle=?',[$id,$week,$cycle])->fetch();
     if($restore){
         if(!$row||$row['deleted_at']===null)throw new DomainException('Удалённый круг не найден.');
-        setWeeklyCycle($id,$week,$current);sql('UPDATE weekly_repeats SET deleted_at=NULL WHERE user_id=? AND week=? AND cycle=?',[$id,$week,$cycle]);
+        if($current===0){restoreCycleData(json_decode($row['snapshot'],true,512,JSON_THROW_ON_ERROR));sql('DELETE FROM weekly_repeats WHERE user_id=? AND week=? AND cycle=?',[$id,$week,$cycle]);setWeeklyCycle($id,$week,$cycle);}
+        else sql('UPDATE weekly_repeats SET deleted_at=NULL WHERE user_id=? AND week=? AND cycle=?',[$id,$week,$cycle]);
     }elseif($cycle===$current){
         $w=weekResults($id)[$week-1];$saved=$w;unset($saved['repeats'],$saved['deletedRepeats']);
         $snapshot=['result'=>$saved,'report'=>sql('SELECT * FROM reports WHERE user_id=? AND week=?',[$id,$week])->fetch()?:null,'entries'=>sql('SELECT * FROM reading_entries WHERE user_id=? AND week=?',[$id,$week])->fetchAll(),'completion'=>sql('SELECT * FROM week_completions WHERE user_id=? AND week=?',[$id,$week])->fetch()?:null];
@@ -36,7 +39,7 @@ function changeWeeklyCycle(string $id,string $actor,int $week,int $cycle,int $ex
         clearCycleData($id,$week,$actor);
         $previous=sql('SELECT * FROM weekly_repeats WHERE user_id=? AND week=? AND deleted_at IS NULL ORDER BY cycle DESC LIMIT 1',[$id,$week])->fetch();
         if($previous){restoreCycleData(json_decode($previous['snapshot'],true,512,JSON_THROW_ON_ERROR));sql('DELETE FROM weekly_repeats WHERE user_id=? AND week=? AND cycle=?',[$id,$week,$previous['cycle']]);setWeeklyCycle($id,$week,(int)$previous['cycle']);}
-        else setWeeklyCycle($id,$week,nextWeeklyCycle($id,$week));
+        else setWeeklyCycle($id,$week,0);
     }else{
         if(!$row||$row['deleted_at']!==null)throw new DomainException('Круг уже удалён или не найден.');
         setWeeklyCycle($id,$week,$current);sql('UPDATE weekly_repeats SET deleted_at=? WHERE user_id=? AND week=? AND cycle=?',[time(),$id,$week,$cycle]);
@@ -53,10 +56,10 @@ function startWeeklyRepeat(string $id,string $actor,int $week,int $expected): ar
     $c=calendar($id);if($week!==$c['current'])throw new DomainException('Повторное чтение можно начать только для текущей недели.');
     $w=weekResults($id)[$week-1];
     if($w['cycle']!==$expected)throw new DomainException('Круг недели уже изменился. Обновите план.');
-    if(!$w['completed'])throw new DomainException('Сначала полностью завершите текущий круг недели.');
+    if($w['cycle']>0&&!$w['completed'])throw new DomainException('Сначала полностью завершите текущий круг недели.');
     $before=auditWeekSnapshot($id,$week);$next=nextWeeklyCycle($id,$week);$archived=$w;unset($archived['repeats'],$archived['deletedRepeats']);
     $snapshot=['result'=>$archived,'report'=>sql('SELECT * FROM reports WHERE user_id=? AND week=?',[$id,$week])->fetch()?:null,'entries'=>sql('SELECT * FROM reading_entries WHERE user_id=? AND week=?',[$id,$week])->fetchAll(),'completion'=>sql('SELECT * FROM week_completions WHERE user_id=? AND week=?',[$id,$week])->fetch()?:null];
-    sql('INSERT INTO weekly_repeats(user_id,week,cycle,snapshot,created_at) VALUES (?,?,?,?,?)',[$id,$week,$expected,json_encode($snapshot,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR),time()]);
+    if($expected>0)sql('INSERT INTO weekly_repeats(user_id,week,cycle,snapshot,created_at) VALUES (?,?,?,?,?)',[$id,$week,$expected,json_encode($snapshot,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR),time()]);
     sql('DELETE FROM reading_entries WHERE user_id=? AND week=?',[$id,$week]);
     sql('DELETE FROM week_completions WHERE user_id=? AND week=?',[$id,$week]);
     sql("UPDATE reports SET chapters_manual=0,chapters_override=NULL,days_manual=NULL,reading_on=NULL,editor_id=?,updated_at=? WHERE user_id=? AND week=?",[$actor,time(),$id,$week]);

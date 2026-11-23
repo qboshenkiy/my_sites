@@ -14,6 +14,12 @@ assert(added.some(html=>html.includes('43%')&&html.includes('3 из 7 глав')
 // A completed weekly pass offers its own repeat without waiting for 22 weeks.
 vm.runInContext('profileData.stats.pace.completed=true;drawProfile();',context);
 assert(app.innerHTML.includes('Прочитать этот план ещё раз'));
+vm.runInContext('profileData.stats.pace.cycle=0;profileData.stats.pace.completed=false;drawProfile();',context);
+assert(app.innerHTML.includes('Нет активного круга'));
+assert(app.innerHTML.includes('Начать новый круг'));
+assert(!app.innerHTML.includes('Круг 0')&&!app.innerHTML.includes('data-cycle-delete="0"'));
+vm.runInContext('boot.user={...profileData.user,role:"admin"};drawProfile();',context);
+assert(app.innerHTML.includes('data-completion-correct="2"'));
 // A pre-start account has no future plans or rendering errors.
 vm.runInContext('profileData.marathon.current=0;profileData.marathon.calendar=[];profileData.stats.pace=null;profileData.stats.reports=[];profileData.stats.entries=[];drawProfile();',context);
 assert(app.innerHTML.includes('Марафон скоро начнётся'));
@@ -22,4 +28,5 @@ vm.runInContext('profileData=savedFixture;boot.marathon=profileData.marathon;boo
 assert(app.innerHTML.includes('<th>КРУГ</th>')&&app.innerHTML.includes('<td>3</td>'));
 vm.runInContext('boot.user={id:"other-moderator",name:"Mod",role:"moderator"};drawProfile();',context);
 assert(!app.innerHTML.includes('data-cycle-delete='));
+assert(!app.innerHTML.includes('data-completion-correct='));
 console.log('PASS: weekly profile rendering, repeat action, history, current-week percentage and pre-start future privacy.');

@@ -54,6 +54,17 @@ function db(): PDO {
             $db->exec("UPDATE reports SET days_manual=NULL WHERE days_manual<=0 OR (editor_id=user_id AND (user_id IN (SELECT id FROM users WHERE role='participant') OR (chapters_override IS NULL AND chapters_manual=0 AND EXISTS (SELECT 1 FROM reading_entries e WHERE e.user_id=reports.user_id AND e.week=reports.week AND e.source='telegram'))))");
             sql('INSERT INTO migrations VALUES (5,?)',[time()]);
         }
+        if(!sql('SELECT version FROM migrations WHERE version=6')->fetchColumn()){
+            // Earlier deletion created an empty replacement even after the last pass was removed.
+            $db->exec("INSERT INTO weekly_cycle_state(user_id,week,cycle)
+                SELECT DISTINCT r.user_id,r.week,0 FROM weekly_repeats r WHERE r.deleted_at IS NOT NULL
+                AND NOT EXISTS (SELECT 1 FROM weekly_repeats a WHERE a.user_id=r.user_id AND a.week=r.week AND a.deleted_at IS NULL)
+                AND NOT EXISTS (SELECT 1 FROM reading_entries e WHERE e.user_id=r.user_id AND e.week=r.week)
+                AND NOT EXISTS (SELECT 1 FROM week_completions c WHERE c.user_id=r.user_id AND c.week=r.week)
+                AND NOT EXISTS (SELECT 1 FROM reports p WHERE p.user_id=r.user_id AND p.week=r.week AND (p.chapters_manual>0 OR p.chapters_override>0 OR p.reading_on IS NOT NULL))
+                ON CONFLICT(user_id,week) DO UPDATE SET cycle=0");
+            sql('INSERT INTO migrations VALUES (6,?)',[time()]);
+        }
         $db->exec('COMMIT');
     }catch(Throwable $e){$db->exec('ROLLBACK');throw $e;}
     return $db;
@@ -132,6 +143,7 @@ function addReading(string $id,string $actor,int $chapters,string $date,string $
     $existing=sql('SELECT * FROM reading_entries WHERE id=?',[$entryId])->fetch();if($existing){if($existing['user_id']!==$id)throw new DomainException('Запись недоступна.');return weekResults($id)[$week-1];}
     $before=auditWeekSnapshot($id,$week);$total=$before['chapters'];$left=max(0,$w['goal']-$total);if($chapters>$left)throw new DomainException('Можно зачесть не больше '.$left.' глав: недельный план — '.$w['goal'].'.');
     if($total+$chapters===$w['goal'])assertCompletionAllowed($actor,$week,$id);
+    ensureWeeklyCycle($id,$week);
     sql('INSERT INTO reading_entries VALUES (?,?,?,?,?,?,?,?,?,?)',[$entryId,$id,$week,$date,$chapters,$title,$note,$actor,$source,time()]);sql('UPDATE reports SET chapters_override=chapters_override+? WHERE user_id=? AND week=? AND chapters_override IS NOT NULL',[$chapters,$id,$week]);syncCompletion($id,$week);auditWeekChange($actor,'reading',$id,$week,$date.': +'.$chapters.' глав ('.$source.')',$before,['entry_id'=>$entryId,'date'=>$date,'added'=>$chapters,'source'=>$source]);return weekResults($id)[$week-1];
 }
 
@@ -146,6 +158,7 @@ function telegramReadingPlan(string $id,int $chapters): array {
 function addTelegramReading(string $id,int $chapters,int $updateId): array {
     $allocation=telegramReadingPlan($id,$chapters);$c=calendar($id);$result=[];
     foreach($allocation as $w){$amount=$w['added'];$week=$w['week'];$before=auditWeekSnapshot($id,$week);
+        ensureWeeklyCycle($id,$week);
         sql('INSERT INTO reading_entries VALUES (?,?,?,?,?,?,?,?,?,?)',['tg_'.$updateId.'_w'.$week,$id,$week,$c['today'],$amount,'','Отметка из Telegram: распределение по планам',$id,'telegram',time()]);
         sql('UPDATE reports SET chapters_override=chapters_override+? WHERE user_id=? AND week=? AND chapters_override IS NOT NULL',[$amount,$id,$week]);
         syncCompletion($id,$week);$saved=weekResults($id)[$week-1];$saved['added']=$amount;$result[]=$saved;
@@ -169,6 +182,7 @@ function saveWeeklyResult(string $id,string $actor,int $week,int $total,?int $da
     if($days!==null&&($days<($total?1:0)||$days>3660))throw new DomainException('Неверное количество дней.');
     if(user($actor)['role']!=='admin'&&$days!==null&&$days!==$before['daysManual'])throw new DomainException('Менять дни вручную может только администратор.');
     if($total===$w['goal'])assertCompletionAllowed($actor,$week,$id);
+    if($total>0)ensureWeeklyCycle($id,$week);
     $daily=(int)(sql('SELECT SUM(chapters) FROM reading_entries WHERE user_id=? AND week=?',[$id,$week])->fetchColumn()?:0);
     sql('INSERT INTO reports(user_id,week,editor_id,updated_at,chapters_manual,days_manual,title,note) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(user_id,week) DO UPDATE SET chapters_manual=excluded.chapters_manual,days_manual=excluded.days_manual,title=excluded.title,note=excluded.note,editor_id=excluded.editor_id,updated_at=excluded.updated_at',[$id,$week,$actor,time(),max(0,$total-$daily),$days,$title,$note]);
     sql('UPDATE reports SET chapters_override=? WHERE user_id=? AND week=?',[$total,$id,$week]);
@@ -186,12 +200,26 @@ function completeWeek(string $id,string $actor,int $week,?int $days): array {
         $days=$w['daysManual'];
     }
     $before=auditWeekSnapshot($id,$week);$effectiveDays=$days??readingPlanDays($w,$c['today']);if($effectiveDays<1||$effectiveDays>3660)throw new DomainException('Количество дней должно быть от 1 до 3660.');
+    ensureWeeklyCycle($id,$week);
     $daily=(int)(sql('SELECT SUM(chapters) FROM reading_entries WHERE user_id=? AND week=?',[$id,$week])->fetchColumn()?:0);
     $title=mb_substr(planBookText($w['books']),0,200);
     sql('INSERT INTO reports(user_id,week,editor_id,updated_at,chapters_manual,days_manual,title) VALUES (?,?,?,?,?,?,?) ON CONFLICT(user_id,week) DO UPDATE SET chapters_manual=excluded.chapters_manual,days_manual=excluded.days_manual,editor_id=excluded.editor_id,updated_at=excluded.updated_at',[$id,$week,$actor,time(),max(0,$w['goal']-$daily),$days,$title]);
     sql('UPDATE reports SET chapters_override=? WHERE user_id=? AND week=?',[$w['goal'],$id,$week]);
     sql('UPDATE reports SET reading_on=? WHERE user_id=? AND week=?',[$c['today'],$id,$week]);
     syncCompletion($id,$week);auditWeekChange($actor,'complete_week',$id,$week,'Неделя '.$week.': '.$w['goal'].' глав за '.$effectiveDays.' дн.'.($c['today']>$w['end']?' (с опозданием)':''),$before);return weekResults($id)[$week-1];
+}
+function correctWeekCompletion(string $id,string $actor,int $week,string $on): array {
+    if((user($actor)['role']??null)!=='admin')throw new DomainException('Исправлять дату завершения может только администратор.');
+    $u=user($id);if(!$u||!$u['active'])throw new DomainException('Участник недоступен.');
+    $c=calendar($id);if($week<1||$week>22||!$c['calendar'][$week-1]['canComplete'])throw new DomainException('Эта неделя ещё не началась.');
+    $w=weekResults($id)[$week-1];$date=DateTimeImmutable::createFromFormat('!Y-m-d',$on);
+    if(!$date||$date->format('Y-m-d')!==$on||$on<$w['start']||$on>$c['today'])throw new DomainException('Укажите дату от начала недели до сегодняшнего дня.');
+    $before=auditWeekSnapshot($id,$week);
+    if(!$w['completed'])completeWeek($id,$actor,$week,null);
+    sql('INSERT INTO week_completions(user_id,week,completed_on,plan_snapshot) VALUES (?,?,?,?) ON CONFLICT(user_id,week) DO UPDATE SET completed_on=excluded.completed_on',[$id,$week,$on,json_encode($w['books'],JSON_UNESCAPED_UNICODE)]);
+    sql('UPDATE reports SET reading_on=?,days_manual=NULL,editor_id=?,updated_at=? WHERE user_id=? AND week=?',[$on,$actor,time(),$id,$week]);
+    auditWeekChange($actor,'correct_week_completion',$id,$week,'Исправлена дата выполнения недели '.$week.': '.$on.($on<=$w['end']?' — в срок':' — с опозданием'),$before);
+    return weekResults($id)[$week-1];
 }
 function sessionStart(): void {
     $https=(!empty($_SERVER['HTTPS'])&&$_SERVER['HTTPS']!=='off')||(getenv('MARATHON_TRUST_PROXY')==='1'&&($_SERVER['HTTP_X_FORWARDED_PROTO']??'')==='https');
