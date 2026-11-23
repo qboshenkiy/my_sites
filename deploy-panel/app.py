@@ -24,7 +24,7 @@ import threading
 import time
 import urllib.parse
 
-VERSION = '1.15.1'
+VERSION = '1.15.2'
 LAYOUT = {
     'remote': ['server', 'ops', '.dockerignore'],
     'drawing': ['index.php', 'api.php', 'manifest.webmanifest', 'service-worker.js', 'lib', 'assets', 'ops', '.dockerignore'],
@@ -41,6 +41,56 @@ REQUIRED = {'remote': ['server/app.py', 'server/requirements.txt', 'server/Docke
             'chrono': ['app/Config/Paths.php', 'public/index.php', 'composer.lock', 'spark', 'ops/compose.yaml',
                        'ops/Dockerfile', 'ops/entrypoint.sh', 'app/Commands/DeployAdmin.php'],
             'self': ['app.py', 'index.html', 'VERSION']}
+
+
+KIRKOM_KARGO = {
+    'id': 'kirkom-kargo', 'name': 'Kirkom Cargo', 'kind': 'docker',
+    'repo': 'https://github.com/qboshenkiy/my_sites.git', 'branch': 'main',
+    'subdir': 'kirkom_kargo', 'directory': '/opt/kirkom-kargo', 'compose': 'compose.yaml',
+    'profiles': [], 'services': ['web'], 'main_service': 'web',
+    'paths': ['web', 'ops', 'server'], 'wait_health': True, 'ssh_key': ''}
+
+
+def register_kirkom_kargo(server):
+    if 'kirkom-kargo' in server.config.get('disabled_auto_projects', []):
+        return
+    existing = next((p for p in server.config['projects'] if p['id'] == 'kirkom-kargo'), None)
+    if existing:
+        if all(existing.get(k) == KIRKOM_KARGO[k] for k in ('kind','repo','subdir','directory','compose')):
+            updated = dict(existing, name='Kirkom Cargo', paths=list(dict.fromkeys([*existing.get('paths', []), 'server'])))
+            if updated != existing:
+                save_config(server, [updated if p['id']=='kirkom-kargo' else p for p in server.config['projects']], config_revision(server.config))
+        return
+    project = project_from_form(dict(KIRKOM_KARGO), None, server.config)
+    save_config(server, [*server.config['projects'], project], config_revision(server.config))
+
+
+def setup_kirkom_kargo(config, p, job, log):
+    if any(p.get(k) != KIRKOM_KARGO[k] for k in ('id', 'kind', 'repo', 'subdir', 'directory', 'compose')):
+        raise ValueError('Настройка доступна только для стандартного KirkomKargo')
+    source_project = dict(KIRKOM_KARGO, paths=[*KIRKOM_KARGO['paths'], 'Dockerfile', 'compose.yaml', '.dockerignore'])
+    source = Path(config['state_dir']) / 'jobs' / job / 'setup-source'
+    sha = checkout(source_project, config, source, log, p['_target_ref']) if p.get('_target_ref') else checkout(source_project, config, source, log)
+    dest = Path(p['directory']);dest.mkdir(parents=True, exist_ok=True)
+    legacy = (dest / 'Dockerfile').is_file() and (dest / 'Dockerfile').read_text().startswith('FROM nginxinc/nginx-unprivileged:1.28-alpine')
+    if legacy:
+        expected_compose = 'name: kirkom-kargo\nservices:\n  web:\n    build: .\n    restart: unless-stopped\n    ports: ["127.0.0.1:8185:8080"]\n    read_only: true\n    tmpfs: [/tmp]\n    cap_drop: [ALL]\n    security_opt: [no-new-privileges:true]\n    logging:\n      driver: json-file\n      options: {max-size: "5m", max-file: "2"}\n'
+        expected_docker = 'FROM nginxinc/nginx-unprivileged:1.28-alpine\nCOPY web/ /usr/share/nginx/html/\nEXPOSE 8080\nHEALTHCHECK --interval=30s --timeout=5s --start-period=5s CMD wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1\n'
+        if (dest / 'Dockerfile').read_text() != expected_docker or not (dest / 'compose.yaml').is_file() or (dest / 'compose.yaml').read_text() != expected_compose:
+            raise ValueError('Старая конфигурация Kirkom Cargo изменена вручную. Требуется ручной переход на Node.js и постоянный том; файлы сохранены.')
+        for name in ('Dockerfile', 'compose.yaml'):
+            shutil.copy2(dest / name, dest / (name + '.before-cargo-server'))
+            shutil.copy2(source / name, dest / name)
+    for name in ('Dockerfile', 'compose.yaml', '.dockerignore'):
+        target = validate_destination(dest, name)
+        if not target.exists():
+            shutil.copy2(source / name, target)
+    copy_code(source, dest, dict(p, paths=KIRKOM_KARGO['paths']))
+    status_update(config, job, 'installing', sha=sha)
+    run([sys.executable, str(dest / 'ops/setup.py')], log, timeout=600)
+    with db_open(config) as db:
+        db.execute('INSERT OR REPLACE INTO versions VALUES (?, ?, ?)', (p['id'], sha, time.time()))
+    status_update(config, job, 'success', sha=sha)
 
 
 BOOKVOICE = {
@@ -1186,6 +1236,8 @@ def bootstrap_chrono(p, source):
 
 
 def deploy(config, p, job, log):
+    if p['id'] == 'kirkom-kargo' and (not (Path(p['directory']) / p.get('compose', 'compose.yaml')).is_file() or not (Path(p['directory']) / 'compose.gitdeck-https.yaml').is_file() or not (Path(p['directory']) / 'server/main.mjs').is_file()):
+        return setup_kirkom_kargo(config, p, job, log)
     if p['id'] == 'notes' and not (Path(p['directory']) / p.get('compose', 'compose.yaml')).is_file():
         return setup_notes(config, p, job, log)
     jobdir = Path(config['state_dir']) / 'jobs' / job
@@ -2303,6 +2355,7 @@ def serve(config, config_path, demo=False):
             register_guard(server)
             register_kopilka(server)
             register_notes(server)
+            register_kirkom_kargo(server)
         except (ValueError, OSError) as error:
             print('Не удалось добавить карточку «Голос книги»: ' + str(error), file=sys.stderr, flush=True)
     config = server.config
